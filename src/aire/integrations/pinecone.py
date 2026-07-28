@@ -57,18 +57,27 @@ class PineconeVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         # Pinecone has no native BM25; fetch a page and score client-side.
-        data = await self.client.post_json(
-            "/query",
-            {
-                "vector": [0.0],
-                "topK": min(k * 20, 500),
-                "includeMetadata": True,
-            },
-        )
+        # Honesty: describe() omits keyword-search so Retriever skips hybrid.
+        body: dict[str, Any] = {
+            "vector": [0.0],
+            "topK": min(k * 20, 500),
+            "includeMetadata": True,
+        }
+        if filter:
+            plain = {a: b for a, b in filter.items() if a != "__acl__"}
+            if plain:
+                body["filter"] = plain
+        data = await self.client.post_json("/query", body)
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
+        from aire.rag.acl import matches_acl
+
         for match in data.get("matches", []):
             hit = _to_scored(match)
+            if filter:
+                acl = filter.get("__acl__") if isinstance(filter.get("__acl__"), dict) else None
+                if acl and not matches_acl(hit.chunk.metadata, acl):
+                    continue
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
                 scored.append(ScoredChunk(chunk=hit.chunk, score=float(overlap)))

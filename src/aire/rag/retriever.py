@@ -44,10 +44,16 @@ class Retriever:
         candidate_k = candidates or max(k * 4, 10)
         vector = await self.embedder.embed_one(query)
         vector_hits = await self.store.search(vector, k=candidate_k, filter=filter)
-        if not self.hybrid:
+        use_hybrid = self.hybrid and self._store_supports_keyword()
+        if not use_hybrid:
             return vector_hits[:k]
         keyword_hits = await self.store.search_text(query, k=candidate_k, filter=filter)
         return self._fuse(vector_hits, keyword_hits)[:k]
+
+    def _store_supports_keyword(self) -> bool:
+        """Hosted stores without real BM25 must not pretend hybrid fusion is real."""
+        caps = set(self.store.describe().capabilities or [])
+        return "keyword-search" in caps
 
     def _fuse(
         self, vector_hits: list[ScoredChunk], keyword_hits: list[ScoredChunk]

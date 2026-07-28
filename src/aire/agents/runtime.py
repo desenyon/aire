@@ -194,8 +194,6 @@ class AgentExecutor:
             )
         )
         self._append_step(state, StepKind.OBSERVATION, tool=call.name, chars=len(text))
-        if self.memory is not None and isinstance(observation, str):
-            pass  # memory persistence handled at run end by the Agent facade
 
     def _append_step(
         self, state: AgentState, kind: StepKind, usage: Usage | None = None, **detail: Any

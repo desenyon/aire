@@ -946,7 +946,7 @@ def _log_request(
         return
     log(
         {
-            "ts": _today(),
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "endpoint": endpoint,
             "model": public,
             "resolved": resolved,
@@ -954,5 +954,6 @@ def _log_request(
             "output_tokens": result.usage.output_tokens,
             "cost_usd": result.usage.cost_usd,
             "latency_ms": round((time.perf_counter() - started) * 1000.0, 2),
+            "finish_reason": str(result.finish_reason),
         }
     )

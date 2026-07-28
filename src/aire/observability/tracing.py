@@ -183,6 +183,12 @@ class Tracer:
             return list(self.exporter.records)
         return []
 
+    def flush(self) -> None:
+        """Drain the underlying exporter if it supports ``flush()``."""
+        flush = getattr(self.exporter, "flush", None)
+        if callable(flush):
+            flush()
+
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "tracer",

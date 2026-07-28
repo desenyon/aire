@@ -80,6 +80,21 @@ class Runtime:
     async def aclose(self) -> None:
         if self._closed:
             return
+        # Drain pending OTLP / tracer batches so shutdown does not drop spans.
+        if self.tracer is not None:
+            flush = getattr(self.tracer, "flush", None)
+            if callable(flush):
+                try:
+                    flush()
+                except Exception:  # telemetry must never block shutdown
+                    logger.debug("tracer.flush failed during runtime close", exc_info=True)
+            exporter = getattr(self.tracer, "exporter", None)
+            exporter_flush = getattr(exporter, "flush", None) if exporter is not None else None
+            if callable(exporter_flush):
+                try:
+                    exporter_flush()
+                except Exception:
+                    logger.debug("exporter.flush failed during runtime close", exc_info=True)
         await self.resources.aclose()
         self._closed = True
         self.events.emit("runtime.closed", source="runtime")

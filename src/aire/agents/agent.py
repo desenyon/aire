@@ -45,6 +45,7 @@ class Agent:
 
     async def run(self, input: str) -> AgentResult:
         """Run the agent to a terminal state and persist memory."""
+        self.state = AgentState(input=input)
         executor = AgentExecutor(
             self.model,
             self.registry,
@@ -55,8 +56,12 @@ class Agent:
         )
         from aire.core.content import Message
 
+        # Executor owns history assembly (recall + current user turn once).
+        result = await executor.run(input, state=self.state)
         await self.memory.add(Message.text("user", input))
-        result = await executor.run(input)
+        for message in self.state.messages:
+            if message.role == "tool":
+                await self.memory.add(message)
         if result.output:
             await self.memory.add(Message.text("assistant", result.output))
         return result
@@ -72,7 +77,10 @@ class Agent:
 
     def reset(self) -> None:
         """Start a fresh conversation (keeps tools and config, clears memory)."""
+        from aire.models.base import run_sync
+
         self.state = AgentState()
+        run_sync(self.memory.clear())
 
     # -- composition ------------------------------------------------------------------
 
