@@ -201,8 +201,32 @@ class _AgentsNamespace(_Namespace):
     def create_sync(self, model: str | Model | None = None, **kwargs: Any) -> Agent:
         return run_sync(self.create(model, **kwargs))
 
+    def team(
+        self,
+        members: dict[str, Agent] | list[Agent],
+        supervisor: str | Model | None = None,
+        **options: Any,
+    ) -> Any:
+        """Create a supervisor-routed Team of agents.
+
+        ``supervisor`` is any model ref (defaults to the configured model) that
+        decides which member handles each subtask.
+        """
+        from aire.agents.team import Team
+
+        runtime = self._rt()
+        if not isinstance(supervisor, Model):
+            supervisor = run_sync(
+                ModelRegistry(runtime).use(supervisor or runtime.settings.model.ref)
+            )
+        return Team(members, supervisor, **options)
+
     def describe(self) -> dict[str, Any]:
-        return {"kind": "agents", "memory": ["buffer", "jsonl:<path>"]}
+        return {
+            "kind": "agents",
+            "memory": ["buffer", "jsonl:<path>", "long-term (AI.memory)"],
+            "composition": ["agent.as_tool()", "AI.agents.team(...)"],
+        }
 
 
 class _ObserveNamespace(_Namespace):
@@ -293,6 +317,11 @@ class _GatewayNamespace(_Namespace):
             "objective": config.objective,
             "auth_token": config.auth_token,
             "rate_limit_per_minute": config.rate_limit_per_minute,
+            "budgets": config.budgets or None,
+            "circuit_breaker": config.circuit_breaker,
+            "failure_threshold": config.failure_threshold,
+            "cooldown_seconds": config.cooldown_seconds,
+            "request_log": config.request_log,
         }
         merged = {**defaults, **{k: v for k, v in options.items() if v is not None}}
         return create_gateway(self._rt(), **merged)
@@ -329,6 +358,85 @@ class _GatewayNamespace(_Namespace):
                 "balanced",
             ],
             "endpoints": self.endpoints(),
+        }
+
+
+class _GraphNamespace(_Namespace):
+    def create(self, **options: Any) -> Any:
+        """Create a KnowledgeGraph (GraphRAG pipeline: ingest → triples → cited answers)."""
+        from aire.graph.pipeline import KnowledgeGraph
+
+        return KnowledgeGraph(self._rt(), **options)
+
+    def store(self, spec: str = "sqlite:memory", **options: Any) -> Any:
+        """Resolve a graph store by ``provider:name`` (embedded sqlite by default)."""
+        from aire.core.types import Ref
+
+        ref = Ref.parse(spec)
+        runtime = self._rt()
+        if not runtime.graph_stores.has(ref.provider):
+            from aire.graph.store import register
+
+            register(runtime)
+        return runtime.graph_stores.create(ref.provider, name=ref.name, runtime=runtime, **options)
+
+    def describe(self) -> dict[str, Any]:
+        runtime = self._rt()
+        return {
+            "kind": "graph",
+            "stores": runtime.graph_stores.names() or ["sqlite"],
+            "extractors": ["lexical", "model"],
+        }
+
+
+class _MemoryNamespace(_Namespace):
+    def create(
+        self,
+        *,
+        path: str | Path | None = None,
+        embedder: Any = None,
+        window: int = 200,
+        **options: Any,
+    ) -> Any:
+        """Create long-term memory (episodic + semantic, optional persistence)."""
+        from aire.memory.store import LongTermMemory
+
+        return LongTermMemory(embedder=embedder, path=path, window=window, **options)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "memory",
+            "types": ["episodic", "semantic", "procedural"],
+            "agent_usage": "AI.agents.create(memory=AI.memory.create(...))",
+        }
+
+
+class _McpNamespace(_Namespace):
+    def server(self, tools: list[Tool] | None = None, **options: Any) -> Any:
+        """Build an MCP server exposing the given tools (or builtins + registered)."""
+        from aire.mcp.server import MCPServer, default_server
+
+        if tools is None:
+            return default_server()
+        return MCPServer(tools, **options)
+
+    async def connect(self, command: list[str], **options: Any) -> Any:
+        """Connect to an MCP server subprocess; returns a connected MCPClient."""
+        from aire.mcp.client import MCPClient
+
+        return await MCPClient(command, **options).connect()
+
+    def connect_sync(self, command: list[str], **options: Any) -> Any:
+        return run_sync(self.connect(command, **options))
+
+    def describe(self) -> dict[str, Any]:
+        from aire.mcp.protocol import PROTOCOL_VERSION
+
+        return {
+            "kind": "mcp",
+            "protocol": PROTOCOL_VERSION,
+            "transport": "stdio (newline-delimited JSON-RPC 2.0)",
+            "cli": "aire mcp-serve",
         }
 
 
@@ -373,6 +481,9 @@ class AI:
     models = _ModelsNamespace()
     data = _DataNamespace()
     rag = _RagNamespace()
+    graph = _GraphNamespace()
+    memory = _MemoryNamespace()
+    mcp = _McpNamespace()
     agents = _AgentsNamespace()
     observe = _ObserveNamespace()
     deploy = _DeployNamespace()
@@ -519,6 +630,9 @@ class AI:
                 "models",
                 "data",
                 "rag",
+                "graph",
+                "memory",
+                "mcp",
                 "agents",
                 "workflows",
                 "training",

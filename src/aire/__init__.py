@@ -14,7 +14,7 @@ actually used. Everything is discoverable via ``.describe()`` manifests.
 """
 
 from aire._version import __version__
-from aire.agents import Agent, AgentConfig, AgentResult, AgentStatus
+from aire.agents import Agent, AgentConfig, AgentResult, AgentStatus, Team, TeamResult
 from aire.ai import AI
 from aire.core.config import Settings
 from aire.core.content import (
@@ -32,7 +32,9 @@ from aire.core.runtime import Runtime
 from aire.core.types import Capability, HealthStatus, Manifest, Ref, Usage
 from aire.data import Dataset, Record
 from aire.evaluation import EvalCase, EvalReport, Evaluator
+from aire.graph import KnowledgeGraph
 from aire.knowledge_assistant import Assistant
+from aire.memory import LongTermMemory, MemoryEntry
 from aire.models import (
     EmbeddingModel,
     GenerationRequest,
@@ -69,7 +71,10 @@ __all__ = [
     "HealthStatus",
     "ImageContent",
     "Knowledge",
+    "KnowledgeGraph",
+    "LongTermMemory",
     "Manifest",
+    "MemoryEntry",
     "Message",
     "Model",
     "ModelInfo",
@@ -81,6 +86,8 @@ __all__ = [
     "Settings",
     "SideEffect",
     "StructuredContent",
+    "Team",
+    "TeamResult",
     "TextContent",
     "Tool",
     "ToolResult",
