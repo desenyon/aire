@@ -4,6 +4,7 @@ aire init <name>            scaffold a project
 aire run <prompt>           one-shot generation with the configured model
 aire evaluate <dataset>     run an evaluation suite
 aire serve                  serve the project's build_target() via uvicorn
+aire gateway                serve an OpenAI-compatible model gateway
 aire inspect <what>         inspect models|tools|plugins|config
 aire plugins                list discovered plugins
 aire doctor                 diagnose environment, credentials and config
@@ -158,6 +159,76 @@ def serve(
     api = AI.deploy.api(build())
     typer.secho(f"serving on http://{host}:{port} (docs at /docs)", fg=typer.colors.GREEN)
     uvicorn.run(api, host=host, port=port)
+
+
+def parse_alias_options(values: list[str] | None) -> dict[str, str | list[str]]:
+    """Parse ``--alias public=ref1,ref2`` options into an alias mapping."""
+    aliases: dict[str, str | list[str]] = {}
+    for raw in values or []:
+        public, sep, refs = raw.partition("=")
+        if not sep or not public.strip() or not refs.strip():
+            typer.secho(
+                f"invalid --alias {raw!r}: expected public=provider:name[,provider:name...]",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        candidates = [r.strip() for r in refs.split(",") if r.strip()]
+        aliases[public.strip()] = candidates[0] if len(candidates) == 1 else candidates
+    return aliases
+
+
+@app.command()
+def gateway(
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(4000),
+    model: list[str] | None = typer.Option(
+        None, "--model", "-m", help="Model refs to expose (repeatable)."
+    ),
+    alias: list[str] | None = typer.Option(
+        None, "--alias", "-a", help="public=ref[,ref...] mapping (repeatable)."
+    ),
+    embed_alias: list[str] | None = typer.Option(
+        None, "--embed-alias", help="public=embedder-ref mapping (repeatable)."
+    ),
+    routing: str | None = typer.Option(None, help="first | round_robin"),
+    objective: str | None = typer.Option(
+        None, help="Route by objective: lowest_cost|highest_quality|..."
+    ),
+    auth_token: str | None = typer.Option(None, help="Require this bearer token."),
+    rate_limit: int | None = typer.Option(None, help="Requests per minute per client."),
+) -> None:
+    """Serve an OpenAI-compatible gateway in front of any providers.
+
+    Examples:
+
+        aire gateway -m ollama:llama3.2
+
+        aire gateway -a smart=anthropic:claude-sonnet-4-5,openai:gpt-4o-mini
+
+        aire gateway --objective lowest_cost --auth-token sk-internal
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        typer.secho("uvicorn required: pip install 'aire[serve]'", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    from aire.ai import AI
+
+    try:
+        app = AI.gateway.create(
+            models=model or None,
+            aliases=parse_alias_options(alias) or None,
+            embeddings=parse_alias_options(embed_alias) or None,
+            routing=routing,
+            objective=objective,
+            auth_token=auth_token,
+            rate_limit_per_minute=rate_limit,
+        )
+    except AireError as exc:
+        _fail(exc)
+    typer.secho(f"gateway listening on http://{host}:{port} (docs at /docs)", fg=typer.colors.GREEN)
+    uvicorn.run(app, host=host, port=port)
 
 
 @app.command()
