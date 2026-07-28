@@ -125,10 +125,22 @@ class RedisCachedModel(Model):
             "checked_at": time.time(),
         }
 
-    def clear(self) -> None:
-        # Redis SCAN delete of prefix is intentionally not implemented offline;
-        # callers should flush via redis-cli when needed.
-        pass
+    def clear(self) -> int:
+        """Delete all keys under this cache prefix. Returns number deleted."""
+        pattern = self.backend.prefix + "*"
+        client = self.backend._client
+        deleted = 0
+        # SCAN avoids KEYS on large DBs
+        cursor = 0
+        while True:
+            cursor, keys = client.scan(cursor=cursor, match=pattern, count=200)
+            if keys:
+                deleted += int(client.delete(*keys))
+            if cursor == 0:
+                break
+        self.hits = 0
+        self.misses = 0
+        return deleted
 
 
 def describe() -> dict[str, Any]:

@@ -62,6 +62,7 @@ class Answer(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     model: str = "unknown"
     retrieved: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class IndexReport(BaseModel):

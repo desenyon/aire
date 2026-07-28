@@ -13,7 +13,7 @@ from pydantic import BaseModel, model_validator
 
 from aire.core.errors import ConfigurationError
 
-QuantMethod = Literal["bitsandbytes", "gguf", "awq", "gptq", "stub"]
+QuantMethod = Literal["bitsandbytes", "stub"]
 
 
 class QuantizationConfig(BaseModel):
@@ -58,8 +58,8 @@ class Quantizer:
             return self._model
         if self.config.method != "bitsandbytes":
             raise ConfigurationError(
-                f"quantization method {self.config.method!r} is declared but not wired; "
-                "use method='bitsandbytes' or method='stub' for offline describe()",
+                f"quantization method {self.config.method!r} is not supported; "
+                "use method='bitsandbytes' or method='stub'",
                 code="training.quant_method",
                 context={"method": self.config.method, "supported": ["bitsandbytes", "stub"]},
             )

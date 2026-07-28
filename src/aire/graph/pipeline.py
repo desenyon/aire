@@ -26,10 +26,13 @@ if TYPE_CHECKING:
     from aire.core.runtime import Runtime
 
 GRAPH_PROMPT = (
-    "Answer the question using only the knowledge graph facts and context below. "
+    "Answer the question using only the knowledge graph facts, community "
+    "summaries, and context below. "
     "Cite sources as [1], [2], ... matching the context entries. "
     "If the facts do not contain the answer, say so.\n\n"
-    "Graph facts:\n{facts}\n\nContext:\n{context}\n\nQuestion: {question}\nAnswer:"
+    "Graph facts:\n{facts}\n\n"
+    "Community summaries:\n{communities}\n\n"
+    "Context:\n{context}\n\nQuestion: {question}\nAnswer:"
 )
 
 
@@ -146,10 +149,16 @@ class KnowledgeGraph:
         return await self.store.neighborhood([e.name for e in matches], depth=depth)
 
     async def query(self, question: str, *, k: int = 5, depth: int = 1) -> Answer:
-        """Graph-grounded answering: facts + fused vector context → cited answer."""
+        """Graph-grounded answering: facts + communities + vector context → cited answer."""
+        from aire.graph.community import detect_communities
         from aire.models.types import EmbeddingRequest, GenerationRequest
 
         subgraph = await self.subgraph(question, depth=depth)
+        communities = detect_communities(subgraph.entities, subgraph.relations)
+        community_text = (
+            "\n".join(f"- {c.summary}" for c in communities.communities if c.summary)
+            or "(no communities)"
+        )
         embedder = await self._embedder()
         vector = (await embedder.embed(EmbeddingRequest(inputs=[question]))).vectors[0]
         hits = await self.vector_store.search(vector, k=k)
@@ -169,9 +178,21 @@ class KnowledgeGraph:
                 )
             )
         model = await self._answering_model()
-        prompt = self.prompt_template.format(
-            facts=facts, context="\n\n".join(context_blocks), question=question
-        )
+        format_kwargs = {
+            "facts": facts,
+            "communities": community_text,
+            "context": "\n\n".join(context_blocks),
+            "question": question,
+        }
+        try:
+            prompt = self.prompt_template.format(**format_kwargs)
+        except KeyError:
+            # Custom templates from older callers may omit {communities}
+            prompt = self.prompt_template.format(
+                facts=f"{facts}\n\nCommunity summaries:\n{community_text}",
+                context=format_kwargs["context"],
+                question=question,
+            )
         result = await model.generate(GenerationRequest.of(prompt))
         return Answer(
             text=result.text,
@@ -179,6 +200,9 @@ class KnowledgeGraph:
             usage=result.usage,
             model=result.model,
             retrieved=len(hits) + len(subgraph.relations),
+            metadata={
+                "communities": communities.describe(),
+            },
         )
 
     def describe(self) -> dict[str, Any]:

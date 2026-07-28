@@ -305,7 +305,7 @@ def _doctor_live_checks(check: Any) -> None:
         ("ANTHROPIC_API_KEY", "anthropic:claude-sonnet-4-5"),
     ):
         if not os.environ.get(env_var):
-            check(f"live:{spec}", True, "skipped (no credentials)")
+            check(f"live:{spec}", None, "skipped (no credentials)", skipped=True)
             continue
         try:
             model = AI.models.use_sync(spec)
@@ -335,8 +335,12 @@ def doctor(
 
     checks: list[dict[str, Any]] = []
 
-    def check(name: str, ok: bool, detail: str = "") -> None:
-        checks.append({"check": name, "ok": ok, "detail": detail})
+    def check(name: str, ok: bool | None, detail: str = "", *, skipped: bool = False) -> None:
+        entry: dict[str, Any] = {"check": name, "ok": ok, "detail": detail}
+        if skipped or ok is None:
+            entry["skipped"] = True
+            entry["ok"] = None
+        checks.append(entry)
 
     check("python>=3.11", sys.version_info >= (3, 11), sys.version.split()[0])
     for package in ("pydantic", "httpx", "yaml", "typer"):
@@ -368,9 +372,19 @@ def doctor(
     failures = [
         c
         for c in checks
-        if not c["ok"] and "optional" not in c["check"] and not c["check"].startswith("credentials")
+        if c.get("ok") is False
+        and "optional" not in c["check"]
+        and not c["check"].startswith("credentials")
     ]
-    _echo_json({"checks": checks, "healthy": not failures, "live": live})
+    skipped = sum(1 for c in checks if c.get("skipped"))
+    _echo_json(
+        {
+            "checks": checks,
+            "healthy": not failures,
+            "live": live,
+            "skipped": skipped,
+        }
+    )
     if failures:
         raise typer.Exit(code=1)
 

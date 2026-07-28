@@ -5,12 +5,24 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from aire.core.errors import ConfigurationError, NotFoundError
 from aire.tools.tool import Tool
+
+if TYPE_CHECKING:
+    from aire.agents.agent import Agent
+
+
+# Map skill tool aliases → builtin tool names when packs reference legacy names.
+_TOOL_ALIASES: dict[str, str] = {
+    "web_search": "http_get",
+    "fetch_url": "http_get",
+    "python_eval": "calculator",
+    "search": "http_get",
+}
 
 
 class Skill(BaseModel):
@@ -71,6 +83,38 @@ class SkillRegistry:
             loaded.append(skill)
         return loaded
 
+    def resolve_tools(self, name: str, *, builtins: bool = True) -> list[Tool]:
+        """Return registered skill tools plus builtins matching ``tool_names``."""
+        skill = self.get(name)
+        found: dict[str, Tool] = {t.spec.name: t for t in self.tools_for(name)}
+        if builtins:
+            from aire.tools.builtins import builtin_tools
+
+            by_name = {t.spec.name: t for t in builtin_tools()}
+            for wanted in skill.tool_names:
+                key = _TOOL_ALIASES.get(wanted, wanted)
+                if key in by_name and key not in found:
+                    found[key] = by_name[key]
+        return list(found.values())
+
+    def apply(self, agent: Agent, name: str, *, builtins: bool = True) -> Agent:
+        """Bind skill tools + system prompt onto an existing agent (mutates in place)."""
+        skill = self.get(name)
+        for tool in self.resolve_tools(name, builtins=builtins):
+            if not agent.registry.has(tool.spec.name):
+                agent.registry.register(tool)
+        prompt = skill.prompts.get("main") or skill.description
+        if prompt:
+            existing = agent.config.system_prompt or ""
+            block = f"[skill:{skill.name}] {prompt}"
+            if block not in existing:
+                agent.config.system_prompt = f"{existing}\n{block}".strip() if existing else block
+        skills = list(getattr(agent, "_skills", []))
+        if skill.name not in skills:
+            skills.append(skill.name)
+        agent._skills = skills
+        return agent
+
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "skills",
@@ -78,6 +122,7 @@ class SkillRegistry:
                 {"name": s.name, "description": s.description, "tools": s.tool_names}
                 for s in self._skills.values()
             ],
+            "methods": ["register", "get", "tools_for", "resolve_tools", "apply", "load_dir"],
         }
 
 
@@ -90,6 +135,11 @@ def default_skills() -> SkillRegistry:
         _default_skills = SkillRegistry()
         _register_builtins(_default_skills)
     return _default_skills
+
+
+def apply_skill(agent: Agent, name: str, *, builtins: bool = True) -> Agent:
+    """Apply a named skill from the default registry onto ``agent``."""
+    return default_skills().apply(agent, name, builtins=builtins)
 
 
 def skill(
@@ -128,7 +178,7 @@ def _register_builtins(reg: SkillRegistry) -> None:
             name="code",
             description="Write and explain code",
             prompts={"main": "Write correct, minimal code. Explain briefly."},
-            tool_names=["python_eval"],
+            tool_names=["python_eval", "calculator"],
         ),
         replace=True,
     )

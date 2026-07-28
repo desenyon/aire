@@ -51,15 +51,15 @@ def agent_recipe(
     skills: list[str] | None = None,
     **options: Any,
 ) -> dict[str, Any]:
-    from aire.agents.skills import default_skills
+    from aire.agents.skills import apply_skill, default_skills
     from aire.ai import AI
 
     agent = AI.agents.create_sync(model, builtins=builtins, **options)
     loaded_skills = []
     if skills:
-        reg = default_skills()
         for name in skills:
-            loaded_skills.append(reg.get(name))
+            apply_skill(agent, name, builtins=True)
+            loaded_skills.append(default_skills().get(name))
     return {
         "kind": "agent",
         "agent": agent,
@@ -81,9 +81,15 @@ def finetune_recipe(
     from aire.training.lora import create_lora
 
     if backend == "lora":
+        options.setdefault("dry_run", False)
         trainer: Any = create_lora(model_name, **options)
+        next_step = (
+            "trainer.fit(dataset, dry_run=True) for CI; "
+            "trainer.fit(dataset) for real PEFT (requires aire[peft])"
+        )
     elif backend == "lm":
         trainer = LMTrainer(**options)
+        next_step = "await trainer.fit(dataset)"
     else:
         raise ConfigurationError(
             f"unknown finetune backend {backend!r}",
@@ -99,7 +105,7 @@ def finetune_recipe(
             discrete={"epochs": [1, 2, 3]},
             log_continuous={"learning_rate": (1e-5, 1e-3)},
         ),
-        "next": "trainer.prepare() / trainer.fit(dataset) - requires aire[peft] for LoRA",
+        "next": next_step,
         "describe": trainer.describe() if hasattr(trainer, "describe") else {},
     }
 

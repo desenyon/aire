@@ -1,5 +1,12 @@
 # aire — Roadmap
 
+## 0.3.3 / 0.3.2B — hardening partial surfaces
+
+- [x] Wave 1: pgvector honesty, LoRA fit, GraphRAG communities, skills apply,
+      DurableSession, gateway stream cache, quant method narrowing
+- [x] Wave 2: DistillTrainer, doctor skipped status, Redis clear, async
+      community summaries, topology tests, recipe/facade wiring
+
 ## 0.3.2 — depth (eval, cost, quant/distill, multimodal)
 
 - [x] Faithfulness / embedding / BLEU / ROUGE-L metrics + model/embedding rerank

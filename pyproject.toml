@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.3.2"
+version = "0.3.3"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }

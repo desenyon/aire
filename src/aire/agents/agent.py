@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aire.agents.memory import Memory, resolve_memory
 from aire.agents.runtime import AgentExecutor, Approver
+from aire.agents.session import DurableSession
 from aire.agents.types import AgentConfig, AgentResult, AgentState
 from aire.models.base import Model
 from aire.tools.registry import ToolRegistry
@@ -28,6 +30,7 @@ class Agent:
         runtime: Runtime | None = None,
         approver: Approver | None = None,
         name: str = "agent",
+        session: DurableSession | str | Path | None = None,
     ) -> None:
         self.model = model
         self.name = name
@@ -40,12 +43,23 @@ class Agent:
         self.config = config or AgentConfig()
         self.approver = approver
         self.state = AgentState()
+        self._skills: list[str] = []
+        if isinstance(session, DurableSession):
+            self.session: DurableSession | None = session
+        elif session is not None:
+            self.session = DurableSession(session)
+        else:
+            self.session = None
 
     # -- execution -----------------------------------------------------------------
 
     async def run(self, input: str) -> AgentResult:
-        """Run the agent to a terminal state and persist memory."""
+        """Run the agent to a terminal state and persist memory (+ optional session)."""
         self.state = AgentState(input=input)
+        if self.session is not None:
+            self.session.state.goal = input
+            self.session.state.status = "running"
+            self.session.save()
         executor = AgentExecutor(
             self.model,
             self.registry,
@@ -56,14 +70,22 @@ class Agent:
         )
         from aire.core.content import Message
 
-        # Executor owns history assembly (recall + current user turn once).
-        result = await executor.run(input, state=self.state)
+        try:
+            result = await executor.run(input, state=self.state)
+        except Exception as exc:
+            if self.session is not None:
+                self.session.fail(str(exc))
+            raise
         await self.memory.add(Message.text("user", input))
         for message in self.state.messages:
             if message.role == "tool":
                 await self.memory.add(message)
         if result.output:
             await self.memory.add(Message.text("assistant", result.output))
+        if self.session is not None:
+            for step in result.steps:
+                self.session.append_step(step)
+            self.session.complete(result)
         return result
 
     async def ask(self, input: str) -> str:
@@ -81,6 +103,22 @@ class Agent:
 
         self.state = AgentState()
         run_sync(self.memory.clear())
+
+    def attach_session(self, path: str | Path | DurableSession) -> DurableSession:
+        """Attach or create a durable session for checkpoint/resume."""
+        self.session = path if isinstance(path, DurableSession) else DurableSession(path)
+        return self.session
+
+    @classmethod
+    def from_session(
+        cls,
+        path: str | Path,
+        model: Model,
+        **kwargs: Any,
+    ) -> Agent:
+        """Rebuild an agent bound to an existing session file."""
+        session = DurableSession(path)
+        return cls(model, session=session, **kwargs)
 
     # -- composition ------------------------------------------------------------------
 
@@ -123,4 +161,6 @@ class Agent:
             "tools": [t.spec.describe() for t in self.registry],
             "memory": self.memory.describe(),
             "config": self.config.model_dump(mode="json"),
+            "skills": list(self._skills),
+            "session": self.session.describe() if self.session else None,
         }

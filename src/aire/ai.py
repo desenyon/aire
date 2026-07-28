@@ -198,9 +198,12 @@ class _AgentsNamespace(_Namespace):
         approver: Any = None,
         name: str = "agent",
         builtins: bool = False,
+        skills: list[str] | None = None,
+        session: Any = None,
     ) -> Agent:
         """Create an agent; tool name strings resolve against the runtime registry."""
         from aire.agents.agent import Agent
+        from aire.agents.skills import apply_skill
         from aire.tools.builtins import builtin_tools
 
         runtime = self._rt()
@@ -220,7 +223,7 @@ class _AgentsNamespace(_Namespace):
                 from aire.core.errors import NotFoundError
 
                 raise NotFoundError("tool", t)
-        return Agent(
+        agent = Agent(
             resolved_model,
             tools=resolved_tools,
             memory=memory,
@@ -228,7 +231,11 @@ class _AgentsNamespace(_Namespace):
             runtime=runtime,
             approver=approver,
             name=name,
+            session=session,
         )
+        for skill_name in skills or []:
+            apply_skill(agent, skill_name, builtins=True)
+        return agent
 
     def create_sync(self, model: str | Model | None = None, **kwargs: Any) -> Agent:
         return run_sync(self.create(model, **kwargs))
@@ -460,7 +467,7 @@ class _GatewayNamespace(_Namespace):
                 "quality_under_budget",
                 "balanced",
             ],
-            "semantic_cache": True,
+            "semantic_cache": "optional via create_gateway(semantic_cache=True)",
             "endpoints": self.endpoints(),
         }
 
@@ -1009,6 +1016,11 @@ class _TrainingNamespace(_Namespace):
         from aire.training.distill import create_distiller
 
         return create_distiller(**options)
+
+    def distill_trainer(self, **options: Any) -> Any:
+        from aire.training.distill import DistillTrainer
+
+        return DistillTrainer(**options)
 
     async def hpo(
         self,

@@ -307,15 +307,23 @@ class Gateway:
     async def stream(
         self, public: str, request: GenerationRequest
     ) -> AsyncIterator[tuple[str, GenerationChunk]]:
-        """Stream chunks; falls back to the next candidate if a candidate fails
-        before producing its first chunk."""
+        """Stream chunks; semantic-cache hits replay as a single chunk stream."""
+        cached = await self._semantic_lookup(public, request)
+        if cached is not None:
+            ref, result = cached
+            yield ref, GenerationChunk(text=result.text, finish_reason="stop")
+            return
+
         chain = await self._chat_chain(public)
         last_error: Exception | None = None
         for ref, model in chain if self.fallback else chain[:1]:
             started = False
+            pieces: list[str] = []
             try:
                 async for chunk in model.stream(request):
                     started = True
+                    if chunk.text:
+                        pieces.append(chunk.text)
                     yield ref, chunk
             except Exception as exc:
                 self._record_failure(ref)
@@ -324,6 +332,12 @@ class Gateway:
                     raise
                 continue
             self._record_success(public, ref, 0.0)
+            if pieces and self.semantic_cache:
+                await self._semantic_store(
+                    public,
+                    request,
+                    GenerationResult.text_result("".join(pieces), model=ref),
+                )
             return
         assert last_error is not None
         raise last_error
@@ -363,6 +377,13 @@ class Gateway:
             "spend_today": self.spend_today(),
             "chat_models": {k: list(v) for k, v in sorted(self.chat_routes.items())},
             "embedding_models": {k: list(v) for k, v in sorted(self.embedding_routes.items())},
+            "semantic_cache": {
+                "enabled": self.semantic_cache,
+                "threshold": self.semantic_threshold,
+                "hits": self.semantic_hits,
+                "misses": self.semantic_misses,
+                "entries": len(self._semantic_entries),
+            },
             "endpoints": [
                 "/health",
                 "/v1/health",

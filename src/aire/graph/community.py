@@ -154,6 +154,36 @@ def _lexical_summary(entities: list[str], relations: list[Relation]) -> str:
     )
 
 
+async def summarize_communities_async(
+    report: CommunityReport,
+    *,
+    model: Any | None = None,
+) -> CommunityReport:
+    """Async community summaries — awaits model.ask when present."""
+    if model is None:
+        return summarize_communities(report, model=None)
+    updated: list[Community] = []
+    for community in report.communities:
+        prompt = (
+            "Summarize this knowledge-graph community in 1-2 sentences.\n"
+            f"Entities: {', '.join(community.entities[:20])}\n"
+            f"Relations:\n" + "\n".join(r.as_text() for r in community.relations[:20])
+        )
+        ask = getattr(model, "ask", None)
+        summary = _lexical_summary(community.entities, community.relations)
+        if callable(ask):
+            import inspect
+
+            result = ask(prompt)
+            if inspect.isawaitable(result):
+                result = await result
+            text = str(result).strip()
+            if text:
+                summary = text
+        updated.append(community.model_copy(update={"summary": summary}))
+    return report.model_copy(update={"communities": updated})
+
+
 def _model_summary(model: Any, community: Community) -> str:
     prompt = (
         "Summarize this knowledge-graph community in 1-2 sentences.\n"
@@ -166,8 +196,7 @@ def _model_summary(model: Any, community: Community) -> str:
 
         result = ask(prompt)
         if inspect.isawaitable(result):
-            # Callers that pass an async model should use summarize_communities
-            # from an async context; fall back to lexical here.
+            # Prefer summarize_communities_async for async models.
             return _lexical_summary(community.entities, community.relations)
         return str(result).strip()
     return _lexical_summary(community.entities, community.relations)

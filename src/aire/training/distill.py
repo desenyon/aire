@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from aire.core.errors import ConfigurationError
+from aire.training.trainer import TrainingConfig
 
 
 class DistillationConfig(BaseModel):
@@ -122,3 +123,58 @@ def create_distiller(**options: Any) -> Distiller:
             code="training.distill_options",
         )
     return Distiller(config=config, hard_loss_fn=hard)
+
+
+class DistillTrainer:
+    """Orchestrate soft+hard distillation steps over paired logit batches.
+
+    Offline-friendly: callers supply ``pairs`` of (student_logits, teacher_logits);
+    loops through :class:`FunctionTrainer`.
+    """
+
+    def __init__(
+        self,
+        distiller: Distiller | None = None,
+        *,
+        config: TrainingConfig | None = None,
+    ) -> None:
+        self.distiller = distiller or Distiller()
+        self.config = config or TrainingConfig(epochs=3)
+
+    async def fit(
+        self,
+        pairs: list[tuple[list[float], list[float]]],
+        *,
+        epochs: int | None = None,
+    ) -> Any:
+        from aire.data.dataset import Dataset
+        from aire.training.trainer import FunctionTrainer
+
+        if not pairs:
+            raise ConfigurationError(
+                "DistillTrainer.fit requires non-empty (student, teacher) logit pairs",
+                code="training.distill_empty",
+            )
+        cfg = self.config.model_copy(update={"epochs": epochs or self.config.epochs})
+
+        def step(
+            epoch: int,
+            dataset: Dataset,
+            config: TrainingConfig,
+            state: dict[str, Any],
+        ) -> tuple[dict[str, float], dict[str, Any]]:
+            total = 0.0
+            for student, teacher in pairs:
+                total += self.distiller.step(student, teacher).total_loss
+            mean = total / len(pairs)
+            return {"loss": mean}, {"pairs": float(len(pairs))}
+
+        trainer = FunctionTrainer(step, cfg)
+        return await trainer.fit(Dataset.from_texts([f"pair-{i}" for i in range(len(pairs))]))
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "distill_trainer",
+            "distiller": self.distiller.describe(),
+            "config": self.config.model_dump(),
+        }

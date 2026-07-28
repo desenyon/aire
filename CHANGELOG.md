@@ -7,6 +7,26 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.3.3] — 2026-07-28
+
+**0.3.2B hardening** — audit/fix/upgrade of partially built surfaces so
+contracts match behavior (Wave 1) and integrations connect (Wave 2).
+
+### Fixed / upgraded
+- **PgVectorStore**: real ``vector`` + ``<=>`` when extension+dim available;
+  honest ``jsonb_fallback`` + FTS keyword capability otherwise.
+- **LoRATrainer.fit** (+ dry-run for CI); finetune recipe next-steps aligned.
+- **GraphRAG query** injects community summaries into the prompt.
+- **Skills**: ``apply`` / ``apply_skill`` binds tools + system prompt; recipes
+  and ``AI.agents.create(skills=...)`` use it.
+- **DurableSession** wired into ``Agent`` (persist steps/result on run).
+- **Gateway stream** uses semantic cache lookup/store; ``describe()`` exposes
+  hit/miss stats.
+- **QuantMethod** narrowed to ``bitsandbytes|stub`` (no unwired literals).
+- **Doctor --live**: skipped checks are ``ok: null`` (not false-green).
+- **RedisCachedModel.clear()** SCAN+DEL under prefix.
+- **DistillTrainer** + ``summarize_communities_async``; topology unit tests.
+
 ## [0.3.2] — 2026-07-28
 
 Depth pass: evaluation/rerank, cost policies, quant/distill adapters, multimodal.
