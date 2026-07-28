@@ -144,7 +144,9 @@ def test_facade_backends_report() -> None:
 def test_facade_describe() -> None:
     manifest = AI.ml.describe()
     assert manifest["kind"] == "ml"
-    assert "knn" in manifest["native_estimators"]
+    assert any("knn" in r for r in manifest["estimators"]["simple"])
+    catalog = AI.ml.catalog()
+    assert "simple:centroid" in catalog["simple"]
 
 
 def test_sklearn_missing_dep_hint() -> None:

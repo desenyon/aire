@@ -213,7 +213,7 @@ result = await model.generate(
 | `AI.rag` | Knowledge pipelines and vector stores |
 | `AI.graph` | Knowledge graphs and GraphRAG pipelines |
 | `AI.memory` | Long-term agent memory (episodic + semantic) |
-| `AI.ml` | Model creation: train/evaluate/persist ML models (native, sklearn, torch) |
+| `AI.ml` | Model creation: estimators, CV, grid search, feature importance |
 | `AI.mcp` | MCP servers and clients (Model Context Protocol) |
 | `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
 | `AI.agents` | Create agents and supervisor-routed teams |
@@ -379,8 +379,12 @@ est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300)  # aire
 
 metrics = await est.evaluate(dataset)  # accuracy / RMSE / MAE
 preds = await est.predict(new_records)  # Prediction(value, probabilities)
-path = est.save("artifacts/classifier.json")
 est2 = AI.ml.create("simple:centroid").load(path)
+
+AI.ml.catalog()  # creatable refs by backend
+cv = await AI.ml.cross_validate("simple:centroid", dataset, k=5)
+gs = await AI.ml.grid_search("simple:knn", dataset, {"k": [1, 3, 5]}, k=3)
+importance = await est.feature_importance(dataset)
 ```
 
 Records carry features via `metadata["features"]` (explicit dict) → numeric metadata → text-derived fallback; the same convention feeds every backend. Native estimators (`simple:majority`, `simple:centroid`, `simple:knn`, `simple:linear_regression`) are real learners and persist as portable JSON. sklearn exposes `estimator.model` for `skops`/`joblib` persistence (aire never pickles); torch persists via `torch.save` with `weights_only=True` loads. The pandas bridge moves data both ways: `AI.ml.to_frame(dataset)` / `AI.ml.from_frame(df, target="label")`. Custom torch architectures plug in via `module_factory`. See `examples/ml/main.py` (runs offline).
@@ -797,6 +801,7 @@ Runnable, offline, no credentials required:
 | [examples/deployment_api](examples/deployment_api/main.py) | Auth-guarded FastAPI app + artifact generation |
 | [examples/gateway](examples/gateway/main.py) | OpenAI-compatible gateway: aliases, fallback, streaming, embeddings |
 | [examples/graphrag](examples/graphrag/main.py) | Knowledge graph ingestion + graph-grounded answers with citations |
+| [examples/ml](examples/ml/main.py) | Estimator contract: native / sklearn / torch + pandas bridge |
 | [examples/teams](examples/teams/main.py) | Agent-as-tool, supervisor-routed team, long-term memory |
 
 ```bash
@@ -823,8 +828,8 @@ pip install -e ".[dev]"
 # Quality gates (all must pass):
 ruff check .
 ruff format --check .
-mypy src               # strict mode, 116 files
-pytest                 # 326 tests: unit, contract, integration, security, performance
+mypy src               # strict mode, 128 files
+pytest                 # 332 tests: unit, contract, integration, security, performance
 pytest tests/integration tests/security
 ```
 

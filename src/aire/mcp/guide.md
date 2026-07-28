@@ -131,6 +131,8 @@ text-derived fallback. Targets come from `record.metadata[target]`.
 pandas bridge: `AI.ml.to_frame(ds)` / `AI.ml.from_frame(df, target="label")`.
 aire never pickles: sklearn persists via `skops`/`joblib` on `est.model`;
 torch uses `torch.save` with `weights_only=True`.
+`AI.ml.catalog()`, `AI.ml.cross_validate(...)`, `AI.ml.grid_search(...)`,
+`est.feature_importance(...)` for model selection and inspection.
 
 ## 9. Gateway (serve models as APIs)
 
@@ -142,6 +144,8 @@ app = AI.gateway.create(routes={"fast": ["groq:llama-3.3-70b", "ollama:llama3.2"
 
 Or `aire gateway --port 8080`. Config in `aire.yaml`: budgets (USD/day per
 alias), circuit breakers, rate limits, request logging (JSONL).
+Health: `GET /health` and `GET /v1/health`. Spend: `GET /v1/gateway/spend`.
+Responses include `X-Aire-Resolved-Model`, `X-Aire-Cost-Usd`, token headers.
 
 ## 10. Evaluation
 

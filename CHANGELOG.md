@@ -7,6 +7,22 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.6] — 2026-07-28
+
+Deepen existing ML orchestration and gateway surfaces — richer metrics,
+model selection, and operator observability.
+
+### Added
+- **ML evaluation depth**: full classification reports (per-class + macro/micro
+  precision/recall/F1), regression R² alongside MAE/RMSE;
+  `Estimator.cross_validate` / `AI.ml.cross_validate`; exhaustive
+  `AI.ml.grid_search` with inner k-fold CV; model-agnostic
+  `Estimator.feature_importance` (permutation); `AI.ml.catalog()` catalog.
+- **Gateway operator APIs**: `GET /v1/health` (rich payload),
+  `GET /v1/gateway/spend` (today's spend, budgets, remaining), response
+  headers `X-Aire-Cost-Usd` / `X-Aire-Input-Tokens` / `X-Aire-Output-Tokens`
+  on chat and Anthropic messages; `Gateway.spend_today()`.
+
 ## [0.2.5] — 2026-07-27
 
 Final sweep of the 0.2.x hardening series: documentation alignment and a last

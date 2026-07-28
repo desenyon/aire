@@ -268,6 +268,14 @@ class Gateway:
 
     # -- introspection -----------------------------------------------------------------
 
+    def spend_today(self) -> dict[str, float]:
+        """Per-alias / per-ref USD spent today (UTC day)."""
+        return {
+            key: round(spent, 6)
+            for key, (day, spent) in sorted(self._spend.items())
+            if day == _today()
+        }
+
     def describe(self) -> dict[str, Any]:
         """Machine-readable gateway manifest — for agents and operators."""
         return {
@@ -290,18 +298,18 @@ class Gateway:
                 },
             },
             "budgets": dict(self.budgets),
-            "spend_today": {
-                key: round(spent, 6)
-                for key, (day, spent) in sorted(self._spend.items())
-                if day == _today()
-            },
+            "spend_today": self.spend_today(),
             "chat_models": {k: list(v) for k, v in sorted(self.chat_routes.items())},
             "embedding_models": {k: list(v) for k, v in sorted(self.embedding_routes.items())},
             "endpoints": [
+                "/health",
+                "/v1/health",
                 "/v1/chat/completions",
                 "/v1/messages",
                 "/v1/embeddings",
                 "/v1/models",
+                "/v1/gateway/manifest",
+                "/v1/gateway/spend",
             ],
         }
 
@@ -369,7 +377,11 @@ def create_gateway(
 def _register_meta_routes(app: Any, gateway: Gateway, guard: Any) -> None:
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "aire_version": __version__}
+        return _health_payload(gateway)
+
+    @app.get("/v1/health")
+    async def health_v1() -> dict[str, Any]:
+        return _health_payload(gateway)
 
     @app.get("/v1/models", dependencies=[Depends(guard)])
     async def list_models() -> dict[str, Any]:
@@ -386,6 +398,36 @@ def _register_meta_routes(app: Any, gateway: Gateway, guard: Any) -> None:
     @app.get("/v1/gateway/manifest", dependencies=[Depends(guard)])
     async def manifest() -> dict[str, Any]:
         return gateway.describe()
+
+    @app.get("/v1/gateway/spend", dependencies=[Depends(guard)])
+    async def spend() -> dict[str, Any]:
+        today = _today()
+        return {
+            "day": today,
+            "spend_usd": gateway.spend_today(),
+            "budgets_usd": dict(gateway.budgets),
+            "remaining_usd": {
+                key: round(limit - gateway.spend_today().get(key, 0.0), 6)
+                for key, limit in gateway.budgets.items()
+            },
+        }
+
+
+def _health_payload(gateway: Gateway) -> dict[str, Any]:
+    open_circuits = sum(
+        1
+        for state in gateway._circuits.values()
+        if state.get("opened_at") is not None
+        and time.monotonic() - state["opened_at"] < gateway.cooldown_seconds
+    )
+    return {
+        "status": "ok",
+        "aire_version": __version__,
+        "chat_models": len(gateway.chat_routes),
+        "embedding_models": len(gateway.embedding_routes),
+        "open_circuits": open_circuits,
+        "spend_keys_today": len(gateway.spend_today()),
+    }
 
 
 def _register_chat_route(
@@ -413,7 +455,7 @@ def _register_chat_route(
         _log_request(log, "chat.completions", public, resolved, result, started)
         return JSONResponse(
             content=_chat_completion_body(public, resolved, result),
-            headers={"X-Aire-Resolved-Model": resolved},
+            headers=_aire_headers(resolved, result),
         )
 
 
@@ -436,7 +478,7 @@ def _register_anthropic_route(
         _log_request(log, "messages", public, resolved, result, started)
         return JSONResponse(
             content=_anthropic_body(public, resolved, result),
-            headers={"X-Aire-Resolved-Model": resolved},
+            headers=_aire_headers(resolved, result),
         )
 
 
@@ -707,6 +749,15 @@ def _error_body(exc: AireError) -> dict[str, Any]:
             "type": type_by_status.get(status, "server_error"),
             "code": exc.code,
         }
+    }
+
+
+def _aire_headers(resolved: str, result: GenerationResult) -> dict[str, str]:
+    return {
+        "X-Aire-Resolved-Model": resolved,
+        "X-Aire-Cost-Usd": f"{result.usage.cost_usd:.8f}",
+        "X-Aire-Input-Tokens": str(result.usage.input_tokens),
+        "X-Aire-Output-Tokens": str(result.usage.output_tokens),
     }
 
 

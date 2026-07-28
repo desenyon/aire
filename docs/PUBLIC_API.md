@@ -154,16 +154,20 @@ from aire.ml import (
 ```
 
 - `AI.ml.create(spec, **options)` / `AI.ml.fit(spec, dataset, target=)` /
-  `AI.ml.backends()` / `AI.ml.to_frame(ds)` / `AI.ml.from_frame(df, target=)`.
+  `AI.ml.backends()` / `AI.ml.catalog()` / `AI.ml.to_frame(ds)` /
+  `AI.ml.from_frame(df, target=)`.
+- `AI.ml.cross_validate(spec, dataset, k=)` / `AI.ml.grid_search(spec, dataset,
+  param_grid)` / `est.feature_importance(dataset)`.
 - Estimator refs: `simple:majority · centroid · knn · linear_regression`
   (native, offline), `sklearn:<name|dotted.path>` (aire[ml]),
   `torch:mlp` with `hidden=`, `module_factory=` (aire[torch]).
 - Contract: `await est.fit(dataset, target=)` → `FitReport`;
   `await est.predict(records)` → `Prediction(value, probabilities)`;
-  `await est.evaluate(dataset)`; `est.save(path)` / `est.load(path)`;
-  `est.describe()`. Feature convention: `metadata["features"]` → numeric
-  metadata → text-derived. aire never pickles: sklearn persists via
-  `skops`/`joblib` on `est.model`; torch loads use `weights_only=True`.
+  `await est.evaluate(dataset)` → classification report or MAE/RMSE/R²;
+  `est.save(path)` / `est.load(path)`; `est.describe()`. Feature convention:
+  `metadata["features"]` → numeric metadata → text-derived. aire never
+  pickles: sklearn persists via `skops`/`joblib` on `est.model`; torch loads
+  use `weights_only=True`.
 
 ## Tools & agents
 

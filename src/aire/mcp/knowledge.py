@@ -216,7 +216,7 @@ def builtin_prompts() -> list[MCPPrompt]:
         ),
         MCPPrompt(
             name="aire_ml",
-            description="Train and evaluate an ML model on an aire Dataset.",
+            description="Train, cross-validate, and select an ML model on an aire Dataset.",
             arguments=[
                 MCPPromptArgument(name="estimator", description="Estimator ref", required=True),
                 MCPPromptArgument(name="target", description="Target metadata field"),
@@ -224,9 +224,11 @@ def builtin_prompts() -> list[MCPPrompt]:
             template=(
                 "Train '{estimator}' with aire on the loaded dataset (target field "
                 "'{target}'): est = await AI.ml.fit('{estimator}', dataset, "
-                "target='{target}'); report est.report metrics, evaluate on held-out "
-                "records, and save with est.save(path). Check AI.ml.backends() first; "
-                "use simple:* estimators when sklearn/torch are not installed."
+                "target='{target}'); report evaluate metrics (classification report "
+                "or MAE/RMSE/R2), optionally await AI.ml.cross_validate / "
+                "AI.ml.grid_search for selection, then est.save(path). Check "
+                "AI.ml.catalog() and AI.ml.backends() first; use simple:* when "
+                "sklearn/torch are not installed."
             ),
         ),
     ]

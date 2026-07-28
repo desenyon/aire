@@ -114,22 +114,45 @@ class Estimator(abc.ABC):
         ]
 
     async def evaluate(self, dataset: Dataset, *, target: str = "label") -> dict[str, float]:
-        """Score against labeled records: accuracy (classification) or RMSE/MAE."""
+        """Score against labeled records with a full classification/regression report."""
+        from aire.ml.metrics import classification_report, regression_metrics
+
         predictions = await self.predict(list(dataset))
         records = list(dataset)
         truth = [record.metadata.get(target) for record in records]
+        pred_values = [p.value for p in predictions]
         if self.task == TaskType.CLASSIFICATION:
-            correct = sum(
-                1 for p, t in zip(predictions, truth, strict=True) if str(p.value) == str(t)
-            )
-            return {"accuracy": correct / len(truth) if truth else 0.0, "samples": len(truth)}
-        errors = [
-            float(p.value) - float(t)  # type: ignore[arg-type]
-            for p, t in zip(predictions, truth, strict=True)
-        ]
-        mae = sum(abs(e) for e in errors) / len(errors) if errors else 0.0
-        rmse = (sum(e * e for e in errors) / len(errors)) ** 0.5 if errors else 0.0
-        return {"mae": mae, "rmse": rmse, "samples": len(truth)}
+            return classification_report(truth, pred_values).as_metrics()
+        return regression_metrics(truth, pred_values)
+
+    async def cross_validate(
+        self,
+        dataset: Dataset,
+        *,
+        k: int = 5,
+        target: str = "label",
+        seed: int = 0,
+        **factory_options: Any,
+    ) -> Any:
+        """K-fold CV using fresh clones of this estimator's class + options."""
+        from aire.ml.metrics import cross_validate as _cv
+
+        cls = type(self)
+
+        def factory() -> Estimator:
+            return cls(**factory_options) if factory_options else cls()
+
+        return await _cv(factory, dataset, k=k, target=target, seed=seed)
+
+    async def feature_importance(
+        self, dataset: Dataset, *, target: str = "label", n_repeats: int = 5, seed: int = 0
+    ) -> dict[str, float]:
+        """Permutation feature importance (model-agnostic)."""
+        from aire.ml.metrics import permutation_importance
+
+        return await permutation_importance(
+            self, dataset, target=target, n_repeats=n_repeats, seed=seed
+        )
 
     # -- persistence -----------------------------------------------------------------
 

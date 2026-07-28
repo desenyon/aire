@@ -503,11 +503,77 @@ class _MLNamespace(_Namespace):
     def fit_sync(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
         return run_sync(self.fit(spec, dataset, target=target, **options))
 
+    def catalog(self) -> dict[str, list[str]]:
+        """Catalog of creatable estimators by backend (agent-readable)."""
+        from aire.ml.native import NATIVE_ESTIMATORS
+        from aire.ml.pandas_bridge import available_backends
+        from aire.ml.sklearn_adapter import _SKLEARN_NAMES
+
+        backends = available_backends()
+        out: dict[str, list[str]] = {
+            "simple": [f"simple:{n}" for n in sorted(NATIVE_ESTIMATORS)],
+        }
+        if backends.get("sklearn"):
+            out["sklearn"] = [f"sklearn:{n}" for n in sorted(_SKLEARN_NAMES)]
+        out["torch"] = ["torch:mlp"]
+        return out
+
     def backends(self) -> dict[str, bool]:
         """Which ML backends are importable right now (native always true)."""
         from aire.ml.pandas_bridge import available_backends
 
         return available_backends()
+
+    async def cross_validate(
+        self,
+        spec: str,
+        dataset: Any,
+        *,
+        k: int = 5,
+        target: str = "label",
+        seed: int = 0,
+        **options: Any,
+    ) -> Any:
+        """K-fold CV for an estimator ref; returns :class:`~aire.ml.metrics.CVReport`."""
+        from aire.ml.metrics import cross_validate as _cv
+
+        def factory() -> Any:
+            return self.create(spec, **options)
+
+        return await _cv(factory, dataset, k=k, target=target, seed=seed)
+
+    def cross_validate_sync(self, spec: str, dataset: Any, **options: Any) -> Any:
+        return run_sync(self.cross_validate(spec, dataset, **options))
+
+    async def grid_search(
+        self,
+        spec: str,
+        dataset: Any,
+        param_grid: dict[str, list[Any]],
+        *,
+        k: int = 3,
+        target: str = "label",
+        scoring: str | None = None,
+        seed: int = 0,
+        **fixed: Any,
+    ) -> Any:
+        """Grid search over ``param_grid`` with inner k-fold CV."""
+        from aire.ml.metrics import grid_search as _gs
+
+        provider_name = spec  # capture for closure
+
+        def factory(**params: Any) -> Any:
+            merged = {**fixed, **params}
+            return self.create(provider_name, **merged)
+
+        return await _gs(
+            factory, dataset, param_grid, k=k, target=target, scoring=scoring, seed=seed
+        )
+
+    def grid_search_sync(
+        self, spec: str, dataset: Any, param_grid: dict[str, list[Any]], **options: Any
+    ) -> Any:
+        return run_sync(self.grid_search(spec, dataset, param_grid, **options))
 
     def to_frame(self, dataset: Any, **options: Any) -> Any:
         """Dataset → pandas DataFrame (requires pandas)."""
@@ -526,10 +592,21 @@ class _MLNamespace(_Namespace):
 
         return {
             "kind": "ml",
-            "contract": "Estimator: fit(dataset, target=) → predict → evaluate → save/load",
+            "contract": (
+                "Estimator: fit -> predict -> evaluate -> cross_validate -> "
+                "grid_search -> save/load"
+            ),
             "backends": available_backends(),
-            "native_estimators": ["majority", "centroid", "knn", "linear_regression"],
+            "estimators": self.catalog(),
             "feature_convention": "record.metadata['features'] → numeric metadata → text-derived",
+            "metrics": [
+                "accuracy",
+                "precision/recall/f1 (macro+micro+per-class)",
+                "mae",
+                "rmse",
+                "r2",
+                "permutation_importance",
+            ],
         }
 
 

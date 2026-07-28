@@ -27,7 +27,7 @@ def _require_torch() -> Any:
             code="ml.torch_missing",
             context={"backend": "torch"},
         )
-    import torch  # type: ignore[import-not-found]
+    import torch  # type: ignore[import-not-found,unused-ignore]
 
     return torch
 
