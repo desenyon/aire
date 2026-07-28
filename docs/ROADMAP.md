@@ -1,6 +1,13 @@
 # aire — Roadmap
 
-## 0.2.7 (current) — composable neural architecture blocks
+## 0.2.8 (current) — ML orchestrator across ecosystems
+
+- [x] `Transform` + `Pipeline` under one Estimator contract
+- [x] Keras / XGBoost / LightGBM lazy adapters + expanded sklearn zoo
+- [x] Torch training: optim/loss/batching/schedulers/callbacks
+- [x] `random_search`, search `direction=`, `AI.ml.train` facade
+
+## 0.2.7 — composable neural architecture blocks
 
 - [x] First-class attention / FFN / norm / residual / embed / head blocks with
       register-your-own factories; compose arbitrary per-layer stacks

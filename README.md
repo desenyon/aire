@@ -213,7 +213,7 @@ result = await model.generate(
 | `AI.rag` | Knowledge pipelines and vector stores |
 | `AI.graph` | Knowledge graphs and GraphRAG pipelines |
 | `AI.memory` | Long-term agent memory (episodic + semantic) |
-| `AI.ml` | Estimators + composable arch blocks + optim/loss |
+| `AI.ml` | Estimators + Pipeline/Transform + arch/optim/loss |
 | `AI.mcp` | MCP servers and clients (Model Context Protocol) |
 | `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
 | `AI.agents` | Create agents and supervisor-routed teams |
@@ -366,24 +366,34 @@ Two extractor strategies: the default `LexicalGraphExtractor` is deterministic a
 
 ## Model creation (ML)
 
-aire orchestrates the ML ecosystem instead of reimplementing it. One `Estimator` contract — `fit(dataset, target=)` → `predict` → `evaluate` → `save`/`load` — spans native zero-dependency learners, scikit-learn, and PyTorch, all addressed by `backend:name` refs:
+aire orchestrates the ML ecosystem instead of reimplementing it. One
+`Estimator` / `Transform` / `Pipeline` contract — `fit(dataset, target=)` →
+`predict` → `evaluate` → `save`/`load` — spans native zero-dependency learners,
+scikit-learn, PyTorch, Keras, XGBoost, and LightGBM, all addressed by
+`backend:name` refs:
 
 ```python
 from aire import AI
 
-AI.ml.backends()  # {"native": True, "sklearn": False, "torch": False, "pandas": False}
+AI.ml.backends()  # native/sklearn/torch/keras/xgboost/lightgbm/pandas
 
 est = await AI.ml.fit("simple:centroid", dataset)  # offline, zero deps
 est = await AI.ml.fit("sklearn:random_forest", dataset, n_estimators=100)  # aire[ml]
-est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300)  # aire[torch]
+est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300,
+                      optimizer="adamw", loss="cross_entropy", batch_size=32)  # aire[torch]
+est = await AI.ml.fit("keras:mlp", dataset)  # aire[keras]
+est = await AI.ml.fit("xgboost:classifier", dataset)  # aire[xgboost]
 
-metrics = await est.evaluate(dataset)  # accuracy / RMSE / MAE
-preds = await est.predict(new_records)  # Prediction(value, probabilities)
-est2 = AI.ml.create("simple:centroid").load(path)
+pipe = AI.ml.pipeline([
+    ("scale", "native:standard_scaler"),
+    ("clf", "simple:centroid"),
+])
+await pipe.fit(dataset)
 
 AI.ml.catalog()  # creatable refs by backend
 cv = await AI.ml.cross_validate("simple:centroid", dataset, k=5)
 gs = await AI.ml.grid_search("simple:knn", dataset, {"k": [1, 3, 5]}, k=3)
+rs = await AI.ml.random_search("simple:knn", dataset, {"k": [1, 3, 5, 7]}, n_iter=3)
 importance = await est.feature_importance(dataset)
 ```
 

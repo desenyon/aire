@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.2.7"
+version = "0.2.8"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -43,6 +43,9 @@ datasets = ["datasets>=2.18"]
 # Model creation backends (lazy; never imported by core)
 ml = ["scikit-learn>=1.4", "pandas>=2.0"]
 torch = ["torch>=2.2"]
+keras = ["keras>=3.0"]
+xgboost = ["xgboost>=2.0"]
+lightgbm = ["lightgbm>=4.0"]
 training = ["torch>=2.2"]
 vision = ["pillow>=10.0"]
 all = [
@@ -53,6 +56,9 @@ all = [
     "scikit-learn>=1.4",
     "pandas>=2.0",
     "pillow>=10.0",
+    "keras>=3.0",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
 ]
 dev = [
     "ruff>=0.5",
@@ -127,9 +133,18 @@ ignore_missing_imports = true
 module = ["aire.deployment.fastapi_app", "aire.deployment.gateway"]
 disable_error_code = ["untyped-decorator"]
 
-# torch is optional; arch/optim/loss subclass torch modules after lazy import
+# torch/keras/boosting are optional; adapters import them lazily
 [[tool.mypy.overrides]]
-module = ["aire.ml.arch.*", "aire.ml.optim", "aire.ml.optim.*", "aire.ml.loss", "aire.ml.loss.*"]
+module = [
+    "aire.ml.arch.*",
+    "aire.ml.optim",
+    "aire.ml.optim.*",
+    "aire.ml.loss",
+    "aire.ml.loss.*",
+    "aire.ml.torch_adapter",
+    "aire.ml.keras_adapter",
+    "aire.ml.boosting",
+]
 disable_error_code = ["name-defined", "misc", "untyped-decorator"]
 
 [tool.pytest.ini_options]

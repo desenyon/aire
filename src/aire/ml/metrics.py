@@ -228,6 +228,7 @@ async def grid_search(
     k: int = 3,
     target: str = "label",
     scoring: str | None = None,
+    direction: str = "maximize",
     seed: int = 0,
 ) -> GridSearchReport:
     """Exhaustive grid search with inner k-fold CV; returns best params + trials."""
@@ -235,8 +236,13 @@ async def grid_search(
     keys = sorted(param_grid)
     if not keys:
         raise ConfigurationError("param_grid is empty", code="ml.empty_grid")
+    if direction not in ("maximize", "minimize"):
+        raise ConfigurationError(
+            f"direction must be maximize|minimize, got {direction!r}",
+            code="ml.direction",
+        )
     trials: list[dict[str, Any]] = []
-    best_score = float("-inf")
+    best_score = float("-inf") if direction == "maximize" else float("inf")
     best_params: dict[str, Any] = {}
 
     def _product(i: int, current: dict[str, Any]) -> None:
@@ -260,9 +266,80 @@ async def grid_search(
         report = await cross_validate(make, dataset, k=k, target=target, seed=seed)
         metric_key = scoring or _default_score_key(report.mean)
         score = report.mean.get(metric_key, float("-inf"))
-        entry = {"params": params, "score": score, "scoring": metric_key, "cv_mean": report.mean}
+        entry = {
+            "params": params,
+            "score": score,
+            "scoring": metric_key,
+            "cv_mean": report.mean,
+        }
         scored.append(entry)
-        if score > best_score:
+        better = score > best_score if direction == "maximize" else score < best_score
+        if better:
+            best_score = score
+            best_params = dict(params)
+
+    return GridSearchReport(
+        best_params=best_params,
+        best_score=best_score,
+        scoring=scoring or (scored[0]["scoring"] if scored else "accuracy"),
+        trials=scored,
+        duration_s=time.time() - started,
+    )
+
+
+async def random_search(
+    factory: Any,
+    dataset: Dataset,
+    param_distributions: dict[str, list[Any]],
+    *,
+    n_iter: int = 10,
+    k: int = 3,
+    target: str = "label",
+    scoring: str | None = None,
+    direction: str = "maximize",
+    seed: int = 0,
+) -> GridSearchReport:
+    """Sample ``n_iter`` parameter combinations from discrete distributions."""
+    started = time.time()
+    keys = sorted(param_distributions)
+    if not keys:
+        raise ConfigurationError("param_distributions is empty", code="ml.empty_grid")
+    rng = _LCG(seed)
+    trials: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    attempts = 0
+    max_attempts = n_iter * 20
+    while len(trials) < n_iter and attempts < max_attempts:
+        attempts += 1
+        params = {
+            key: param_distributions[key][
+                rng.randint(0, len(param_distributions[key]) - 1)
+            ]
+            for key in keys
+        }
+        key_t = tuple((k, params[k]) for k in keys)
+        if key_t in seen:
+            continue
+        seen.add(key_t)
+        trials.append(params)
+
+    best_score = float("-inf") if direction == "maximize" else float("inf")
+    best_params: dict[str, Any] = {}
+    scored: list[dict[str, Any]] = []
+    for params in trials:
+        captured = dict(params)
+
+        def make(captured: dict[str, Any] = captured) -> Any:
+            return factory(**captured)
+
+        report = await cross_validate(make, dataset, k=k, target=target, seed=seed)
+        metric_key = scoring or _default_score_key(report.mean)
+        score = report.mean.get(metric_key, float("-inf"))
+        scored.append(
+            {"params": params, "score": score, "scoring": metric_key, "cv_mean": report.mean}
+        )
+        better = score > best_score if direction == "maximize" else score < best_score
+        if better:
             best_score = score
             best_params = dict(params)
 
@@ -283,7 +360,7 @@ def _default_score_key(metrics: dict[str, float]) -> str:
     if "r2" in metrics:
         return "r2"
     if "rmse" in metrics:
-        return "rmse"  # caller should minimize; grid_search maximizes — flip below
+        return "rmse"
     return next(iter(metrics), "accuracy")
 
 

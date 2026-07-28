@@ -138,7 +138,7 @@ def test_facade_fit_one_call() -> None:
 def test_facade_backends_report() -> None:
     backends = AI.ml.backends()
     assert backends["native"] is True
-    assert set(backends) == {"native", "sklearn", "torch", "pandas"}
+    assert set(backends) >= {"native", "sklearn", "torch", "pandas", "keras", "xgboost", "lightgbm"}
 
 
 def test_facade_describe() -> None:

@@ -146,28 +146,35 @@ from aire.mcp import MCPServer, MCPClient, MCPError
 
 ```python
 from aire.ml import (
-    Estimator, FitReport, Prediction, TaskType,
+    Estimator, FitReport, Prediction, TaskType, Pipeline, Transform,
     MajorityClassifier, CentroidClassifier, KNNClassifier, LinearRegressor,
-    SklearnEstimator, TorchEstimator,
+    SklearnEstimator, TorchEstimator, StandardScaler, MinMaxScaler,
+    EarlyStopping, HistoryCallback, create_transform,
     frame_to_dataset, dataset_to_frame, predictions_to_frame, available_backends,
 )
 ```
 
 - `AI.ml.create(spec, **options)` / `AI.ml.fit(spec, dataset, target=)` /
-  `AI.ml.backends()` / `AI.ml.catalog()` / `AI.ml.to_frame(ds)` /
-  `AI.ml.from_frame(df, target=)`.
-- `AI.ml.cross_validate(spec, dataset, k=)` / `AI.ml.grid_search(spec, dataset,
-  param_grid)` / `est.feature_importance(dataset)`.
+  `AI.ml.train(spec, dataset, transforms=...)` / `AI.ml.pipeline(steps)` /
+  `AI.ml.transform(spec)` / `AI.ml.backends()` / `AI.ml.catalog()` /
+  `AI.ml.transforms_catalog()` / `AI.ml.to_frame(ds)` / `AI.ml.from_frame(df, target=)`.
+- `AI.ml.cross_validate(spec, dataset, k=)` / `AI.ml.grid_search(...)` /
+  `AI.ml.random_search(...)` (both accept `direction="maximize"|"minimize"`) /
+  `est.feature_importance(dataset)`.
 - Estimator refs: `simple:majority · centroid · knn · linear_regression`
   (native, offline), `sklearn:<name|dotted.path>` (aire[ml]),
-  `torch:mlp` with `hidden=`, `module_factory=` (aire[torch]).
+  `torch:mlp` with `hidden=`, `optimizer=`, `loss=`, `batch_size=`,
+  `scheduler=`, `callbacks=`, `module_factory=` (aire[torch]),
+  `keras:mlp` (aire[keras]), `xgboost:classifier|regressor` (aire[xgboost]),
+  `lightgbm:classifier|regressor` (aire[lightgbm]).
+- Transform refs: `native:standard_scaler|minmax_scaler`, `sklearn:<transformer>`.
 - Contract: `await est.fit(dataset, target=)` → `FitReport`;
   `await est.predict(records)` → `Prediction(value, probabilities)`;
   `await est.evaluate(dataset)` → classification report or MAE/RMSE/R²;
   `est.save(path)` / `est.load(path)`; `est.describe()`. Feature convention:
   `metadata["features"]` → numeric metadata → text-derived. aire never
-  pickles: sklearn persists via `skops`/`joblib` on `est.model`; torch loads
-  use `weights_only=True`.
+  pickles: sklearn/xgboost/lightgbm persist via their own APIs on `est.model`;
+  torch loads use `weights_only=True`.
 - **Composable architectures** (`AI.ml.arch`): build stacks from independently
   registered blocks — `attention()` / `ffn()` / `norm()` / `residual()` /
   `block()` / `compose(layers=[...])`; `register_attention` / `register_ffn` /

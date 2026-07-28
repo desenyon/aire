@@ -479,20 +479,29 @@ class _MLNamespace(_Namespace):
     def create(self, spec: str = "simple:centroid", **options: Any) -> Any:
         """Create an estimator from a ``backend:name`` ref.
 
-        Backends: ``simple:*`` (native, offline), ``sklearn:*``, ``torch:*``.
-        Options flow to the estimator (e.g. ``AI.ml.create("simple:knn", k=5)``).
+        Backends: ``simple:*``, ``sklearn:*``, ``torch:*``, ``keras:*``,
+        ``xgboost:*``, ``lightgbm:*``. Options flow to the estimator.
         """
-        from aire.core.types import Ref
+        from aire.ml.factory import create_estimator
 
-        ref = Ref.parse(spec)
-        runtime = self._rt()
-        if not runtime.estimators.has(ref.provider):
-            from aire.ml import native, sklearn_adapter, torch_adapter
+        return create_estimator(spec, runtime=self._rt(), **options)
 
-            native.register(runtime)
-            sklearn_adapter.register(runtime)
-            torch_adapter.register(runtime)
-        return runtime.estimators.create(ref.provider, name=ref.name, runtime=runtime, **options)
+    def pipeline(
+        self,
+        steps: list[tuple[str, Any]],
+        *,
+        target: str = "label",
+    ) -> Any:
+        """Build a :class:`~aire.ml.pipeline.Pipeline` of transforms → estimator."""
+        from aire.ml.pipeline import Pipeline
+
+        return Pipeline(steps=steps, target=target)
+
+    def transform(self, spec: str = "native:standard_scaler", **options: Any) -> Any:
+        """Create a :class:`~aire.ml.transform.Transform` (``native:*`` / ``sklearn:*``)."""
+        from aire.ml.transform import create_transform
+
+        return create_transform(spec, **options)
 
     async def fit(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
         """Create + fit an estimator in one call; returns the fitted estimator."""
@@ -502,6 +511,32 @@ class _MLNamespace(_Namespace):
 
     def fit_sync(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
         return run_sync(self.fit(spec, dataset, target=target, **options))
+
+    async def train(
+        self,
+        spec: str,
+        dataset: Any,
+        *,
+        target: str = "label",
+        transforms: list[str | Any] | None = None,
+        **options: Any,
+    ) -> Any:
+        """Fit an estimator, optionally behind a transform pipeline.
+
+        ``transforms`` are prepended as named steps before the final estimator.
+        """
+        if transforms:
+            steps: list[tuple[str, Any]] = [
+                (f"t{i}", t) for i, t in enumerate(transforms)
+            ]
+            steps.append(("estimator", spec if not options else self.create(spec, **options)))
+            pipe = self.pipeline(steps, target=target)
+            await pipe.fit(dataset, target=target)
+            return pipe
+        return await self.fit(spec, dataset, target=target, **options)
+
+    def train_sync(self, spec: str, dataset: Any, **options: Any) -> Any:
+        return run_sync(self.train(spec, dataset, **options))
 
     def catalog(self) -> dict[str, list[str]]:
         """Catalog of creatable estimators by backend (agent-readable)."""
@@ -516,6 +551,22 @@ class _MLNamespace(_Namespace):
         if backends.get("sklearn"):
             out["sklearn"] = [f"sklearn:{n}" for n in sorted(_SKLEARN_NAMES)]
         out["torch"] = ["torch:mlp"]
+        out["keras"] = ["keras:mlp"]
+        out["xgboost"] = ["xgboost:classifier", "xgboost:regressor"]
+        out["lightgbm"] = ["lightgbm:classifier", "lightgbm:regressor"]
+        return out
+
+    def transforms_catalog(self) -> dict[str, list[str]]:
+        """Catalog of creatable transforms by provider."""
+        from aire.ml.pandas_bridge import available_backends
+        from aire.ml.sklearn_adapter import _SKLEARN_TRANSFORMS
+        from aire.ml.transform import NATIVE_TRANSFORMS
+
+        out: dict[str, list[str]] = {
+            "native": [f"native:{n}" for n in sorted(NATIVE_TRANSFORMS)],
+        }
+        if available_backends().get("sklearn"):
+            out["sklearn"] = [f"sklearn:{n}" for n in sorted(_SKLEARN_TRANSFORMS)]
         return out
 
     def backends(self) -> dict[str, bool]:
@@ -554,26 +605,78 @@ class _MLNamespace(_Namespace):
         k: int = 3,
         target: str = "label",
         scoring: str | None = None,
+        direction: str = "maximize",
         seed: int = 0,
         **fixed: Any,
     ) -> Any:
         """Grid search over ``param_grid`` with inner k-fold CV."""
         from aire.ml.metrics import grid_search as _gs
 
-        provider_name = spec  # capture for closure
+        provider_name = spec
 
         def factory(**params: Any) -> Any:
             merged = {**fixed, **params}
             return self.create(provider_name, **merged)
 
         return await _gs(
-            factory, dataset, param_grid, k=k, target=target, scoring=scoring, seed=seed
+            factory,
+            dataset,
+            param_grid,
+            k=k,
+            target=target,
+            scoring=scoring,
+            direction=direction,
+            seed=seed,
         )
 
     def grid_search_sync(
         self, spec: str, dataset: Any, param_grid: dict[str, list[Any]], **options: Any
     ) -> Any:
         return run_sync(self.grid_search(spec, dataset, param_grid, **options))
+
+    async def random_search(
+        self,
+        spec: str,
+        dataset: Any,
+        param_distributions: dict[str, list[Any]],
+        *,
+        n_iter: int = 10,
+        k: int = 3,
+        target: str = "label",
+        scoring: str | None = None,
+        direction: str = "maximize",
+        seed: int = 0,
+        **fixed: Any,
+    ) -> Any:
+        """Random search over discrete ``param_distributions`` with inner k-fold CV."""
+        from aire.ml.metrics import random_search as _rs
+
+        provider_name = spec
+
+        def factory(**params: Any) -> Any:
+            merged = {**fixed, **params}
+            return self.create(provider_name, **merged)
+
+        return await _rs(
+            factory,
+            dataset,
+            param_distributions,
+            n_iter=n_iter,
+            k=k,
+            target=target,
+            scoring=scoring,
+            direction=direction,
+            seed=seed,
+        )
+
+    def random_search_sync(
+        self,
+        spec: str,
+        dataset: Any,
+        param_distributions: dict[str, list[Any]],
+        **options: Any,
+    ) -> Any:
+        return run_sync(self.random_search(spec, dataset, param_distributions, **options))
 
     def to_frame(self, dataset: Any, **options: Any) -> Any:
         """Dataset → pandas DataFrame (requires pandas)."""
@@ -593,11 +696,13 @@ class _MLNamespace(_Namespace):
         return {
             "kind": "ml",
             "contract": (
-                "Estimator: fit -> predict -> evaluate -> cross_validate -> "
-                "grid_search -> save/load"
+                "Pipeline(transforms→estimator) | Estimator: "
+                "fit → predict → evaluate → cross_validate → "
+                "grid_search/random_search → save/load"
             ),
             "backends": available_backends(),
             "estimators": self.catalog(),
+            "transforms": self.transforms_catalog(),
             "feature_convention": "record.metadata['features'] → numeric metadata → text-derived",
             "metrics": [
                 "accuracy",
@@ -606,6 +711,13 @@ class _MLNamespace(_Namespace):
                 "rmse",
                 "r2",
                 "permutation_importance",
+            ],
+            "selection": ["cross_validate", "grid_search", "random_search"],
+            "orchestration": [
+                "AI.ml.pipeline",
+                "AI.ml.transform",
+                "AI.ml.train",
+                "callbacks (EarlyStopping, History)",
             ],
             "arch": "AI.ml.arch — composable attention/ffn/norm/residual blocks",
             "optim": "AI.ml.optim — sgd/adam/adamw/rmsprop/adagrad",

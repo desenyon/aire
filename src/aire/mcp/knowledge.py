@@ -254,7 +254,7 @@ def get_prompt(name: str, arguments: dict[str, Any] | None = None) -> dict[str, 
     }
 
 
-class _SafeFormat(dict):
+class _SafeFormat(dict[str, Any]):
     """format_map helper: leave unknown placeholders intact instead of KeyError."""
 
     def __missing__(self, key: str) -> str:

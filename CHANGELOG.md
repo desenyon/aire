@@ -7,6 +7,28 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.8] — 2026-07-28
+
+Finish the ML orchestrator: one Estimator / Transform / Pipeline contract across
+native, scikit-learn, PyTorch, Keras, XGBoost, and LightGBM — with training
+callbacks, model selection direction, and a unified train facade.
+
+### Added
+- **`Transform` + `Pipeline`**: chain `native:*` / `sklearn:*` preprocessors into
+  a final estimator under one fit/predict API (`AI.ml.pipeline`, `AI.ml.transform`).
+- **Backends**: `keras:mlp`, `xgboost:classifier|regressor`,
+  `lightgbm:classifier|regressor` (lazy extras `aire[keras|xgboost|lightgbm]`).
+- **Torch training depth**: wire `AI.ml.optim` / `AI.ml.loss`, batching,
+  schedulers (`step` / `cosine` / `plateau`), callbacks (`EarlyStopping`,
+  `HistoryCallback`).
+- **Expanded sklearn zoo** + sklearn transformer adapters (PCA, imputers,
+  selectors, scalers, …).
+- **`AI.ml.random_search`**, `direction=` on grid/random search, `AI.ml.train`
+  (optional transform pipeline), richer `catalog` / `backends` / `describe`.
+
+### Changed
+- Estimator registration always covers every backend (idempotent factory).
+
 ## [0.2.7] — 2026-07-28
 
 Composable neural architecture blocks — assemble any stack from parts, plus

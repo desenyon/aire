@@ -101,5 +101,8 @@ def available_backends() -> dict[str, bool]:
         "native": True,
         "sklearn": importlib.util.find_spec("sklearn") is not None,
         "torch": importlib.util.find_spec("torch") is not None,
+        "keras": importlib.util.find_spec("keras") is not None,
+        "xgboost": importlib.util.find_spec("xgboost") is not None,
+        "lightgbm": importlib.util.find_spec("lightgbm") is not None,
         "pandas": importlib.util.find_spec("pandas") is not None,
     }
