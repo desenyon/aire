@@ -7,6 +7,70 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.0] — 2026-07-27
+
+Knowledge graphs, MCP, long-term memory, embedded stores, multi-agent teams
+and gateway hardening: six new subsystems, all offline-capable, all following
+the same registry/ref/manifest contracts.
+
+### Added
+
+- **Knowledge graphs and GraphRAG** (`aire.graph`, `AI.graph`): documents →
+  triples → graph-grounded answers with citations.
+  - `KnowledgeGraph` pipeline: chunk → extract → store → fused query (graph
+    neighborhood + vector retrieval) → grounded `Answer` with citations.
+  - Two extractors: `ModelGraphExtractor` (typed triples via any model's
+    structured output) and `LexicalGraphExtractor` (deterministic, zero-model,
+    offline: capitalized phrases + sentence co-occurrence).
+  - `SQLiteGraphStore` (`sqlite:<path>` / `sqlite:memory`): embedded,
+    transactional triple store on stdlib `sqlite3` — BFS neighborhoods, entity
+    matching, merge-on-ingest. New `Runtime.graph_stores` registry kind.
+- **Model Context Protocol** (`aire.mcp`, `AI.mcp`): zero-dependency
+  newline-delimited JSON-RPC 2.0 over stdio (protocol `2025-06-18`).
+  - `MCPServer` exposes any aire tools (`initialize`, `ping`, `tools/list`,
+    `tools/call`); `aire mcp-serve` and `python -m aire.mcp` serve builtin +
+    registered tools to any MCP host.
+  - `MCPClient` spawns any MCP server subprocess and adapts every remote tool
+    into a first-class aire `Tool` (remote input schemas preserved).
+- **Long-term agent memory** (`aire.memory`, `AI.memory`): `LongTermMemory`
+  implements the agent `Memory` interface (drop-in for `Agent(memory=...)`)
+  and adds `remember()` / `recall_semantic()` (embedding recall weighted by
+  salience and 30-day recency half-life), episodic JSONL persistence, and
+  `consolidate(model)` — folding old episodes into durable semantic facts.
+- **Embedded SQLite vector store** (`sqlite:<path>`, `aire.rag.sqlite`):
+  same BM25 + cosine semantics as the local store with write-through
+  transactional persistence. Registered alongside `local:` on every runtime.
+- **Hosted vector store adapters**: `pinecone:<index>`, `weaviate:<class>`
+  (native server-side BM25) and `milvus:<collection>` — pure-httpx REST,
+  consistent with the existing qdrant/chroma adapters.
+- **Multi-agent teams** (`aire.agents.team`, `AI.agents.team`):
+  `agent.as_tool()` wraps any agent as a `task: str → str` Tool; `Team` runs a
+  supervisor model that routes subtasks to specialist members via validated
+  structured decisions, feeds observations back, and synthesizes the answer.
+- **Gateway hardening**:
+  - Per-candidate circuit breakers (`failure_threshold`, `cooldown_seconds`):
+    failing refs are skipped while open and half-open after cooldown.
+  - Daily cost budgets (`budgets={"alias": usd}`): over-budget candidates are
+    skipped; all-exhausted returns 429.
+  - Anthropic-compatible `POST /v1/messages` endpoint (system prompts, content
+    blocks, `stop_reason` mapping).
+  - JSONL request audit log (`request_log="path.jsonl"`).
+  - Unstructured provider exceptions are now wrapped in `ProviderError` so the
+    gateway always answers with a structured error body.
+  - All of the above configurable from `aire.yaml` (`gateway.budgets`,
+    `gateway.circuit_breaker`, `gateway.request_log`, ...).
+- Facade namespaces `AI.graph`, `AI.memory`, `AI.mcp`, plus `AI.agents.team()`;
+  `aire mcp-serve` CLI command; top-level exports `KnowledgeGraph`,
+  `LongTermMemory`, `MemoryEntry`, `Team`, `TeamResult`.
+
+### Fixed
+
+- **Vector store persistence dropped embeddings**: `LocalVectorStore.save()`
+  serialized chunks via `model_dump`, which excludes embeddings — reloaded
+  stores were unsearchable by vector. Embeddings are now persisted.
+
+[0.2.0]: https://github.com/naitikgupta/aire/compare/v0.1.1...v0.2.0
+
 ## [0.1.1] — 2026-07-27
 
 Model routing and gateway release: aire now works with every local model server

@@ -1,6 +1,26 @@
 # aire — Roadmap
 
-## 0.1.1 (current) — model routing & gateway
+## 0.2 (current) — knowledge, memory & multi-agent
+
+Six new subsystems, all offline-capable: knowledge graphs, MCP, long-term
+memory, embedded stores, multi-agent teams, and gateway hardening.
+
+- [x] `aire.graph`: GraphRAG pipeline (extract → triple store → graph-grounded
+      answers with citations), lexical + model-driven extractors
+- [x] Embedded `SQLiteGraphStore` (`sqlite:<path>`), `Runtime.graph_stores`
+- [x] `aire.mcp`: MCP stdio server (`aire mcp-serve`) + client adapting remote
+      MCP tools into aire Tools — zero dependencies
+- [x] `aire.memory`: long-term episodic + semantic memory, salience/recency
+      recall, model-driven consolidation, agent drop-in
+- [x] Embedded `sqlite:` vector store; hosted `pinecone:`, `weaviate:` (native
+      BM25), `milvus:` REST adapters
+- [x] Multi-agent: `agent.as_tool()`, supervisor-routed `Team` with auditable
+      handoffs (`AI.agents.team`)
+- [x] Gateway hardening: circuit breakers, daily cost budgets, Anthropic
+      `/v1/messages`, JSONL request audit log
+- [x] Fix: vector store persistence no longer drops embeddings on save
+
+## 0.1.1 — model routing & gateway
 
 Every local model server and every OpenAI-compatible API reachable through
 named refs; aire can itself serve as the OpenAI-compatible gateway in front of
@@ -41,19 +61,20 @@ with citations → evaluate → trace → deploy, all offline-capable.
 - [x] Test suites: unit, contract, integration, security, performance
 - [x] Quality gates: ruff, mypy --strict, pytest all green
 
-## 0.2 — hardening
+## 0.3 — retrieval & ops depth
 
 - [ ] Query rewriting + context compression in RAG
 - [ ] Incremental index updates and access-control filters
+- [ ] GraphRAG community summaries (hierarchical graph clustering)
+- [ ] Graph database adapters (Neo4j) via the GraphStore interface
 - [ ] Human-approval workflow node (interactive approver)
 - [ ] OpenTelemetry SDK exporter bridge
 - [ ] `aire doctor` provider connectivity checks (live mode)
 - [ ] Prompt optimization loops (evaluation-guided)
 - [ ] Postgres/pgvector store, Redis cache backend
-- [ ] Gateway: per-model cost budgets, circuit breakers, Anthropic-compatible
-      endpoint shape, request/response logging sinks
+- [ ] Gateway: semantic cache in front of routes, response logging sinks
 
-## 0.3 — training & optimization
+## 0.4 — training & optimization
 
 - [ ] PyTorch trainer adapter (lazy `aire[training]`)
 - [ ] PEFT/LoRA fine-tuning interface, checkpoint resume
@@ -61,16 +82,16 @@ with citations → evaluate → trace → deploy, all offline-capable.
 - [ ] Quantization/distillation adapter interfaces
 - [ ] Cost-optimization policies in the model router
 
-## 0.4 — multimodal depth
+## 0.5 — multimodal depth
 
 - [ ] Document understanding pipeline (PDF → structured)
 - [ ] Voice agent reference pipeline (ASR → agent → TTS)
 - [ ] Image generation + object detection adapters
 - [ ] Video summarization pipeline
 
-## 0.5 — multi-agent & scale
+## 0.6 — scale
 
-- [ ] Multi-agent communication protocol (agent-as-tool standard)
+- [x] Multi-agent communication protocol (agent-as-tool standard) — shipped in 0.2
 - [ ] Distributed workflow workers
 - [ ] Scheduled/event-driven workflow execution
 - [ ] Local web UI for runs, traces, costs, evaluations

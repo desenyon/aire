@@ -38,8 +38,12 @@ app = assistant.deploy()  # production FastAPI app with /health, /ready, /manife
 - [Models](#models)
 - [Data](#data)
 - [Retrieval augmented generation](#retrieval-augmented-generation)
+- [Knowledge graphs and GraphRAG](#knowledge-graphs-and-graphrag)
 - [Tools](#tools)
+- [MCP (Model Context Protocol)](#mcp-model-context-protocol)
 - [Agents](#agents)
+- [Long-term memory](#long-term-memory)
+- [Multi-agent teams](#multi-agent-teams)
 - [Workflows](#workflows)
 - [Evaluation](#evaluation)
 - [Observability](#observability)
@@ -206,8 +210,11 @@ result = await model.generate(
 | `AI.models` | Resolve/route/cache models and embedders |
 | `AI.data` | Load and transform datasets; chunkers |
 | `AI.rag` | Knowledge pipelines and vector stores |
+| `AI.graph` | Knowledge graphs and GraphRAG pipelines |
+| `AI.memory` | Long-term agent memory (episodic + semantic) |
+| `AI.mcp` | MCP servers and clients (Model Context Protocol) |
 | `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
-| `AI.agents` | Create agents with tools, memory, budgets |
+| `AI.agents` | Create agents and supervisor-routed teams |
 | `AI.workflows` | Graph workflow engine |
 | `AI.evaluate(...)` | Evaluate any target, synchronously |
 | `AI.observe` | Tracer, metrics, trace/event history |
@@ -334,7 +341,26 @@ for c in answer.citations:
     print(c.source, c.score)
 ```
 
-Under the hood: pluggable **chunker** → **embedder** → **vector store** (`local:default`, `qdrant:*`, `chroma:*`) → **hybrid retriever** (vector similarity + keyword, fused with reciprocal rank) → **reranker** (`lexical` by default) → grounded prompt with numbered citations.
+Under the hood: pluggable **chunker** → **embedder** → **vector store** (`local:default`, embedded `sqlite:<path>`, `qdrant:*`, `chroma:*`, `pinecone:*`, `weaviate:*`, `milvus:*`) → **hybrid retriever** (vector similarity + keyword, fused with reciprocal rank) → **reranker** (`lexical` by default) → grounded prompt with numbered citations.
+
+## Knowledge graphs and GraphRAG
+
+Vectors find *similar* text; graphs find *connected* facts. `AI.graph` builds a knowledge graph from your documents and answers from it — with the same cited `Answer` contract as classic RAG:
+
+```python
+from aire import AI
+
+graph = AI.graph.create()  # embedded sqlite triple store + lexical extractor
+report = await graph.ingest("./documents")  # chunk → extract triples → store
+
+facts = await graph.subgraph("How do refunds relate to chargebacks?")
+print(facts.as_context())  # Refunds —governed_by→ Policy, ...
+
+answer = await graph.query("How do refunds relate to chargebacks?")
+print(answer.text, answer.citations)
+```
+
+Two extractor strategies: the default `LexicalGraphExtractor` is deterministic and **works fully offline** (capitalized phrases as entities, sentence co-occurrence as relations); pass any model ref for typed, semantic triples — `AI.graph.create(model="ollama:llama3.2")`. Querying links question terms to entities, expands their BFS neighborhood, fuses graph facts with vector retrieval, and grounds the answer in both. The graph store is `sqlite:<path>` — single-file, transactional, stdlib-only; the `GraphStore` interface is pluggable for graph databases.
 
 ## Tools
 
@@ -356,6 +382,27 @@ async def search_orders(customer_id: str) -> list[dict]: ...
 The decorator introspects the signature and docstring to produce a `ToolSpec`: name, description, JSON input/output schemas, permissions, timeout, retry policy, side-effect classification. Input validation is strict (`extra="forbid"`) — unknown arguments are rejected.
 
 Builtin tools: `calculator` (restricted AST evaluator — no `eval`), `read_file`/`list_files` (sandboxed to a root), `http_get`, `current_time`.
+
+## MCP (Model Context Protocol)
+
+aire speaks MCP natively — zero dependencies, newline-delimited JSON-RPC 2.0 over stdio:
+
+```bash
+aire mcp-serve   # expose builtin + registered tools to any MCP host
+```
+
+```python
+# Expose: any aire tool becomes an MCP tool
+server = AI.mcp.server([search_orders])        # or AI.mcp.server() for builtins
+await server.serve_stdio()
+
+# Consume: any MCP server's tools become first-class aire Tools
+async with await AI.mcp.connect(["python", "-m", "aire.mcp"]) as client:
+    tools = await client.tools()               # remote schemas preserved
+    result = await tools[0].execute({"expression": "2 ** 10"})
+```
+
+Remote tools keep their input schemas, so agents reason about them exactly like local ones — permissions, timeouts, retries and auditing included.
 
 ## Agents
 
@@ -383,6 +430,41 @@ for step in result.steps:  # full audit trail
 ```
 
 The executor is a deterministic state machine: **model call → permission check → (approval check) → tool execution → observation → completion decision**. Budgets are enforced by the `ExecutionContext` on every tick; state is resumable via `AgentState` checkpoints. Unknown tools and denied permissions become error observations fed back to the model — never crashes.
+
+## Long-term memory
+
+Buffer and JSONL memory remember the conversation; `AI.memory` remembers the *user*. It drops into any agent via the standard `memory=` parameter:
+
+```python
+memory = AI.memory.create(path=".aire/memory")  # episodic JSONL + semantic store
+agent = AI.agents.create_sync("openai:gpt-4o-mini", memory=memory)
+
+await memory.remember("The user prefers concise answers", salience=2.0)
+hits = await memory.recall_semantic("answer style preference", k=3)
+
+# Fold old episodes into durable facts with any model:
+await memory.consolidate(model, max_facts=8)
+```
+
+Semantic recall is embedding-based, weighted by salience and a 30-day recency half-life. Consolidation distills old episodes into semantic facts and prunes the log — agents get better across runs without unbounded growth.
+
+## Multi-agent teams
+
+```python
+researcher = AI.agents.create_sync("openai:gpt-4o-mini", name="researcher", tools=[...])
+writer = AI.agents.create_sync("anthropic:claude-sonnet-4-5", name="writer")
+
+# Every agent is also a tool:
+tool = researcher.as_tool(description="Gather facts on a topic.")
+
+# And a supervisor model can route subtasks across a team:
+team = AI.agents.team({"researcher": researcher, "writer": writer},
+                      supervisor="openai:gpt-4o-mini")
+result = await team.run("Produce a market analysis report")
+print(result.answer, result.delegations)  # auditable handoffs
+```
+
+The supervisor decides each round with validated structured output — delegate to one member or finish — and member outputs feed back as observations, so routing stays grounded in what specialists actually returned.
 
 ## Workflows
 
@@ -566,6 +648,7 @@ app = AI.gateway.create(
     metrics=AI.observe.metrics,
 )
 # Endpoints: POST /v1/chat/completions (streaming SSE supported)
+#            POST /v1/messages           (Anthropic-compatible)
 #            POST /v1/embeddings
 #            GET  /v1/models  /v1/gateway/manifest  /health
 ```
@@ -580,6 +663,15 @@ aire gateway -m ollama:llama3.2 \
 ```
 
 Clients see a standard OpenAI API; responses additionally carry `aire.resolved_model` (and the `X-Aire-Resolved-Model` header) so routing decisions stay inspectable. Unknown models return OpenAI-shaped errors; a candidate that fails mid-chain falls back automatically.
+
+Production guards are built in:
+
+- **Circuit breakers** — a candidate that fails `failure_threshold` times in a row is skipped for `cooldown_seconds`, then half-open retried.
+- **Cost budgets** — `budgets={"smart": 5.0}` caps daily spend per alias or ref; exhausted candidates are skipped, and when all are exhausted the gateway answers 429.
+- **Anthropic-compatible endpoint** — existing Anthropic SDK clients can point at `POST /v1/messages` unchanged.
+- **Request audit log** — `request_log="gateway.jsonl"` records model, resolved ref, tokens, cost and latency per request.
+
+All of it configurable from `aire.yaml` under `gateway:` and visible in `GET /v1/gateway/manifest` (circuit states, budgets, today's spend).
 
 ## Configuration
 
@@ -609,6 +701,11 @@ gateway:
     emb: local:hashing
   routing: first
   rate_limit_per_minute: 600
+  budgets: {smart: 5.0}            # USD/day per alias or ref
+  circuit_breaker: true
+  failure_threshold: 3
+  cooldown_seconds: 30
+  request_log: logs/gateway.jsonl
 
 providers:
   openai:
@@ -627,6 +724,7 @@ aire run "prompt" [--model REF]   # one-shot generation
 aire evaluate DATASET [--model REF] [--metrics a,b] [--output report.json]
 aire serve [--host H] [--port P] [--app-file app.py]
 aire gateway [-m REF]... [-a public=ref[,ref...]]... [--objective O] [--port 4000]
+aire mcp-serve                    # serve tools over MCP (stdio JSON-RPC)
 aire inspect                      # show resolved config, registries, providers
 aire plugins                      # list discovered plugins
 aire doctor                       # environment/dependency/credential diagnostics
@@ -651,7 +749,7 @@ def register(runtime):
 
 Contract tests in `tests/contract` verify any model/embedder/vector-store against the shared interface. The complete contract — factory signatures, error rules, lifecycle, manifest requirements — is in [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md).
 
-**Included providers:** `openai`, `anthropic`, `huggingface`, `ollama`, `mock`/`echo` (offline), `callable` (any Python function), plus named OpenAI-compatible aliases — local: `lmstudio`, `llamacpp`, `llamafile`, `vllm`, `mlx`, `localai`, `tgi`; hosted: `groq`, `together`, `fireworks`, `deepseek`, `mistral`, `xai`, `openrouter`, `cerebras`, `perplexity` — and generic `openai_compatible` with a custom `base_url`. **Vector stores:** `local` (persistent, in-memory speed), `qdrant`, `chroma`. All reached over plain HTTP through one shared client — no vendor SDKs.
+**Included providers:** `openai`, `anthropic`, `huggingface`, `ollama`, `mock`/`echo` (offline), `callable` (any Python function), plus named OpenAI-compatible aliases — local: `lmstudio`, `llamacpp`, `llamafile`, `vllm`, `mlx`, `localai`, `tgi`; hosted: `groq`, `together`, `fireworks`, `deepseek`, `mistral`, `xai`, `openrouter`, `cerebras`, `perplexity` — and generic `openai_compatible` with a custom `base_url`. **Vector stores:** `local` (in-memory speed, JSON persistence), `sqlite` (embedded, transactional), `qdrant`, `chroma`, `pinecone`, `weaviate` (native BM25), `milvus`. **Graph stores:** `sqlite` (embedded triple store). All reached over plain HTTP through one shared client — no vendor SDKs.
 
 ## Examples
 
@@ -665,6 +763,8 @@ Runnable, offline, no credentials required:
 | [examples/workflows](examples/workflows/main.py) | Branches, fan-in, streaming events, checkpoints |
 | [examples/deployment_api](examples/deployment_api/main.py) | Auth-guarded FastAPI app + artifact generation |
 | [examples/gateway](examples/gateway/main.py) | OpenAI-compatible gateway: aliases, fallback, streaming, embeddings |
+| [examples/graphrag](examples/graphrag/main.py) | Knowledge graph ingestion + graph-grounded answers with citations |
+| [examples/teams](examples/teams/main.py) | Agent-as-tool, supervisor-routed team, long-term memory |
 
 ```bash
 python examples/rag_assistant/main.py
@@ -690,8 +790,8 @@ pip install -e ".[dev]"
 # Quality gates (all must pass):
 ruff check .
 ruff format --check .
-mypy src               # strict mode, 88 files
-pytest                 # 247 tests: unit, contract, integration, security, performance
+mypy src               # strict mode, 106 files
+pytest                 # 276 tests: unit, contract, integration, security, performance
 pytest tests/integration tests/security
 ```
 

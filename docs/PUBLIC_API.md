@@ -22,8 +22,11 @@ from aire.core.errors import AireError
 | `AI.models` | `use(spec)`, `use_sync(spec)`, `embedder(spec)`, `register_callable(name, fn)`, `router(candidates, objective=...)`, `cache(model)` |
 | `AI.data` | `load(source, ...)`, `from_texts(texts)`, `chunker(name, **opts)` |
 | `AI.rag` | `knowledge(...)`, `vector_store(spec)` |
+| `AI.graph` | `create(...)` (KnowledgeGraph), `store(spec)` (graph stores) |
+| `AI.memory` | `create(path=..., embedder=...)` (LongTermMemory) |
+| `AI.mcp` | `server(tools)`, `connect(command)`, `connect_sync(command)` |
 | `AI.tools` | `tool(...)` decorator, `registry()`, `builtins()` |
-| `AI.agents` | `create(model, tools=..., memory=..., config=...)`, `create_sync(...)` |
+| `AI.agents` | `create(model, tools=..., memory=..., config=...)`, `create_sync(...)`, `team(members, supervisor=...)` |
 | `AI.workflows` | `create(name, ...)` |
 | `AI.evaluate` | `run(target, dataset, metrics=...)` |
 | `AI.observe` | `tracer()`, `metrics()` |
@@ -90,6 +93,45 @@ from aire.rag import (
 )
 ```
 
+Vector store refs: `local:*`, `sqlite:<path>` (embedded, transactional),
+`qdrant:*`, `chroma:*`, `pinecone:*`, `weaviate:*` (native BM25), `milvus:*`.
+
+## Knowledge graphs (GraphRAG)
+
+```python
+from aire.graph import (
+    KnowledgeGraph, GraphStore, SQLiteGraphStore,
+    GraphExtractor, LexicalGraphExtractor, ModelGraphExtractor,
+    Entity, Relation, Extraction, Subgraph, GraphIndexReport,
+)
+```
+
+- `await graph.ingest(source)` — chunk, extract triples, index chunks.
+- `await graph.subgraph(question, depth=1)` — entity linking + BFS neighborhood.
+- `await graph.query(question, k=5)` — graph + vector fused, cited `Answer`.
+- Graph store refs via `AI.graph.store("sqlite:<path>")` (`sqlite:memory` default).
+
+## Long-term memory
+
+```python
+from aire.memory import LongTermMemory, MemoryEntry, MemoryKind
+```
+
+Implements the agent `Memory` interface (drop-in `Agent(memory=...)`) plus
+`remember()`, `recall_semantic(query, k=...)`, `consolidate(model)`, and
+optional JSONL persistence (`path=`).
+
+## MCP (Model Context Protocol)
+
+```python
+from aire.mcp import MCPServer, MCPClient, MCPError
+```
+
+- `MCPServer(tools)` — `handle(message)`, `serve_stdio()`; CLI: `aire mcp-serve`.
+- `MCPClient(command)` — async context manager; `list_tools()`,
+  `call_tool(name, args)`, `tools()` (adapts remote tools into aire `Tool`s).
+- Transport: newline-delimited JSON-RPC 2.0 over stdio (protocol `2025-06-18`).
+
 ## Tools & agents
 
 ```python
@@ -97,7 +139,12 @@ from aire.tools import tool, Tool, ToolRegistry, ToolSpec, ToolResult,
 from aire.tools import SideEffect, RetryPolicy, builtin_tools
 from aire.agents import Agent, AgentConfig, AgentStatus, AgentStep, AgentResult,
 from aire.agents import Memory, BufferMemory, JsonlMemory
+from aire.agents import Team, TeamResult, Delegation, DelegationRecord
 ```
+
+- `agent.as_tool(name=..., description=...)` — agent-as-tool composition.
+- `Team(members, supervisor, max_rounds=6)` — supervisor-routed delegation with
+  structured decisions and auditable `DelegationRecord`s; `AI.agents.team(...)`.
 
 ## Workflows
 
@@ -132,18 +179,21 @@ from aire.optimization import CachedModel, SemanticCachedModel, ModelRouter, Rou
 from aire.deployment import Gateway, create_app, create_gateway, generate_artifacts
 ```
 
-- `create_gateway(runtime, models=..., aliases=..., embeddings=..., routing=..., objective=..., auth_token=..., rate_limit_per_minute=..., metrics=...)` —
+- `create_gateway(runtime, models=..., aliases=..., embeddings=..., routing=..., objective=..., budgets=..., circuit_breaker=..., failure_threshold=..., cooldown_seconds=..., request_log=..., auth_token=..., rate_limit_per_minute=..., metrics=...)` —
   OpenAI-compatible gateway app (`/v1/chat/completions` with SSE streaming,
-  `/v1/embeddings`, `/v1/models`, `/v1/gateway/manifest`).
+  Anthropic-compatible `/v1/messages`, `/v1/embeddings`, `/v1/models`,
+  `/v1/gateway/manifest`). Circuit breakers skip failing candidates; daily cost
+  budgets cap spend per alias/ref; `request_log` writes a JSONL audit trail.
 - `Gateway(runtime, chat_routes=..., embedding_routes=..., routing=..., objective=...)` —
-  transport-independent routing core; `.describe()` emits the gateway manifest.
+  transport-independent routing core; `.describe()` emits the gateway manifest
+  (routes, circuit states, budgets, today's spend).
 - OpenAI-compatible provider aliases (registered lazily on first use):
   `lmstudio · llamacpp · llamafile · vllm · mlx · localai · tgi` (local),
   `groq · together · fireworks · deepseek · mistral · xai · openrouter · cerebras · perplexity` (hosted),
   and generic `openai_compatible:<model>` with `base_url=`.
 - Config: `Settings.gateway` (`GatewayConfig`) — the `gateway:` section of `aire.yaml`.
 
-CLI: `aire init · run · evaluate · serve · gateway · inspect · plugins · doctor · version`.
+CLI: `aire init · run · evaluate · serve · gateway · mcp-serve · inspect · plugins · doctor · version`.
 
 ## Stability guarantees
 
