@@ -97,9 +97,37 @@ def create_lock(
     return lock
 
 
+def apply_lock(settings: Any, lock: ProjectLock) -> Any:
+    """Apply pinned refs from ``aire.lock`` onto a :class:`~aire.core.config.Settings`.
+
+    Pins ``model`` and ``embedder`` into ``settings.model``; other kinds are
+    recorded under ``settings`` extra field ``lock_pins`` for agents to inspect.
+    """
+    from aire.core.config import Settings
+
+    if not isinstance(settings, Settings):
+        raise ConfigurationError(
+            "apply_lock expects a Settings instance",
+            code="project.lock_settings",
+        )
+    data = settings.model_dump(mode="python")
+    model_ref = lock.get("model")
+    if model_ref:
+        data.setdefault("model", {})["ref"] = model_ref
+    embedder = lock.get("embedder")
+    if embedder:
+        data.setdefault("model", {})["embedder"] = embedder
+    pins = {e.kind: e.ref for e in lock.entries}
+    data["lock_pins"] = pins
+    data["lock_project"] = lock.project
+    data["lock_aire_version"] = lock.aire_version
+    return Settings.model_validate(data)
+
+
 def describe() -> dict[str, Any]:
     return {
         "kind": "project_lock",
         "file": "aire.lock",
         "entry_kinds": ["model", "embedder", "vector_store", "graph_store", "tool"],
+        "methods": ["create_lock", "load_lock", "write_lock", "apply_lock"],
     }

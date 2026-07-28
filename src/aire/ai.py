@@ -334,11 +334,35 @@ class _ObserveNamespace(_Namespace):
             self._metrics = Metrics()
         return self._metrics
 
-    def traces(self) -> list[dict[str, Any]]:
+    def traces(
+        self,
+        *,
+        name: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         tracer = self._rt().tracer
         if tracer is None:
             return []
-        return [r.model_dump(mode="json") for r in tracer.records()]
+        rows = [r.model_dump(mode="json") for r in tracer.records()]
+        if name:
+            rows = [r for r in rows if name in str(r.get("name", ""))]
+        if limit is not None:
+            rows = rows[-limit:]
+        return rows
+
+    def costs(self) -> dict[str, Any]:
+        """Aggregate cost counters from the in-process metrics registry."""
+        snap = self.metrics.snapshot()
+        by_model: dict[str, float] = {}
+        total = 0.0
+        for key, value in snap.get("counters", {}).items():
+            if not str(key).startswith("aire.cost.usd"):
+                continue
+            total += float(value)
+            if "model=" in str(key):
+                model = str(key).split("model=", 1)[1].rstrip("}")
+                by_model[model] = by_model.get(model, 0.0) + float(value)
+        return {"total_usd": total, "by_model": by_model, "snapshot": snap}
 
     def events(self, pattern: str | None = None) -> list[dict[str, Any]]:
         events = self._rt().events.history
@@ -1159,8 +1183,94 @@ class _ProjectNamespace(_Namespace):
 
         return write_lock(lock, path)
 
+    def apply(self, lock: Any, settings: Any | None = None) -> Any:
+        """Apply lock pins to settings (defaults to current runtime settings)."""
+        from aire.project.lock import ProjectLock, apply_lock, load_lock
+
+        loaded = lock if isinstance(lock, ProjectLock) else load_lock(lock)
+        base = settings or self._rt().settings
+        return apply_lock(base, loaded)
+
     def describe(self) -> dict[str, Any]:
         from aire.project.lock import describe
+
+        return describe()
+
+
+class _VisionNamespace(_Namespace):
+    def pipeline(self, model: str | Model | None = None, **options: Any) -> Any:
+        from aire.vision.pipelines import VisionPipeline
+
+        resolved = self._resolve_model(model)
+        return VisionPipeline(resolved, **options)
+
+    def generate(self, model: str | Model | None = None, **options: Any) -> Any:
+        from aire.vision.pipelines import ImageGenerationPipeline
+
+        return ImageGenerationPipeline(self._resolve_model(model), **options)
+
+    def video(self, model: str | Model | None = None, **options: Any) -> Any:
+        from aire.vision.video import VideoPipeline
+
+        if model is None:
+            return VideoPipeline(None, **options)
+        return VideoPipeline(self._resolve_model(model), **options)
+
+    def _resolve_model(self, model: str | Model | None) -> Model:
+        if isinstance(model, Model):
+            return model
+        return run_sync(ModelRegistry(self._rt()).use(model or self._rt().settings.model.ref))
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "vision",
+            "pipelines": ["VisionPipeline", "ImageGenerationPipeline", "VideoPipeline"],
+        }
+
+
+class _AudioNamespace(_Namespace):
+    def pipeline(self, model: str | Model | None = None, **options: Any) -> Any:
+        from aire.audio.pipelines import AudioPipeline
+
+        if isinstance(model, Model):
+            resolved = model
+        else:
+            resolved = run_sync(
+                ModelRegistry(self._rt()).use(model or self._rt().settings.model.ref)
+            )
+        return AudioPipeline(resolved, **options)
+
+    def voice(
+        self,
+        agent: Any,
+        *,
+        asr: Any = None,
+        tts: Any = None,
+    ) -> Any:
+        from aire.audio.voice import VoiceAgent
+
+        return VoiceAgent(agent, asr=asr, tts=tts)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "audio",
+            "pipelines": ["AudioPipeline", "VoiceAgent", "TTSBackend"],
+        }
+
+
+class _DocsNamespace(_Namespace):
+    def load_pdf(self, path: str | Any, **options: Any) -> Any:
+        from aire.docs.pdf import load_pdf
+
+        return load_pdf(path, **options)
+
+    def to_dataset(self, path: str | Any, **options: Any) -> Any:
+        from aire.docs.pdf import pdf_to_dataset
+
+        return pdf_to_dataset(path, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.docs.pdf import describe
 
         return describe()
 
@@ -1191,6 +1301,9 @@ class AI:
     workers = _WorkersNamespace()
     recipes = _RecipesNamespace()
     locks = _ProjectNamespace()
+    vision = _VisionNamespace()
+    audio = _AudioNamespace()
+    docs = _DocsNamespace()
 
     # -- runtime -----------------------------------------------------------------
 
@@ -1199,10 +1312,25 @@ class AI:
         return default_runtime()
 
     @classmethod
-    def configure(cls, settings: Settings | None = None, **overrides: Any) -> Runtime:
-        """Rebuild the default runtime from explicit settings or overrides."""
+    def configure(
+        cls,
+        settings: Settings | None = None,
+        *,
+        lock: str | Path | Any | None = None,
+        **overrides: Any,
+    ) -> Runtime:
+        """Rebuild the default runtime from explicit settings or overrides.
+
+        Pass ``lock=`` (path or :class:`~aire.project.lock.ProjectLock`) to pin
+        model/embedder refs from ``aire.lock`` into settings before build.
+        """
         global _default_runtime
         settings = settings or Settings.load(overrides=overrides or None)
+        if lock is not None:
+            from aire.project.lock import ProjectLock, apply_lock, load_lock
+
+            loaded = lock if isinstance(lock, ProjectLock) else load_lock(lock)
+            settings = apply_lock(settings, loaded)
         _default_runtime = _build_runtime(settings)
         return _default_runtime
 
@@ -1371,6 +1499,9 @@ class AI:
                 "workers",
                 "recipes",
                 "locks",
+                "vision",
+                "audio",
+                "docs",
                 "synthetic",
             ],
         }

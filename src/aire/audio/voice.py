@@ -42,7 +42,18 @@ class TTSBackend:
                 audio=AudioContent.from_uri(f"data:text/plain,{text[:200]}"),
                 backend="echo",
             )
-        # Delegate to a speech model when provided (provider-specific).
+        from aire.audio.pipelines import AudioPipeline
+        from aire.core.types import Capability
+
+        if self.model.info.supports(Capability.TEXT_TO_SPEECH):
+            result = await AudioPipeline(self.model).synthesize(text)
+            audio = (
+                AudioContent.from_uri(result.audio_uri)
+                if result.audio_uri
+                else AudioContent.from_uri(f"tts://{self.model.info.ref}")
+            )
+            return TTSResult(text=text, audio=audio, backend=self.model.info.ref)
+        # Last resort: prompt a text model for a URI description.
         ask = getattr(self.model, "ask", None)
         if callable(ask):
             _ = await ask(f"[tts] {text}")

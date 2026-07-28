@@ -1,5 +1,13 @@
 # aire — Roadmap
 
+## 0.3.4 — polish (facades, lock, UI, multimodal)
+
+- [x] `AI.vision` / `AI.audio` / `AI.docs` facades
+- [x] Project lock enforcement via `AI.configure(lock=...)`
+- [x] UI costs + filtered traces
+- [x] Video ffmpeg sampling when available; TTS via AudioPipeline
+- [x] Concurrent model rerank scoring
+
 ## 0.3.3 / 0.3.2B — hardening partial surfaces
 
 - [x] Wave 1: pgvector honesty, LoRA fit, GraphRAG communities, skills apply,

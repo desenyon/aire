@@ -82,8 +82,9 @@ class ModelReranker:
     async def rerank(self, query: str, hits: list[ScoredChunk], *, k: int) -> list[ScoredChunk]:
         if not hits:
             return []
-        rescored: list[ScoredChunk] = []
-        for hit in hits:
+        import asyncio
+
+        async def _score(hit: ScoredChunk) -> ScoredChunk:
             prompt = (
                 "Score how relevant the PASSAGE is to the QUERY on a 0-10 scale. "
                 "Respond with only the number.\n"
@@ -95,13 +96,12 @@ class ModelReranker:
                 raw = float(match.group(1))
                 relevance = raw if raw <= 1.0 else min(10.0, max(0.0, raw)) / 10.0
             else:
-                # deterministic offline fallback
                 q_terms = set(tokenize(query))
                 c_terms = set(tokenize(hit.chunk.text))
                 relevance = (len(q_terms & c_terms) / len(q_terms)) if q_terms else 0.0
-            rescored.append(
-                ScoredChunk(chunk=hit.chunk, score=hit.score + self.weight * relevance)
-            )
+            return ScoredChunk(chunk=hit.chunk, score=hit.score + self.weight * relevance)
+
+        rescored = list(await asyncio.gather(*[_score(h) for h in hits]))
         rescored.sort(key=lambda h: h.score, reverse=True)
         return rescored[:k]
 

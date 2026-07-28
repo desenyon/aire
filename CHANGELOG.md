@@ -7,6 +7,21 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.3.4] — 2026-07-28
+
+Wave-3 polish after 0.3.2B: facades, lock enforcement, UI depth, multimodal
+honesty.
+
+### Added
+- **Facades**: ``AI.vision`` / ``AI.audio`` / ``AI.docs``.
+- **Lock enforcement**: ``AI.configure(lock=...)`` and ``AI.locks.apply`` pin
+  model/embedder refs from ``aire.lock``.
+- **UI**: ``/api/costs``, trace name/limit filters in the dashboard.
+- **Observe**: ``AI.observe.costs()`` + filtered ``traces(name=, limit=)``.
+- **Video**: optional ffmpeg frame sampling (synthetic fallback still honest).
+- **TTS**: model path uses ``AudioPipeline.synthesize`` when capable.
+- **ModelReranker**: concurrent scoring via ``asyncio.gather``.
+
 ## [0.3.3] — 2026-07-28
 
 **0.3.2B hardening** — audit/fix/upgrade of partially built surfaces so
