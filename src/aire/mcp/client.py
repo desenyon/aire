@@ -155,6 +155,37 @@ class MCPClient:
         tool._invoke = _invoke  # type: ignore[method-assign]
         return tool
 
+    # -- knowledge surface (resources + prompts) ----------------------------------------
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        """Raw resource descriptors as returned by the server."""
+        result = await self._request("resources/list")
+        return list(result.get("resources", []))
+
+    async def read_resource(self, uri: str) -> str:
+        """Read a resource's text content (e.g. ``aire://guide``)."""
+        result = await self._request("resources/read", {"uri": uri})
+        return "".join(
+            str(part.get("text", "")) for part in result.get("contents", [])
+        )
+
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        """Raw prompt descriptors as returned by the server."""
+        result = await self._request("prompts/list")
+        return list(result.get("prompts", []))
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> str:
+        """Render a remote prompt; returns the joined message text."""
+        result = await self._request(
+            "prompts/get", {"name": name, "arguments": arguments or {}}
+        )
+        parts: list[str] = []
+        for message in result.get("messages", []):
+            content = message.get("content", {})
+            if isinstance(content, dict) and content.get("type") == "text":
+                parts.append(str(content.get("text", "")))
+        return "\n".join(parts)
+
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "mcp_client",

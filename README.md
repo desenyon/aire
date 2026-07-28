@@ -427,6 +427,17 @@ async with await AI.mcp.connect(["python", "-m", "aire.mcp"]) as client:
 
 Remote tools keep their input schemas, so agents reason about them exactly like local ones — permissions, timeouts, retries and auditing included.
 
+aire servers also expose **knowledge** so agents can learn the library through MCP itself — resources (`resources/list` / `resources/read`) and task prompts (`prompts/list` / `prompts/get`):
+
+```python
+async with await AI.mcp.connect(["aire", "mcp-serve"]) as client:
+    guide = await client.read_resource("aire://guide")     # full usage guide
+    manifest = await client.read_resource("aire://manifest")  # live AI.describe()
+    plan = await client.get_prompt("aire_rag", {"docs": "./manuals"})
+```
+
+Built-in resources: `aire://guide`, `aire://manifest`, `aire://errors` (taxonomy + retryability), `aire://refs` (every `provider:name` scheme). Prompt templates: `aire_quickstart`, `aire_rag`, `aire_agent`, `aire_gateway`, `aire_ml`. See [docs/AIRE_FOR_AGENTS.md](docs/AIRE_FOR_AGENTS.md).
+
 ## Agents
 
 ```python

@@ -430,6 +430,7 @@ class _McpNamespace(_Namespace):
         return run_sync(self.connect(command, **options))
 
     def describe(self) -> dict[str, Any]:
+        from aire.mcp.knowledge import builtin_prompts, builtin_resources
         from aire.mcp.protocol import PROTOCOL_VERSION
 
         return {
@@ -437,6 +438,8 @@ class _McpNamespace(_Namespace):
             "protocol": PROTOCOL_VERSION,
             "transport": "stdio (newline-delimited JSON-RPC 2.0)",
             "cli": "aire mcp-serve",
+            "resources": [r.uri for r in builtin_resources()],
+            "prompts": [p.name for p in builtin_prompts()],
         }
 
 

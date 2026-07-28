@@ -7,6 +7,29 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.2] — 2026-07-27
+
+MCP knowledge: agents can now learn how to operate aire through MCP itself —
+resources (docs/manifests) and prompts (task templates) ride alongside tools.
+
+### Added
+- **MCP resources** (`src/aire/mcp/knowledge.py`): `resources/list` +
+  `resources/read` for `aire://guide` (full usage guide, packaged with the
+  library at `aire/mcp/guide.md`), `aire://manifest` (live `AI.describe()`),
+  `aire://errors` (error taxonomy with retryability) and `aire://refs`
+  (every `provider:name` scheme).
+- **MCP prompts**: `prompts/list` + `prompts/get` with five task templates —
+  `aire_quickstart`, `aire_rag`, `aire_agent`, `aire_gateway`, `aire_ml` —
+  with declared arguments, defaults and safe placeholder substitution.
+- **Client support**: `MCPClient.list_resources()`, `read_resource(uri)`,
+  `list_prompts()`, `get_prompt(name, arguments)`.
+- Server `knowledge=True` flag (disable to expose tools only); capabilities
+  advertised in `initialize`; `MCPServer.describe()` lists resources/prompts.
+- `docs/AIRE_FOR_AGENTS.md`: agent entry point tying MCP knowledge to the
+  repo documentation map.
+- 13 new tests (`tests/unit/test_mcp_knowledge.py`) including a full stdio
+  round-trip reading the guide and rendering prompts through a real client.
+
 ## [0.2.1] — 2026-07-27
 
 Model creation: aire now orchestrates the ML ecosystem — train, evaluate and

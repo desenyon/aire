@@ -36,10 +36,12 @@ class MCPServer:
         *,
         name: str = "aire",
         version: str = __version__,
+        knowledge: bool = True,
     ) -> None:
         self._tools: dict[str, Tool] = {t.name: t for t in tools or []}
         self.name = name
         self.version = version
+        self.knowledge = knowledge
 
     def add_tool(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -71,9 +73,13 @@ class MCPServer:
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "initialize":
+            capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
+            if self.knowledge:
+                capabilities["resources"] = {"subscribe": False, "listChanged": False}
+                capabilities["prompts"] = {"listChanged": False}
             return {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": capabilities,
                 "serverInfo": {"name": self.name, "version": self.version},
             }
         if method == "ping":
@@ -82,7 +88,67 @@ class MCPServer:
             return {"tools": [self._tool_info(t) for t in self._tools.values()]}
         if method == "tools/call":
             return await self._call_tool(params)
+        if method == "resources/list":
+            return {
+                "resources": [
+                    {
+                        "uri": r.uri,
+                        "name": r.name,
+                        "description": r.description,
+                        "mimeType": r.mime_type,
+                    }
+                    for r in self._resources()
+                ]
+            }
+        if method == "resources/read":
+            return self._read_resource(str(params.get("uri", "")))
+        if method == "prompts/list":
+            return {"prompts": [self._prompt_info(p) for p in self._prompts()]}
+        if method == "prompts/get":
+            return self._get_prompt(str(params.get("name", "")), params.get("arguments"))
         raise MCPError(f"unknown method: {method!r}", context={"method": method})
+
+    # -- knowledge (resources + prompts) ----------------------------------------------
+
+    def _resources(self) -> list[Any]:
+        if not self.knowledge:
+            return []
+        from aire.mcp.knowledge import builtin_resources
+
+        return builtin_resources()
+
+    def _read_resource(self, uri: str) -> dict[str, Any]:
+        from aire.mcp.knowledge import read_resource
+
+        if not self.knowledge:
+            raise MCPError("resources are disabled on this server", context={"uri": uri})
+        text = read_resource(uri)
+        mime = next(
+            (r.mime_type for r in self._resources() if r.uri == uri), "text/markdown"
+        )
+        return {"contents": [{"uri": uri, "mimeType": mime, "text": text}]}
+
+    def _prompts(self) -> list[Any]:
+        if not self.knowledge:
+            return []
+        from aire.mcp.knowledge import builtin_prompts
+
+        return builtin_prompts()
+
+    @staticmethod
+    def _prompt_info(prompt: Any) -> dict[str, Any]:
+        return {
+            "name": prompt.name,
+            "description": prompt.description,
+            "arguments": [a.model_dump() for a in prompt.arguments],
+        }
+
+    def _get_prompt(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+        from aire.mcp.knowledge import get_prompt
+
+        if not self.knowledge:
+            raise MCPError("prompts are disabled on this server", context={"name": name})
+        return get_prompt(name, arguments)
 
     @staticmethod
     def _tool_info(tool: Tool) -> dict[str, Any]:
@@ -136,6 +202,9 @@ class MCPServer:
             "version": self.version,
             "protocol": PROTOCOL_VERSION,
             "tools": sorted(self._tools),
+            "knowledge": self.knowledge,
+            "resources": [r.uri for r in self._resources()],
+            "prompts": [p.name for p in self._prompts()],
         }
 
 
