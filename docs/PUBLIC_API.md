@@ -168,6 +168,15 @@ from aire.ml import (
   `metadata["features"]` → numeric metadata → text-derived. aire never
   pickles: sklearn persists via `skops`/`joblib` on `est.model`; torch loads
   use `weights_only=True`.
+- **Composable architectures** (`AI.ml.arch`): build stacks from independently
+  registered blocks — `attention()` / `ffn()` / `norm()` / `residual()` /
+  `block()` / `compose(layers=[...])`; `register_attention` / `register_ffn` /
+  `register_architecture`. Blocks: mha, linear, delta, gated_delta, kda, mla;
+  mlp, swiglu, situ_mlp, moe, latent_moe; layernorm, rmsnorm; add, attn_res.
+- **`AI.ml.optim.create(name, params, **opts)`**: sgd, adam, adamw, rmsprop,
+  adagrad.
+- **`AI.ml.loss.create(name, **opts)`**: cross_entropy, nll, mse, l1, huber,
+  smooth_l1, bce, kl_div, cosine, ctc, moe_load_balance.
 
 ## Tools & agents
 

@@ -607,7 +607,120 @@ class _MLNamespace(_Namespace):
                 "r2",
                 "permutation_importance",
             ],
+            "arch": "AI.ml.arch — composable attention/ffn/norm/residual blocks",
+            "optim": "AI.ml.optim — sgd/adam/adamw/rmsprop/adagrad",
+            "loss": "AI.ml.loss — cross_entropy/mse/huber/moe_load_balance/...",
         }
+
+    @property
+    def arch(self) -> Any:
+        return _ArchNamespace()
+
+    @property
+    def optim(self) -> Any:
+        return _OptimNamespace()
+
+    @property
+    def loss(self) -> Any:
+        return _LossNamespace()
+
+
+class _ArchNamespace(_Namespace):
+    """Composable neural architecture blocks — assemble any stack from parts."""
+
+    def attention(self, kind: str, **options: Any) -> Any:
+        from aire.ml.arch import attention as _attention
+
+        return _attention(kind, **options)
+
+    def ffn(self, kind: str, **options: Any) -> Any:
+        from aire.ml.arch import ffn as _ffn
+
+        return _ffn(kind, **options)
+
+    def norm(self, kind: str, **options: Any) -> Any:
+        from aire.ml.arch import norm as _norm
+
+        return _norm(kind, **options)
+
+    def residual(self, kind: str, **options: Any) -> Any:
+        from aire.ml.arch import residual as _residual
+
+        return _residual(kind, **options)
+
+    def block(self, **options: Any) -> Any:
+        from aire.ml.arch import block as _block
+
+        return _block(**options)
+
+    def compose(self, layers: list[Any], **options: Any) -> Any:
+        from aire.ml.arch import compose as _compose
+
+        return _compose(layers, **options)
+
+    def create(self, name: str, **options: Any) -> Any:
+        from aire.ml.arch import create as _create
+
+        return _create(name, **options)
+
+    def available(self) -> dict[str, list[str]]:
+        from aire.ml.arch import available
+
+        return available()
+
+    def register_attention(self, name: str, factory: Any | None = None, **options: Any) -> Any:
+        from aire.ml.arch import register_attention
+
+        return register_attention(name, factory, **options)
+
+    def register_ffn(self, name: str, factory: Any | None = None, **options: Any) -> Any:
+        from aire.ml.arch import register_ffn
+
+        return register_ffn(name, factory, **options)
+
+    def register_architecture(self, name: str, factory: Any | None = None, **options: Any) -> Any:
+        from aire.ml.arch import register_architecture
+
+        return register_architecture(name, factory, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.ml.arch import describe
+
+        return describe()
+
+
+class _OptimNamespace(_Namespace):
+    def create(self, name: str, params: Any, **options: Any) -> Any:
+        from aire.ml import optim
+
+        return optim.create(name, params, **options)
+
+    def available(self) -> list[str]:
+        from aire.ml import optim
+
+        return optim.names()
+
+    def describe(self) -> dict[str, Any]:
+        from aire.ml import optim
+
+        return optim.describe()
+
+
+class _LossNamespace(_Namespace):
+    def create(self, name: str, **options: Any) -> Any:
+        from aire.ml import loss
+
+        return loss.create(name, **options)
+
+    def available(self) -> list[str]:
+        from aire.ml import loss
+
+        return loss.names()
+
+    def describe(self) -> dict[str, Any]:
+        from aire.ml import loss
+
+        return loss.describe()
 
 
 class _TrainingNamespace(_Namespace):

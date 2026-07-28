@@ -1,16 +1,16 @@
 # aire — Roadmap
 
-## 0.2.6 (current) — deepen ML + gateway
+## 0.2.7 (current) — composable neural architecture blocks
+
+- [x] First-class attention / FFN / norm / residual / embed / head blocks with
+      register-your-own factories; compose arbitrary per-layer stacks
+- [x] Optimizers + loss functions as aire registries (`AI.ml.optim` / `AI.ml.loss`)
+
+## 0.2.6 — deepen ML + gateway
 
 - [x] Richer ML metrics (classification report, R²), k-fold CV, grid search,
       permutation importance, `AI.ml.catalog()`
 - [x] Gateway `/v1/health`, `/v1/gateway/spend`, cost/token response headers
-
-## 0.2.7 (next) — composable neural architecture blocks
-
-- [ ] First-class attention / FFN / norm / residual / embedding blocks with
-      register-your-own factories; compose arbitrary stacks (not model themes)
-- [ ] Optimizers + loss functions as aire registries (`AI.ml.optim` / `AI.ml.loss`)
 
 ## 0.2.1–0.2.5 — model creation, agent knowledge & hardening
 

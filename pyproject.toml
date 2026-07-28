@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.2.6"
+version = "0.2.7"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -127,9 +127,9 @@ ignore_missing_imports = true
 module = ["aire.deployment.fastapi_app", "aire.deployment.gateway"]
 disable_error_code = ["untyped-decorator"]
 
-# torch is optional; arch modules subclass torch.nn.Module after lazy import
+# torch is optional; arch/optim/loss subclass torch modules after lazy import
 [[tool.mypy.overrides]]
-module = ["aire.ml.arch.*"]
+module = ["aire.ml.arch.*", "aire.ml.optim", "aire.ml.optim.*", "aire.ml.loss", "aire.ml.loss.*"]
 disable_error_code = ["name-defined", "misc", "untyped-decorator"]
 
 [tool.pytest.ini_options]

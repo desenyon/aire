@@ -7,6 +7,28 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.7] — 2026-07-28
+
+Composable neural architecture blocks — assemble any stack from parts, plus
+first-class optimizers and losses. Not model themes: every attention / FFN /
+norm / residual is independently constructible, swappable, and registerable.
+
+### Added
+- **`aire.ml.arch` / `AI.ml.arch`**: block registries for
+  `attention` (mha, linear, delta, gated_delta, kda, mla),
+  `ffn` (mlp, swiglu, situ_mlp, moe, latent_moe),
+  `norm` (layernorm, rmsnorm, identity),
+  `residual` (add, attn_res), `embed`, `head`.
+- **Compose API**: `AI.ml.arch.attention/ffn/norm/residual/block(...)`,
+  `AI.ml.arch.compose(layers=[...])` with per-layer overrides,
+  `register_attention` / `register_ffn` / `register_architecture` for
+  user-defined parts and full stacks. Optional thin recipes
+  (`uniform_mha`, `hybrid_cycle`, …) are compositions, not themes.
+- **`AI.ml.optim`**: sgd, adam, adamw, rmsprop, adagrad.
+- **`AI.ml.loss`**: cross_entropy, nll, mse, l1, huber, smooth_l1, bce,
+  kl_div, cosine, ctc, moe_load_balance.
+- Example `examples/arch/main.py`; tests in `tests/unit/test_ml_arch.py`.
+
 ## [0.2.6] — 2026-07-28
 
 Deepen existing ML orchestration and gateway surfaces — richer metrics,

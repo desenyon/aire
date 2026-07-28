@@ -134,6 +134,25 @@ torch uses `torch.save` with `weights_only=True`.
 `AI.ml.catalog()`, `AI.ml.cross_validate(...)`, `AI.ml.grid_search(...)`,
 `est.feature_importance(...)` for model selection and inspection.
 
+### Composable neural blocks
+
+```python
+model = AI.ml.arch.compose(
+    layers=[
+        {"attention": "mha", "ffn": "mlp"},
+        {"attention": "kda", "ffn": "moe", "ffn_options": {"n_experts": 8}},
+    ],
+    n_embd=64, n_head=4,
+)
+AI.ml.arch.available()          # all registered block kinds
+AI.ml.arch.attention("mla", n_embd=64, n_head=4, gated=True)
+AI.ml.optim.create("adamw", model.parameters(), lr=1e-3)
+AI.ml.loss.create("cross_entropy")
+```
+
+Register your own: `@AI.ml.arch.register_attention("mine")` /
+`register_ffn` / `register_architecture`.
+
 ## 9. Gateway (serve models as APIs)
 
 ```python

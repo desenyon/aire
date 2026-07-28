@@ -213,7 +213,7 @@ result = await model.generate(
 | `AI.rag` | Knowledge pipelines and vector stores |
 | `AI.graph` | Knowledge graphs and GraphRAG pipelines |
 | `AI.memory` | Long-term agent memory (episodic + semantic) |
-| `AI.ml` | Model creation: estimators, CV, grid search, feature importance |
+| `AI.ml` | Estimators + composable arch blocks + optim/loss |
 | `AI.mcp` | MCP servers and clients (Model Context Protocol) |
 | `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
 | `AI.agents` | Create agents and supervisor-routed teams |
@@ -386,6 +386,35 @@ cv = await AI.ml.cross_validate("simple:centroid", dataset, k=5)
 gs = await AI.ml.grid_search("simple:knn", dataset, {"k": [1, 3, 5]}, k=3)
 importance = await est.feature_importance(dataset)
 ```
+
+### Composable architectures (`AI.ml.arch`)
+
+Build models from swappable blocks — not canned themes. Every attention / FFN / norm / residual is independently constructible and registerable:
+
+```python
+AI.ml.arch.available()  # attention/ffn/norm/residual/embed/head/architecture
+
+# Mix mechanisms per layer:
+model = AI.ml.arch.compose(
+    layers=[
+        {"attention": "mha", "ffn": "mlp"},
+        {"attention": "kda", "ffn": "moe", "ffn_options": {"n_experts": 8}},
+        {"attention": "mla", "ffn": "latent_moe", "attention_options": {"gated": True}},
+    ],
+    n_embd=64, n_head=4, vocab_size=256, attn_res_every=2,
+)
+
+# Or build/register individual parts:
+attn = AI.ml.arch.attention("delta", n_embd=64, n_head=4)
+ffn = AI.ml.arch.ffn("swiglu", n_embd=64)
+@AI.ml.arch.register_attention("mine")
+def mine(**opts): ...
+
+opt = AI.ml.optim.create("adamw", model.parameters(), lr=1e-3)
+loss = AI.ml.loss.create("cross_entropy", label_smoothing=0.1)
+```
+
+Attention blocks: `mha` (KV cache), `linear`, `delta`, `gated_delta`, `kda`, `mla`. FFN: `mlp`, `swiglu`, `situ_mlp`, `moe`, `latent_moe`. See `examples/arch/main.py`.
 
 Records carry features via `metadata["features"]` (explicit dict) → numeric metadata → text-derived fallback; the same convention feeds every backend. Native estimators (`simple:majority`, `simple:centroid`, `simple:knn`, `simple:linear_regression`) are real learners and persist as portable JSON. sklearn exposes `estimator.model` for `skops`/`joblib` persistence (aire never pickles); torch persists via `torch.save` with `weights_only=True` loads. The pandas bridge moves data both ways: `AI.ml.to_frame(dataset)` / `AI.ml.from_frame(df, target="label")`. Custom torch architectures plug in via `module_factory`. See `examples/ml/main.py` (runs offline).
 
@@ -802,6 +831,7 @@ Runnable, offline, no credentials required:
 | [examples/gateway](examples/gateway/main.py) | OpenAI-compatible gateway: aliases, fallback, streaming, embeddings |
 | [examples/graphrag](examples/graphrag/main.py) | Knowledge graph ingestion + graph-grounded answers with citations |
 | [examples/ml](examples/ml/main.py) | Estimator contract: native / sklearn / torch + pandas bridge |
+| [examples/arch](examples/arch/main.py) | Compose attention/FFN blocks + optim/loss |
 | [examples/teams](examples/teams/main.py) | Agent-as-tool, supervisor-routed team, long-term memory |
 
 ```bash
@@ -828,8 +858,8 @@ pip install -e ".[dev]"
 # Quality gates (all must pass):
 ruff check .
 ruff format --check .
-mypy src               # strict mode, 128 files
-pytest                 # 332 tests: unit, contract, integration, security, performance
+mypy src               # strict mode, 133 files
+pytest                 # 340 tests: unit, contract, integration, security, performance
 pytest tests/integration tests/security
 ```
 
