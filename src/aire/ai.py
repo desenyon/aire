@@ -440,6 +440,64 @@ class _McpNamespace(_Namespace):
         }
 
 
+class _MLNamespace(_Namespace):
+    def create(self, spec: str = "simple:centroid", **options: Any) -> Any:
+        """Create an estimator from a ``backend:name`` ref.
+
+        Backends: ``simple:*`` (native, offline), ``sklearn:*``, ``torch:*``.
+        Options flow to the estimator (e.g. ``AI.ml.create("simple:knn", k=5)``).
+        """
+        from aire.core.types import Ref
+
+        ref = Ref.parse(spec)
+        runtime = self._rt()
+        if not runtime.estimators.has(ref.provider):
+            from aire.ml import native, sklearn_adapter, torch_adapter
+
+            native.register(runtime)
+            sklearn_adapter.register(runtime)
+            torch_adapter.register(runtime)
+        return runtime.estimators.create(ref.provider, name=ref.name, runtime=runtime, **options)
+
+    async def fit(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
+        """Create + fit an estimator in one call; returns the fitted estimator."""
+        estimator = self.create(spec, **options)
+        await estimator.fit(dataset, target=target)
+        return estimator
+
+    def fit_sync(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
+        return run_sync(self.fit(spec, dataset, target=target, **options))
+
+    def backends(self) -> dict[str, bool]:
+        """Which ML backends are importable right now (native always true)."""
+        from aire.ml.pandas_bridge import available_backends
+
+        return available_backends()
+
+    def to_frame(self, dataset: Any, **options: Any) -> Any:
+        """Dataset → pandas DataFrame (requires pandas)."""
+        from aire.ml.pandas_bridge import dataset_to_frame
+
+        return dataset_to_frame(dataset, **options)
+
+    def from_frame(self, frame: Any, **options: Any) -> Any:
+        """pandas DataFrame → Dataset (requires pandas)."""
+        from aire.ml.pandas_bridge import frame_to_dataset
+
+        return frame_to_dataset(frame, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.ml.pandas_bridge import available_backends
+
+        return {
+            "kind": "ml",
+            "contract": "Estimator: fit(dataset, target=) → predict → evaluate → save/load",
+            "backends": available_backends(),
+            "native_estimators": ["majority", "centroid", "knn", "linear_regression"],
+            "feature_convention": "record.metadata['features'] → numeric metadata → text-derived",
+        }
+
+
 class _TrainingNamespace(_Namespace):
     def create(self, step: Any, **options: Any) -> Any:
         from aire.training.trainer import FunctionTrainer, TrainingConfig
@@ -490,6 +548,7 @@ class AI:
     gateway = _GatewayNamespace()
     workflows = _WorkflowNamespace()
     training = _TrainingNamespace()
+    ml = _MLNamespace()
     safety = _SafetyNamespace()
 
     # -- runtime -----------------------------------------------------------------
@@ -636,6 +695,7 @@ class AI:
                 "agents",
                 "workflows",
                 "training",
+                "ml",
                 "observe",
                 "deploy",
                 "gateway",

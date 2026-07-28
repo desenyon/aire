@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.2.0"
+version = "0.2.1"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -40,7 +40,9 @@ serve = ["fastapi>=0.110", "uvicorn>=0.29"]
 # Optional acceleration / data ecosystem
 numpy = ["numpy>=1.26"]
 datasets = ["datasets>=2.18"]
-# Training adapters (lazy; never imported by core)
+# Model creation backends (lazy; never imported by core)
+ml = ["scikit-learn>=1.4", "pandas>=2.0"]
+torch = ["torch>=2.2"]
 training = ["torch>=2.2"]
 vision = ["pillow>=10.0"]
 all = [
@@ -48,6 +50,8 @@ all = [
     "uvicorn>=0.29",
     "numpy>=1.26",
     "datasets>=2.18",
+    "scikit-learn>=1.4",
+    "pandas>=2.0",
     "pillow>=10.0",
 ]
 dev = [

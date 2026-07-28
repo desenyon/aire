@@ -64,6 +64,10 @@ class Runtime:
         return self.registries.of("graph_store")
 
     @property
+    def estimators(self) -> Registry[Any]:
+        return self.registries.of("estimator")
+
+    @property
     def tools(self) -> Registry[Any]:
         return self.registries.of("tool")
 

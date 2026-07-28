@@ -39,6 +39,7 @@ app = assistant.deploy()  # production FastAPI app with /health, /ready, /manife
 - [Data](#data)
 - [Retrieval augmented generation](#retrieval-augmented-generation)
 - [Knowledge graphs and GraphRAG](#knowledge-graphs-and-graphrag)
+- [Model creation (ML)](#model-creation-ml)
 - [Tools](#tools)
 - [MCP (Model Context Protocol)](#mcp-model-context-protocol)
 - [Agents](#agents)
@@ -212,6 +213,7 @@ result = await model.generate(
 | `AI.rag` | Knowledge pipelines and vector stores |
 | `AI.graph` | Knowledge graphs and GraphRAG pipelines |
 | `AI.memory` | Long-term agent memory (episodic + semantic) |
+| `AI.ml` | Model creation: train/evaluate/persist ML models (native, sklearn, torch) |
 | `AI.mcp` | MCP servers and clients (Model Context Protocol) |
 | `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
 | `AI.agents` | Create agents and supervisor-routed teams |
@@ -361,6 +363,27 @@ print(answer.text, answer.citations)
 ```
 
 Two extractor strategies: the default `LexicalGraphExtractor` is deterministic and **works fully offline** (capitalized phrases as entities, sentence co-occurrence as relations); pass any model ref for typed, semantic triples — `AI.graph.create(model="ollama:llama3.2")`. Querying links question terms to entities, expands their BFS neighborhood, fuses graph facts with vector retrieval, and grounds the answer in both. The graph store is `sqlite:<path>` — single-file, transactional, stdlib-only; the `GraphStore` interface is pluggable for graph databases.
+
+## Model creation (ML)
+
+aire orchestrates the ML ecosystem instead of reimplementing it. One `Estimator` contract — `fit(dataset, target=)` → `predict` → `evaluate` → `save`/`load` — spans native zero-dependency learners, scikit-learn, and PyTorch, all addressed by `backend:name` refs:
+
+```python
+from aire import AI
+
+AI.ml.backends()  # {"native": True, "sklearn": False, "torch": False, "pandas": False}
+
+est = await AI.ml.fit("simple:centroid", dataset)          # offline, zero deps
+est = await AI.ml.fit("sklearn:random_forest", dataset, n_estimators=100)  # aire[ml]
+est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300)   # aire[torch]
+
+metrics = await est.evaluate(dataset)          # accuracy / RMSE / MAE
+preds   = await est.predict(new_records)       # Prediction(value, probabilities)
+path    = est.save("artifacts/classifier.json")
+est2    = AI.ml.create("simple:centroid").load(path)
+```
+
+Records carry features via `metadata["features"]` (explicit dict) → numeric metadata → text-derived fallback; the same convention feeds every backend. Native estimators (`simple:majority`, `simple:centroid`, `simple:knn`, `simple:linear_regression`) are real learners and persist as portable JSON. sklearn exposes `estimator.model` for `skops`/`joblib` persistence (aire never pickles); torch persists via `torch.save` with `weights_only=True` loads. The pandas bridge moves data both ways: `AI.ml.to_frame(dataset)` / `AI.ml.from_frame(df, target="label")`. Custom torch architectures plug in via `module_factory`. See `examples/ml/main.py` (runs offline).
 
 ## Tools
 

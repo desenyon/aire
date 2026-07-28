@@ -7,6 +7,42 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.1] — 2026-07-27
+
+Model creation: aire now orchestrates the ML ecosystem — train, evaluate and
+persist ML models through one contract, offline by default.
+
+### Added
+- **`aire.ml` — the `Estimator` contract** (`src/aire/ml/estimator.py`):
+  `fit(dataset, target=)` → `predict(records)` → `evaluate` → `save`/`load`,
+  async end to end with blocking compute in worker threads. Shared feature
+  convention: explicit `record.metadata["features"]` dicts → numeric metadata
+  → text-derived fallback.
+- **Native estimators** (`src/aire/ml/native.py`, refs `simple:*`): real
+  zero-dependency learners — `majority` (baseline w/ probabilities),
+  `centroid` (nearest class centroid, z-normalized), `knn`, and
+  `linear_regression` (gradient descent). JSON-portable persistence.
+- **scikit-learn backend** (`src/aire/ml/sklearn_adapter.py`, refs
+  `sklearn:*`): 13 named estimators (`random_forest`, `logistic_regression`,
+  `gradient_boosting`, `svm`, `mlp`, ...) plus any dotted class path;
+  `predict_proba` support. Fitted-model persistence is delegated to the
+  caller via `skops.io`/`joblib` on `estimator.model` — aire never pickles
+  (enforced by the security test-suite). Lazy — requires `aire[ml]`.
+- **PyTorch backend** (`src/aire/ml/torch_adapter.py`, refs `torch:*`):
+  configurable MLP trainer for classification/regression with
+  `module_factory` for custom `nn.Module`s; `torch.save` persistence with
+  `weights_only=True` loads (tensors + primitives, no executable pickle).
+  Lazy — requires `aire[torch]`.
+- **pandas bridge** (`src/aire/ml/pandas_bridge.py`): `frame_to_dataset`,
+  `dataset_to_frame`, `predictions_to_frame`, `available_backends()`.
+  Lazy — requires `aire[ml]`.
+- **Facade**: `AI.ml.create(spec, **options)`, `AI.ml.fit(spec, dataset)`,
+  `AI.ml.backends()`, `AI.ml.to_frame/from_frame`, `AI.ml.describe()`.
+- `Runtime.estimators` registry property; `ml` and `torch` extras in
+  `pyproject.toml`.
+- 17 new tests (`tests/unit/test_ml.py`) and `examples/ml/main.py`
+  (fully offline).
+
 ## [0.2.0] — 2026-07-27
 
 Knowledge graphs, MCP, long-term memory, embedded stores, multi-agent teams
