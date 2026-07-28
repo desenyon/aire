@@ -7,6 +7,20 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.3.1] — 2026-07-28
+
+P0 correctness from the post-0.2 audit — memory/state, gateway timestamps,
+OTLP drain, hybrid honesty.
+
+### Fixed
+- **Agent memory**: no duplicated user turns; `Agent.state` populated from the
+  run; `reset()` clears memory; remove dead observation stub.
+- **Gateway audit** `ts` is ISO-8601 UTC (not a date-only spend key).
+- **OTLP**: `Runtime.aclose()` / `Tracer.flush()` drain pending batches.
+- **Hybrid retrieval**: skip keyword fusion unless the store advertises
+  `keyword-search` (hosted Pinecone/Chroma/Qdrant/Milvus stay vector-only);
+  Pinecone text path respects metadata filters.
+
 ## [0.3.0] — 2026-07-28
 
 Agent-operable AI platform: retrieval/ops depth, training hooks, multimodal
