@@ -112,9 +112,7 @@ def test_rule_approver_overrides_win() -> None:
         )
         is True
     )
-    assert (
-        approver(_call("read_secrets"), _spec(SideEffect.READ_ONLY, "read_secrets")) is False
-    )
+    assert approver(_call("read_secrets"), _spec(SideEffect.READ_ONLY, "read_secrets")) is False
 
 
 def test_interactive_approver_session_memory(monkeypatch) -> None:

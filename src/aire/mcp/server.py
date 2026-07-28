@@ -123,9 +123,7 @@ class MCPServer:
         if not self.knowledge:
             raise MCPError("resources are disabled on this server", context={"uri": uri})
         text = read_resource(uri)
-        mime = next(
-            (r.mime_type for r in self._resources() if r.uri == uri), "text/markdown"
-        )
+        mime = next((r.mime_type for r in self._resources() if r.uri == uri), "text/markdown")
         return {"contents": [{"uri": uri, "mimeType": mime, "text": text}]}
 
     def _prompts(self) -> list[Any]:

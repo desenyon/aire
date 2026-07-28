@@ -7,6 +7,23 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.5] — 2026-07-27
+
+Final sweep of the 0.2.x hardening series: documentation alignment and a last
+correctness review across the remaining modules.
+
+### Changed
+- Packaged agent guide (`aire/mcp/guide.md`) covers the new loaders and ML
+  subsystem; `docs/AIRE_FOR_AGENTS.md` cross-links the doc map.
+- `docs/PUBLIC_API.md`: new "Model creation (ML)" section; MCP knowledge
+  methods, approval policies, OTLP exporter, trainer/workflow resume APIs,
+  and loader coverage documented (workflow checkpoint API corrected).
+- `docs/ROADMAP.md`: 0.2.1–0.2.5 entries recorded; README dev stats updated
+  (326 tests, 116 strict-mypy files).
+- Reviewed `models/retry.py`, `rag/retriever.py`, `rag/rerank.py`,
+  `knowledge_assistant.py`, `training/trainer.py` — verified correct; no
+  changes required.
+
 ## [0.2.4] — 2026-07-27
 
 Hardening pass 2: workflow checkpoint resume actually works now, approval

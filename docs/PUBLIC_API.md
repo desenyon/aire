@@ -83,6 +83,11 @@ from aire.data import (
 
 Chainable: `dataset.validate().deduplicate().split(train=0.8, validation=0.1, test=0.1)`.
 
+`load(source)` accepts: `.jsonl`/`.json`/`.csv` files, `.html`/`.htm` (clean
+text extraction, also for HTML URLs and directory members), `.parquet`/`.xlsx`/
+`.xls` (lazy pandas, `aire[ml]`), text files, directories, `http(s)://` URLs,
+and in-memory lists. `aire.data.loaders.html_to_text` is exported for direct use.
+
 ## RAG
 
 ```python
@@ -127,10 +132,38 @@ optional JSONL persistence (`path=`).
 from aire.mcp import MCPServer, MCPClient, MCPError
 ```
 
-- `MCPServer(tools)` — `handle(message)`, `serve_stdio()`; CLI: `aire mcp-serve`.
+- `MCPServer(tools, knowledge=True)` — `handle(message)`, `serve_stdio()`;
+  CLI: `aire mcp-serve`. Exposes knowledge resources (`aire://guide`,
+  `aire://manifest`, `aire://errors`, `aire://refs`) and task prompts
+  (`aire_quickstart`, `aire_rag`, `aire_agent`, `aire_gateway`, `aire_ml`).
 - `MCPClient(command)` — async context manager; `list_tools()`,
-  `call_tool(name, args)`, `tools()` (adapts remote tools into aire `Tool`s).
+  `call_tool(name, args)`, `tools()` (adapts remote tools into aire `Tool`s),
+  `list_resources()`, `read_resource(uri)`, `list_prompts()`,
+  `get_prompt(name, args)`.
 - Transport: newline-delimited JSON-RPC 2.0 over stdio (protocol `2025-06-18`).
+
+## Model creation (ML)
+
+```python
+from aire.ml import (
+    Estimator, FitReport, Prediction, TaskType,
+    MajorityClassifier, CentroidClassifier, KNNClassifier, LinearRegressor,
+    SklearnEstimator, TorchEstimator,
+    frame_to_dataset, dataset_to_frame, predictions_to_frame, available_backends,
+)
+```
+
+- `AI.ml.create(spec, **options)` / `AI.ml.fit(spec, dataset, target=)` /
+  `AI.ml.backends()` / `AI.ml.to_frame(ds)` / `AI.ml.from_frame(df, target=)`.
+- Estimator refs: `simple:majority · centroid · knn · linear_regression`
+  (native, offline), `sklearn:<name|dotted.path>` (aire[ml]),
+  `torch:mlp` with `hidden=`, `module_factory=` (aire[torch]).
+- Contract: `await est.fit(dataset, target=)` → `FitReport`;
+  `await est.predict(records)` → `Prediction(value, probabilities)`;
+  `await est.evaluate(dataset)`; `est.save(path)` / `est.load(path)`;
+  `est.describe()`. Feature convention: `metadata["features"]` → numeric
+  metadata → text-derived. aire never pickles: sklearn persists via
+  `skops`/`joblib` on `est.model`; torch loads use `weights_only=True`.
 
 ## Tools & agents
 
@@ -145,6 +178,9 @@ from aire.agents import Team, TeamResult, Delegation, DelegationRecord
 - `agent.as_tool(name=..., description=...)` — agent-as-tool composition.
 - `Team(members, supervisor, max_rounds=6)` — supervisor-routed delegation with
   structured decisions and auditable `DelegationRecord`s; `AI.agents.team(...)`.
+- Approval policies (`aire.agents.approvals`, or `AI.agents.approver(kind)`):
+  `RuleApprover(auto_approve_below=..., allow=..., deny=...)` with audit trail,
+  `InteractiveApprover()` human-in-the-loop prompts with session memory.
 
 ## Workflows
 
@@ -153,15 +189,21 @@ from aire.workflows import Workflow, WorkflowState, WorkflowResult, WorkflowEven
 ```
 
 `wf.add(name, fn, retries=..., timeout_seconds=..., requires_approval=...)`,
-`wf.connect(a, b, when=...)`, `await wf.run(input)`, `wf.run_stream(input)`,
-`wf.checkpoint(path)`, `wf.resume(state)`.
+`wf.connect(a, b, when=...)`, `await wf.run(input, state=...)`,
+`wf.run_stream(input)`, `Workflow(checkpoint_path=...)` (state persisted after
+every node), `Workflow.load_checkpoint(path)`, `await wf.resume(path?)`
+(continues from a checkpoint: completed nodes are skipped, failed nodes retry).
 
 ## Evaluation & observability
 
 ```python
 from aire.evaluation import Evaluator, EvalCase, EvalReport, CaseResult, get_metric
 from aire.observability import Tracer, Span, MemoryExporter, JsonlExporter, Metrics
+from aire.observability import OTLPExporter  # batched OTLP/HTTP+JSON to any collector
 ```
+
+- `FunctionTrainer(step, config)` — `await trainer.fit(dataset, resume_from=...)`
+  (continues from a checkpoint), `FunctionTrainer.load_checkpoint(path)`.
 
 ## Safety & optimization
 

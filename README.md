@@ -373,14 +373,14 @@ from aire import AI
 
 AI.ml.backends()  # {"native": True, "sklearn": False, "torch": False, "pandas": False}
 
-est = await AI.ml.fit("simple:centroid", dataset)          # offline, zero deps
+est = await AI.ml.fit("simple:centroid", dataset)  # offline, zero deps
 est = await AI.ml.fit("sklearn:random_forest", dataset, n_estimators=100)  # aire[ml]
-est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300)   # aire[torch]
+est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300)  # aire[torch]
 
-metrics = await est.evaluate(dataset)          # accuracy / RMSE / MAE
-preds   = await est.predict(new_records)       # Prediction(value, probabilities)
-path    = est.save("artifacts/classifier.json")
-est2    = AI.ml.create("simple:centroid").load(path)
+metrics = await est.evaluate(dataset)  # accuracy / RMSE / MAE
+preds = await est.predict(new_records)  # Prediction(value, probabilities)
+path = est.save("artifacts/classifier.json")
+est2 = AI.ml.create("simple:centroid").load(path)
 ```
 
 Records carry features via `metadata["features"]` (explicit dict) → numeric metadata → text-derived fallback; the same convention feeds every backend. Native estimators (`simple:majority`, `simple:centroid`, `simple:knn`, `simple:linear_regression`) are real learners and persist as portable JSON. sklearn exposes `estimator.model` for `skops`/`joblib` persistence (aire never pickles); torch persists via `torch.save` with `weights_only=True` loads. The pandas bridge moves data both ways: `AI.ml.to_frame(dataset)` / `AI.ml.from_frame(df, target="label")`. Custom torch architectures plug in via `module_factory`. See `examples/ml/main.py` (runs offline).
@@ -416,12 +416,12 @@ aire mcp-serve   # expose builtin + registered tools to any MCP host
 
 ```python
 # Expose: any aire tool becomes an MCP tool
-server = AI.mcp.server([search_orders])        # or AI.mcp.server() for builtins
+server = AI.mcp.server([search_orders])  # or AI.mcp.server() for builtins
 await server.serve_stdio()
 
 # Consume: any MCP server's tools become first-class aire Tools
 async with await AI.mcp.connect(["python", "-m", "aire.mcp"]) as client:
-    tools = await client.tools()               # remote schemas preserved
+    tools = await client.tools()  # remote schemas preserved
     result = await tools[0].execute({"expression": "2 ** 10"})
 ```
 
@@ -431,7 +431,7 @@ aire servers also expose **knowledge** so agents can learn the library through M
 
 ```python
 async with await AI.mcp.connect(["aire", "mcp-serve"]) as client:
-    guide = await client.read_resource("aire://guide")     # full usage guide
+    guide = await client.read_resource("aire://guide")  # full usage guide
     manifest = await client.read_resource("aire://manifest")  # live AI.describe()
     plan = await client.get_prompt("aire_rag", {"docs": "./manuals"})
 ```
@@ -492,8 +492,7 @@ writer = AI.agents.create_sync("anthropic:claude-sonnet-4-5", name="writer")
 tool = researcher.as_tool(description="Gather facts on a topic.")
 
 # And a supervisor model can route subtasks across a team:
-team = AI.agents.team({"researcher": researcher, "writer": writer},
-                      supervisor="openai:gpt-4o-mini")
+team = AI.agents.team({"researcher": researcher, "writer": writer}, supervisor="openai:gpt-4o-mini")
 result = await team.run("Produce a market analysis report")
 print(result.answer, result.delegations)  # auditable handoffs
 ```
@@ -824,8 +823,8 @@ pip install -e ".[dev]"
 # Quality gates (all must pass):
 ruff check .
 ruff format --check .
-mypy src               # strict mode, 106 files
-pytest                 # 276 tests: unit, contract, integration, security, performance
+mypy src               # strict mode, 116 files
+pytest                 # 326 tests: unit, contract, integration, security, performance
 pytest tests/integration tests/security
 ```
 

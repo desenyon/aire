@@ -117,14 +117,10 @@ class TorchEstimator(Estimator):
 
     # torch modules are not JSON-serializable: persist with torch.save.
     def _state(self) -> dict[str, Any]:
-        raise ConfigurationError(
-            "torch estimators persist via save()", code="ml.state_unavailable"
-        )
+        raise ConfigurationError("torch estimators persist via save()", code="ml.state_unavailable")
 
     def _restore(self, state: dict[str, Any]) -> None:
-        raise ConfigurationError(
-            "torch estimators persist via load()", code="ml.state_unavailable"
-        )
+        raise ConfigurationError("torch estimators persist via load()", code="ml.state_unavailable")
 
     def save(self, path: str | Path) -> Path:
         if self.report is None or self._model is None:

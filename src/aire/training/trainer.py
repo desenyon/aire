@@ -86,9 +86,7 @@ class FunctionTrainer:
         self.metric = metric
         self.minimize = minimize
 
-    async def fit(
-        self, dataset: Dataset, *, resume_from: str | Path | None = None
-    ) -> TrainResult:
+    async def fit(self, dataset: Dataset, *, resume_from: str | Path | None = None) -> TrainResult:
         """Run the training loop.
 
         Args:

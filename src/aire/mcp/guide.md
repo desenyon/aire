@@ -10,8 +10,8 @@ defaults**. When unsure, call `.describe()` on the object or `AI.describe()`.
 ```python
 from aire import AI
 
-AI.describe()            # full library manifest: version, namespaces, registries
-AI.ml.backends()         # which ML backends are importable
+AI.describe()  # full library manifest: version, namespaces, registries
+AI.ml.backends()  # which ML backends are importable
 ```
 
 Namespaces: `models`, `data`, `rag`, `graph`, `memory`, `ml`, `mcp`, `agents`,
@@ -25,10 +25,10 @@ Never call a sync wrapper inside a running event loop.
 ## 2. Models — using them
 
 ```python
-model = AI.models.get("openai:gpt-4o-mini")     # any provider:name ref
+model = AI.models.get("openai:gpt-4o-mini")  # any provider:name ref
 text = await model.ask("Explain RAG in one sentence.")
-data = await model.ask_structured(prompt, MyPydanticModel)   # validated structured output
-result = await model.generate(GenerationRequest(...))        # full control
+data = await model.ask_structured(prompt, MyPydanticModel)  # validated structured output
+result = await model.generate(GenerationRequest(...))  # full control
 ```
 
 Provider families (all `provider:name`): `openai`, `anthropic`, `ollama`,
@@ -41,15 +41,18 @@ Routing & caching:
 
 ```python
 routed = AI.models.route(["groq:llama-3.3-70b", "openai:gpt-4o-mini"], objective="cost")
-cached = AI.models.cached(model)     # exact + semantic response cache
+cached = AI.models.cached(model)  # exact + semantic response cache
 ```
 
 ## 3. Data
 
 ```python
-ds = AI.data.load("./docs")            # dir, .jsonl/.json/.csv/.txt, URL, or list
+ds = AI.data.load("./docs")  # dir, .jsonl/.json/.csv/.html/.parquet/.xlsx, URL, or list
 chunks = AI.data.chunk(ds, strategy="recursive", size=512)
 ```
+
+HTML files/URLs are converted to clean text automatically; parquet/excel need
+`aire[ml]` (pandas).
 
 `Dataset` iterates `Record(text, metadata)`; `record.metadata` carries
 everything downstream (chunk offsets, labels, features).
@@ -57,9 +60,9 @@ everything downstream (chunk offsets, labels, features).
 ## 4. RAG
 
 ```python
-rag = AI.rag.create(embedder="builtin:hash", store="local:default")   # offline
+rag = AI.rag.create(embedder="builtin:hash", store="local:default")  # offline
 report = await rag.ingest("./documents")
-answer = await rag.query("How do refunds work?")   # Answer(text, citations)
+answer = await rag.query("How do refunds work?")  # Answer(text, citations)
 ```
 
 Stores: `local:default` (in-memory, `.save()` JSON), `sqlite:<path>` (embedded,
@@ -70,21 +73,21 @@ reranker → grounded prompt with numbered citations.
 ## 5. Knowledge graphs (GraphRAG)
 
 ```python
-graph = AI.graph.create()                    # sqlite triple store + lexical extractor
-graph = AI.graph.create(model="ollama:llama3.2")   # model-driven typed triples
+graph = AI.graph.create()  # sqlite triple store + lexical extractor
+graph = AI.graph.create(model="ollama:llama3.2")  # model-driven typed triples
 await graph.ingest("./documents")
-facts = await graph.subgraph("question terms")     # Subgraph.as_context()
+facts = await graph.subgraph("question terms")  # Subgraph.as_context()
 answer = await graph.query("How do refunds relate to chargebacks?")
 ```
 
 ## 6. Memory
 
 ```python
-mem = AI.memory.create(path="memory.jsonl")     # episodic + semantic, persistent
+mem = AI.memory.create(path="memory.jsonl")  # episodic + semantic, persistent
 await mem.remember("User prefers terse answers", kind="semantic")
 facts = await mem.recall_semantic("communication style")
 agent = AI.agents.create_sync(model, memory=mem)
-await mem.consolidate(model)     # summarize old episodes into semantic facts
+await mem.consolidate(model)  # summarize old episodes into semantic facts
 ```
 
 ## 7. Tools and agents
@@ -92,9 +95,11 @@ await mem.consolidate(model)     # summarize old episodes into semantic facts
 ```python
 from aire import tool
 
+
 @tool(description="Add two numbers", side_effect="none")
 def add(a: int, b: int) -> int:
     return a + b
+
 
 agent = AI.agents.create_sync("openai:gpt-4o-mini", tools=[add], max_steps=8)
 result = await agent.run("What is 40+2?")
@@ -104,7 +109,7 @@ result.output, result.steps, result.usage
 Multi-agent:
 
 ```python
-researcher_tool = researcher.as_tool()          # agent → Tool
+researcher_tool = researcher.as_tool()  # agent → Tool
 team = AI.agents.team(supervisor="openai:gpt-4o", members=[researcher, writer])
 result = await team.run("Write a market brief on EV batteries")
 ```
@@ -112,11 +117,13 @@ result = await team.run("Write a market brief on EV batteries")
 ## 8. Model creation (ML)
 
 ```python
-est = await AI.ml.fit("simple:centroid", dataset)              # offline native
-est = await AI.ml.fit("sklearn:random_forest", dataset)        # needs aire[ml]
-est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32))   # needs aire[torch]
-await est.evaluate(dataset); await est.predict(records)
-est.save("model.json"); AI.ml.create("simple:centroid").load("model.json")
+est = await AI.ml.fit("simple:centroid", dataset)  # offline native
+est = await AI.ml.fit("sklearn:random_forest", dataset)  # needs aire[ml]
+est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32))  # needs aire[torch]
+await est.evaluate(dataset)
+await est.predict(records)
+est.save("model.json")
+AI.ml.create("simple:centroid").load("model.json")
 ```
 
 Feature convention: `record.metadata["features"]` dict → numeric metadata →
@@ -152,7 +159,7 @@ Server: `aire mcp-serve` or `AI.mcp.server([tools])`. Client:
 
 ```python
 client = await AI.mcp.connect(["aire", "mcp-serve"])
-tools = await client.tools()                    # remote tools as aire Tools
+tools = await client.tools()  # remote tools as aire Tools
 docs = await client.read_resource("aire://guide")
 prompt = await client.get_prompt("aire_rag")
 ```

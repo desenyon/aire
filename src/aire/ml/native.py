@@ -79,9 +79,7 @@ class CentroidClassifier(Estimator):
             counts[key] += 1
             for i, v in enumerate(normed):
                 sums[key][i] += v
-        self._centroids = {
-            key: [v / counts[key] for v in total] for key, total in sums.items()
-        }
+        self._centroids = {key: [v / counts[key] for v in total] for key, total in sums.items()}
         predictions = self._predict_sync(x)
         correct = sum(1 for p, t in zip(predictions, y, strict=True) if p == str(t))
         return {"train_accuracy": correct / len(y), "classes": float(len(self._centroids))}

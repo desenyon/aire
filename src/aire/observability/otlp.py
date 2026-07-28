@@ -27,8 +27,7 @@ def _to_otlp_span(record: SpanRecord) -> dict[str, Any]:
         "startTimeUnixNano": int(record.start_time * _NANOS),
         "endTimeUnixNano": int(record.end_time * _NANOS),
         "attributes": [
-            {"key": key, "value": _otlp_value(value)}
-            for key, value in record.attributes.items()
+            {"key": key, "value": _otlp_value(value)} for key, value in record.attributes.items()
         ],
         "status": {"code": 2 if record.status == "error" else 1},
     }

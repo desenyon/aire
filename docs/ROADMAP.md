@@ -1,6 +1,23 @@
 # aire — Roadmap
 
-## 0.2 (current) — knowledge, memory & multi-agent
+## 0.2.1–0.2.5 (current) — model creation, agent knowledge & hardening
+
+- [x] `aire.ml` (0.2.1): the `Estimator` contract — `fit(dataset) → predict →
+      evaluate → save/load`; native `simple:*` estimators (offline), sklearn
+      (`sklearn:*`) and torch (`torch:*`) adapters, pandas bridge, `AI.ml`
+      facade; aire never pickles (torch loads use `weights_only=True`)
+- [x] MCP knowledge (0.2.2): `aire://guide|manifest|errors|refs` resources +
+      task prompts (`aire_rag`, `aire_agent`, `aire_gateway`, `aire_ml`,
+      `aire_quickstart`) — agents learn aire through MCP itself;
+      `docs/AIRE_FOR_AGENTS.md`
+- [x] Hardening 1 (0.2.3): cache mutation/parameter-signature fixes, OTLP
+      exporter (batched, failure-safe), resumable `FunctionTrainer`
+- [x] Hardening 2 (0.2.4): working workflow checkpoint resume (edge-firing
+      reconstruction, failed-node retry), `RuleApprover`/`InteractiveApprover`,
+      HTML + parquet/excel loaders
+- [x] Sweep (0.2.5): docs polish, PUBLIC_API/roadmap alignment, 326 tests green
+
+## 0.2 — knowledge, memory & multi-agent
 
 Six new subsystems, all offline-capable: knowledge graphs, MCP, long-term
 memory, embedded stores, multi-agent teams, and gateway hardening.
