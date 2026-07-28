@@ -71,6 +71,20 @@ class ObservabilityConfig(BaseModel):
     mask_fields: list[str] = Field(default_factory=lambda: ["api_key", "authorization", "password"])
 
 
+class GatewayConfig(BaseModel):
+    """Model gateway defaults (``aire gateway`` / ``AI.gateway.create()``)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    models: list[str] = Field(default_factory=list)
+    aliases: dict[str, str | list[str]] = Field(default_factory=dict)
+    embeddings: dict[str, str | list[str]] = Field(default_factory=dict)
+    routing: str = "first"  # first | round_robin
+    objective: str | None = None  # e.g. lowest_cost, highest_quality
+    auth_token: str | None = None
+    rate_limit_per_minute: int | None = None
+
+
 class ProviderCredential(BaseModel):
     """Credentials for one provider, resolved from config or environment."""
 
@@ -96,6 +110,7 @@ class Settings(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     providers: dict[str, ProviderCredential] = Field(default_factory=dict)
 
     # -- loaders ---------------------------------------------------------------
