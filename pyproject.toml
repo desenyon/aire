@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -120,7 +120,7 @@ ignore_missing_imports = true
 
 # fastapi is an optional dependency; its decorators are untyped when absent
 [[tool.mypy.overrides]]
-module = ["aire.deployment.fastapi_app"]
+module = ["aire.deployment.fastapi_app", "aire.deployment.gateway"]
 disable_error_code = ["untyped-decorator"]
 
 [tool.pytest.ini_options]
