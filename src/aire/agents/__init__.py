@@ -3,6 +3,7 @@
 from aire.agents.agent import Agent
 from aire.agents.memory import BufferMemory, JsonlMemory, Memory, resolve_memory
 from aire.agents.runtime import AgentExecutor, Approver
+from aire.agents.team import Delegation, DelegationRecord, Team, TeamResult
 from aire.agents.types import (
     AgentConfig,
     AgentResult,
@@ -22,8 +23,12 @@ __all__ = [
     "AgentStep",
     "Approver",
     "BufferMemory",
+    "Delegation",
+    "DelegationRecord",
     "JsonlMemory",
     "Memory",
     "StepKind",
+    "Team",
+    "TeamResult",
     "resolve_memory",
 ]

@@ -83,6 +83,11 @@ class GatewayConfig(BaseModel):
     objective: str | None = None  # e.g. lowest_cost, highest_quality
     auth_token: str | None = None
     rate_limit_per_minute: int | None = None
+    budgets: dict[str, float] = Field(default_factory=dict)  # alias/ref → USD/day cap
+    circuit_breaker: bool = True
+    failure_threshold: int = 3
+    cooldown_seconds: float = 30.0
+    request_log: str | None = None  # JSONL audit path
 
 
 class ProviderCredential(BaseModel):

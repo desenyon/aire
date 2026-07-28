@@ -69,7 +69,12 @@ RoutingMode = Literal["first", "round_robin"]
 
 
 class Gateway:
-    """Resolves public model names to candidate model refs and routes requests."""
+    """Resolves public model names to candidate model refs and routes requests.
+
+    Production guards: per-candidate circuit breakers (open after
+    ``failure_threshold`` consecutive failures, half-open after
+    ``cooldown_seconds``) and daily cost budgets keyed by alias or ref.
+    """
 
     def __init__(
         self,
@@ -81,6 +86,10 @@ class Gateway:
         objective: Objective | None = None,
         fallback: bool = True,
         allow_direct_refs: bool = True,
+        budgets: dict[str, float] | None = None,
+        circuit_breaker: bool = True,
+        failure_threshold: int = 3,
+        cooldown_seconds: float = 30.0,
     ) -> None:
         if routing not in ("first", "round_robin"):
             raise ConfigurationError(
@@ -96,8 +105,14 @@ class Gateway:
         self.objective = objective
         self.fallback = fallback
         self.allow_direct_refs = allow_direct_refs
+        self.budgets = budgets or {}
+        self.circuit_breaker = circuit_breaker
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
         self._round_robin: dict[str, int] = defaultdict(int)
         self._routers: dict[str, Model] = {}
+        self._circuits: dict[str, dict[str, Any]] = {}
+        self._spend: dict[str, tuple[str, float]] = {}
 
     # -- route resolution ----------------------------------------------------------
 
@@ -117,11 +132,54 @@ class Gateway:
         )
 
     def _ordered(self, public: str, refs: list[str]) -> list[str]:
+        ordered = refs
         if self.routing == "round_robin" and len(refs) > 1:
             start = self._round_robin[public] % len(refs)
             self._round_robin[public] += 1
-            return refs[start:] + refs[:start]
-        return refs
+            ordered = refs[start:] + refs[:start]
+        available = [ref for ref in ordered if self._available(public, ref)]
+        if not available:
+            raise RateLimitError(
+                "gateway",
+                f"all candidates for {public!r} are unavailable "
+                "(circuit open or daily budget exhausted)",
+                status=429,
+            )
+        return available
+
+    # -- circuit breakers & budgets -----------------------------------------------------
+
+    def _available(self, public: str, ref: str) -> bool:
+        if self.circuit_breaker:
+            circuit = self._circuits.get(ref)
+            if (
+                circuit is not None
+                and circuit["opened_at"] is not None
+                and time.monotonic() - circuit["opened_at"] < self.cooldown_seconds
+            ):
+                return False
+        return not (self._over_budget(public) or self._over_budget(ref))
+
+    def _over_budget(self, key: str) -> bool:
+        limit = self.budgets.get(key)
+        if limit is None:
+            return False
+        day, spent = self._spend.get(key, ("", 0.0))
+        return day == _today() and spent >= limit
+
+    def _record_success(self, public: str, ref: str, cost_usd: float) -> None:
+        self._circuits[ref] = {"failures": 0, "opened_at": None}
+        for key in {public, ref}:
+            day, spent = self._spend.get(key, (_today(), 0.0))
+            self._spend[key] = (_today(), spent + cost_usd if day == _today() else cost_usd)
+
+    def _record_failure(self, ref: str) -> None:
+        if not self.circuit_breaker:
+            return
+        circuit = self._circuits.setdefault(ref, {"failures": 0, "opened_at": None})
+        circuit["failures"] += 1
+        if circuit["failures"] >= self.failure_threshold:
+            circuit["opened_at"] = time.monotonic()
 
     async def _resolve_chain(self, public: str, refs: list[str]) -> list[tuple[str, Model]]:
         chain: list[tuple[str, Model]] = []
@@ -168,11 +226,21 @@ class Gateway:
         last_error: Exception | None = None
         for ref, model in chain if self.fallback else chain[:1]:
             try:
-                return ref, await model.generate(request)
+                result = await model.generate(request)
             except Exception as exc:
+                self._record_failure(ref)
                 last_error = exc
+                continue
+            self._record_success(public, ref, result.usage.cost_usd)
+            return ref, result
         assert last_error is not None
-        raise last_error
+        if isinstance(last_error, AireError):
+            raise last_error
+        raise ProviderError(
+            "gateway",
+            f"all candidates for {public!r} failed; last error: "
+            f"{type(last_error).__name__}: {last_error}",
+        ) from last_error
 
     async def stream(
         self, public: str, request: GenerationRequest
@@ -188,10 +256,12 @@ class Gateway:
                     started = True
                     yield ref, chunk
             except Exception as exc:
+                self._record_failure(ref)
                 last_error = exc
                 if started:
                     raise
                 continue
+            self._record_success(public, ref, 0.0)
             return
         assert last_error is not None
         raise last_error
@@ -207,9 +277,32 @@ class Gateway:
             "objective": self.objective,
             "fallback": self.fallback,
             "allow_direct_refs": self.allow_direct_refs,
+            "circuit_breaker": {
+                "enabled": self.circuit_breaker,
+                "failure_threshold": self.failure_threshold,
+                "cooldown_seconds": self.cooldown_seconds,
+                "circuits": {
+                    ref: {
+                        "failures": state["failures"],
+                        "open": state["opened_at"] is not None,
+                    }
+                    for ref, state in sorted(self._circuits.items())
+                },
+            },
+            "budgets": dict(self.budgets),
+            "spend_today": {
+                key: round(spent, 6)
+                for key, (day, spent) in sorted(self._spend.items())
+                if day == _today()
+            },
             "chat_models": {k: list(v) for k, v in sorted(self.chat_routes.items())},
             "embedding_models": {k: list(v) for k, v in sorted(self.embedding_routes.items())},
-            "endpoints": ["/v1/chat/completions", "/v1/embeddings", "/v1/models"],
+            "endpoints": [
+                "/v1/chat/completions",
+                "/v1/messages",
+                "/v1/embeddings",
+                "/v1/models",
+            ],
         }
 
 
@@ -223,6 +316,11 @@ def create_gateway(
     objective: Objective | None = None,
     fallback: bool = True,
     allow_direct_refs: bool = True,
+    budgets: dict[str, float] | None = None,
+    circuit_breaker: bool = True,
+    failure_threshold: int = 3,
+    cooldown_seconds: float = 30.0,
+    request_log: str | None = None,
     auth_token: str | None = None,
     rate_limit_per_minute: int | None = None,
     metrics: Metrics | None = None,
@@ -248,8 +346,13 @@ def create_gateway(
         objective=objective,
         fallback=fallback,
         allow_direct_refs=allow_direct_refs,
+        budgets=budgets,
+        circuit_breaker=circuit_breaker,
+        failure_threshold=failure_threshold,
+        cooldown_seconds=cooldown_seconds,
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
+    log = _make_request_logger(request_log)
     app = FastAPI(title=title, version=__version__)
 
     @app.exception_handler(AireError)
@@ -257,8 +360,9 @@ def create_gateway(
         return JSONResponse(status_code=_error_status(exc), content=_error_body(exc))
 
     _register_meta_routes(app, gateway, guard)
-    _register_chat_route(app, gateway, guard, runtime, metrics)
-    _register_embeddings_route(app, gateway, guard, runtime, metrics)
+    _register_chat_route(app, gateway, guard, runtime, metrics, log)
+    _register_anthropic_route(app, gateway, guard, runtime, metrics, log)
+    _register_embeddings_route(app, gateway, guard, runtime, metrics, log)
     return app
 
 
@@ -285,7 +389,12 @@ def _register_meta_routes(app: Any, gateway: Gateway, guard: Any) -> None:
 
 
 def _register_chat_route(
-    app: Any, gateway: Gateway, guard: Any, runtime: Runtime, metrics: Metrics | None
+    app: Any,
+    gateway: Gateway,
+    guard: Any,
+    runtime: Runtime,
+    metrics: Metrics | None,
+    log: Any,
 ) -> None:
     @app.post("/v1/chat/completions", dependencies=[Depends(guard)])
     async def chat_completions(body: dict[str, Any]) -> Any:
@@ -301,14 +410,43 @@ def _register_chat_route(
         with _maybe_span(runtime, "gateway.chat", {"model": public}):
             resolved, result = await gateway.generate(public, request)
         _record_chat_metrics(metrics, started, result, public=public)
+        _log_request(log, "chat.completions", public, resolved, result, started)
         return JSONResponse(
             content=_chat_completion_body(public, resolved, result),
             headers={"X-Aire-Resolved-Model": resolved},
         )
 
 
+def _register_anthropic_route(
+    app: Any,
+    gateway: Gateway,
+    guard: Any,
+    runtime: Runtime,
+    metrics: Metrics | None,
+    log: Any,
+) -> None:
+    @app.post("/v1/messages", dependencies=[Depends(guard)])
+    async def anthropic_messages(body: dict[str, Any]) -> Any:
+        public = _require_model_name(body)
+        request = _build_anthropic_request(body)
+        started = time.perf_counter()
+        with _maybe_span(runtime, "gateway.messages", {"model": public}):
+            resolved, result = await gateway.generate(public, request)
+        _record_chat_metrics(metrics, started, result, public=public)
+        _log_request(log, "messages", public, resolved, result, started)
+        return JSONResponse(
+            content=_anthropic_body(public, resolved, result),
+            headers={"X-Aire-Resolved-Model": resolved},
+        )
+
+
 def _register_embeddings_route(
-    app: Any, gateway: Gateway, guard: Any, runtime: Runtime, metrics: Metrics | None
+    app: Any,
+    gateway: Gateway,
+    guard: Any,
+    runtime: Runtime,
+    metrics: Metrics | None,
+    log: Any,
 ) -> None:
     @app.post("/v1/embeddings", dependencies=[Depends(guard)])
     async def create_embeddings(body: dict[str, Any]) -> dict[str, Any]:
@@ -599,3 +737,103 @@ def _maybe_span(runtime: Runtime, name: str, attributes: dict[str, Any]) -> Any:
     if runtime.tracer is None:
         return contextlib.nullcontext()
     return runtime.tracer.span(name, attributes=attributes)
+
+
+# -- anthropic-compatible endpoint --------------------------------------------------------
+
+
+def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:
+    """Translate an Anthropic /v1/messages body into a GenerationRequest."""
+    from aire.core.content import Message, TextContent
+
+    messages: list[Message] = []
+    system = _content_text(body.get("system"))
+    if system:
+        messages.append(Message(role="system", content=[TextContent(text=system)]))
+    for raw in body.get("messages") or []:
+        if not isinstance(raw, dict):
+            continue
+        role = raw.get("role", "user")
+        if role not in ("user", "assistant"):
+            role = "user"
+        messages.append(
+            Message(role=role, content=[TextContent(text=_content_text(raw.get("content")))])
+        )
+    stop_raw = body.get("stop_sequences")
+    return GenerationRequest(
+        messages=messages,
+        temperature=body.get("temperature"),
+        max_tokens=body.get("max_tokens") or 1024,
+        stop=stop_raw if isinstance(stop_raw, list) else None,
+    )
+
+
+_ANTHROPIC_STOP = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "tool_calls": "tool_use",
+    "content_filter": "refusal",
+    "error": "end_turn",
+}
+
+
+def _anthropic_body(public: str, resolved: str, result: GenerationResult) -> dict[str, Any]:
+    return {
+        "id": f"msg_{uuid.uuid4().hex[:24]}",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": result.text}],
+        "model": public,
+        "stop_reason": _ANTHROPIC_STOP.get(result.finish_reason, "end_turn"),
+        "usage": {
+            "input_tokens": result.usage.input_tokens,
+            "output_tokens": result.usage.output_tokens,
+        },
+        "aire": {"resolved_model": resolved},
+    }
+
+
+# -- request logging -----------------------------------------------------------------------
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _make_request_logger(path: str | None) -> Any:
+    if not path:
+        return None
+    from pathlib import Path
+
+    target = Path(path)
+
+    def _log(entry: dict[str, Any]) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a") as fh:
+            fh.write(json.dumps(entry, default=str) + "\n")
+
+    return _log
+
+
+def _log_request(
+    log: Any,
+    endpoint: str,
+    public: str,
+    resolved: str,
+    result: GenerationResult,
+    started: float,
+) -> None:
+    if log is None:
+        return
+    log(
+        {
+            "ts": _today(),
+            "endpoint": endpoint,
+            "model": public,
+            "resolved": resolved,
+            "input_tokens": result.usage.input_tokens,
+            "output_tokens": result.usage.output_tokens,
+            "cost_usd": result.usage.cost_usd,
+            "latency_ms": round((time.perf_counter() - started) * 1000.0, 2),
+        }
+    )

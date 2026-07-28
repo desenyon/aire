@@ -74,6 +74,37 @@ class Agent:
         """Start a fresh conversation (keeps tools and config, clears memory)."""
         self.state = AgentState()
 
+    # -- composition ------------------------------------------------------------------
+
+    def as_tool(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        side_effect: str | Any = None,
+    ) -> Tool:
+        """Wrap this agent as a :class:`Tool` — the agent-as-tool building block.
+
+        The returned tool takes ``task: str`` and returns the agent's final
+        text, so any other agent (or :class:`~aire.agents.team.Team`) can
+        delegate to it through the standard tool contract.
+        """
+        from aire.tools.types import SideEffect
+
+        agent = self
+
+        async def _delegate(task: str) -> str:
+            result = await agent.run(task)
+            return result.output
+
+        _delegate.__doc__ = description or f"Delegate a task to the {agent.name} agent."
+        return Tool(
+            _delegate,
+            name=name or agent.name,
+            description=description,
+            side_effect=SideEffect(side_effect) if side_effect else SideEffect.READ_ONLY,
+        )
+
     # -- introspection --------------------------------------------------------------
 
     def describe(self) -> dict[str, Any]:
