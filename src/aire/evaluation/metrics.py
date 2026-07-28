@@ -28,9 +28,22 @@ class MetricContext(Protocol):
     cost_usd: float
     context: str | None
     judge: Model | None
+    embedder: Any | None
 
 
 MetricFn = Any  # async (EvalCase, str, MetricContext) -> MetricResult
+
+
+def _ngrams(tokens: list[str], n: int) -> list[tuple[str, ...]]:
+    if n <= 0 or len(tokens) < n:
+        return []
+    return [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+
+
+def _f1(precision: float, recall: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
 
 _REGISTRY: dict[str, MetricFn] = {}
 
@@ -119,6 +132,108 @@ async def groundedness(case: EvalCase, output: str, ctx: MetricContext) -> Metri
     )
 
 
+async def faithfulness(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
+    """Sentence-level groundedness: fraction of output sentences supported by context."""
+    context = ctx.context or case.context or ""
+    context_terms = set(tokenize(context))
+    sentences = [s.strip() for s in re.split(r"[.!?]+", output) if s.strip()]
+    if not sentences:
+        return MetricResult(name="faithfulness", score=1.0, detail={"reason": "empty output"})
+    supported = 0
+    for sentence in sentences:
+        terms = [t for t in tokenize(sentence) if len(t) > 3]
+        if not terms:
+            supported += 1
+            continue
+        hit = sum(1 for t in terms if t in context_terms)
+        if hit / len(terms) >= 0.4:
+            supported += 1
+    score = supported / len(sentences)
+    return MetricResult(
+        name="faithfulness",
+        score=score,
+        detail={"supported_sentences": supported, "total_sentences": len(sentences)},
+    )
+
+
+async def embedding_similarity(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
+    """Cosine similarity between output and expected via ctx.embedder (falls back to lexical F1)."""
+    expected = (case.expected or "").strip()
+    if not expected:
+        return MetricResult(name="embedding_similarity", score=0.0, detail={"error": "no expected"})
+    embedder = getattr(ctx, "embedder", None)
+    if embedder is None:
+        lexical = await semantic_overlap(case, output, ctx)
+        return MetricResult(
+            name="embedding_similarity",
+            score=lexical.score,
+            detail={"fallback": "semantic_overlap", **(lexical.detail or {})},
+        )
+    from aire.rag.store import cosine_similarity
+
+    vectors = await embedder.embed_texts([expected, output])
+    score = cosine_similarity(vectors[0], vectors[1])
+    # map [-1, 1] → [0, 1]
+    normalized = max(0.0, min(1.0, (score + 1.0) / 2.0))
+    return MetricResult(
+        name="embedding_similarity",
+        score=normalized,
+        detail={"cosine": score},
+    )
+
+
+async def bleu(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
+    """Offline unigram+bigram BLEU-ish F1 against expected (no external deps)."""
+    ref = tokenize(case.expected or "")
+    hyp = tokenize(output)
+    if not ref:
+        return MetricResult(name="bleu", score=0.0)
+    scores: list[float] = []
+    for n in (1, 2):
+        ref_ng = _ngrams(ref, n)
+        hyp_ng = _ngrams(hyp, n)
+        if not ref_ng:
+            continue
+        ref_counts: dict[tuple[str, ...], int] = {}
+        for g in ref_ng:
+            ref_counts[g] = ref_counts.get(g, 0) + 1
+        hyp_counts: dict[tuple[str, ...], int] = {}
+        for g in hyp_ng:
+            hyp_counts[g] = hyp_counts.get(g, 0) + 1
+        overlap = sum(min(hyp_counts.get(g, 0), c) for g, c in ref_counts.items())
+        precision = overlap / len(hyp_ng) if hyp_ng else 0.0
+        recall = overlap / len(ref_ng)
+        scores.append(_f1(precision, recall))
+    score = sum(scores) / len(scores) if scores else 0.0
+    return MetricResult(name="bleu", score=score, detail={"orders": len(scores)})
+
+
+async def rouge_l(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
+    """Longest-common-subsequence F1 (ROUGE-L style) against expected."""
+    ref = tokenize(case.expected or "")
+    hyp = tokenize(output)
+    if not ref or not hyp:
+        return MetricResult(name="rouge_l", score=0.0)
+    # classic DP LCS length
+    prev = [0] * (len(hyp) + 1)
+    for _i, rt in enumerate(ref, start=1):
+        curr = [0]
+        for j, ht in enumerate(hyp, start=1):
+            if rt == ht:
+                curr.append(prev[j - 1] + 1)
+            else:
+                curr.append(max(prev[j], curr[-1]))
+        prev = curr
+    lcs = prev[-1]
+    precision = lcs / len(hyp)
+    recall = lcs / len(ref)
+    return MetricResult(
+        name="rouge_l",
+        score=_f1(precision, recall),
+        detail={"lcs": lcs, "precision": precision, "recall": recall},
+    )
+
+
 # -- operational ---------------------------------------------------------------------
 
 
@@ -171,8 +286,13 @@ async def model_judge(case: EvalCase, output: str, ctx: MetricContext) -> Metric
         output=output,
     )
     text = await ctx.judge.ask(prompt, max_tokens=8)
-    match = re.search(r"\d+", text)
-    score = min(10, max(0, int(match.group()))) / 10.0 if match else 0.0
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if match:
+        raw = float(match.group())
+        # accept 0-10 or already-normalized 0-1
+        score = raw if raw <= 1.0 else min(10.0, max(0.0, raw)) / 10.0
+    else:
+        score = 0.0
     return MetricResult(
         name="model_judge", score=score, detail={"raw": text, "criterion": criterion}
     )
@@ -184,9 +304,13 @@ def _register_builtins() -> None:
         "accuracy": accuracy,
         "contains": contains,
         "semantic_overlap": semantic_overlap,
+        "embedding_similarity": embedding_similarity,
+        "bleu": bleu,
+        "rouge_l": rouge_l,
         "json_valid": json_valid,
         "regex_match": regex_match,
         "groundedness": groundedness,
+        "faithfulness": faithfulness,
         "latency": latency,
         "cost": cost,
         "model_judge": model_judge,

@@ -24,7 +24,13 @@ Target = Callable[[str], str | Awaitable[str]] | Any
 
 class _Ctx:
     def __init__(
-        self, *, latency_ms: float, usage: Any, context: str | None, judge: Model | None
+        self,
+        *,
+        latency_ms: float,
+        usage: Any,
+        context: str | None,
+        judge: Model | None,
+        embedder: Any | None = None,
     ) -> None:
         self.latency_ms = latency_ms
         self.input_tokens = getattr(usage, "input_tokens", 0)
@@ -32,6 +38,7 @@ class _Ctx:
         self.cost_usd = getattr(usage, "cost_usd", 0.0)
         self.context = context
         self.judge = judge
+        self.embedder = embedder
 
 
 def load_cases(source: str | Path | list[dict[str, Any]] | list[EvalCase]) -> list[EvalCase]:
@@ -49,8 +56,15 @@ def load_cases(source: str | Path | list[dict[str, Any]] | list[EvalCase]) -> li
 class Evaluator:
     """Runs evaluation suites and produces reports."""
 
-    def __init__(self, *, judge: Model | None = None, name: str = "evaluation") -> None:
+    def __init__(
+        self,
+        *,
+        judge: Model | None = None,
+        embedder: Any | None = None,
+        name: str = "evaluation",
+    ) -> None:
         self.judge = judge
+        self.embedder = embedder
         self.name = name
 
     async def run(
@@ -103,7 +117,13 @@ class Evaluator:
             error_category=error_category,
         )
         if error is None:
-            ctx = _Ctx(latency_ms=latency_ms, usage=result.usage, context=context, judge=self.judge)
+            ctx = _Ctx(
+                latency_ms=latency_ms,
+                usage=result.usage,
+                context=context,
+                judge=self.judge,
+                embedder=self.embedder,
+            )
             for metric_fn in metric_fns:
                 try:
                     result.metrics.append(await metric_fn(case, output, ctx))

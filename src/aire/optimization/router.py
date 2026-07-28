@@ -2,7 +2,8 @@
 
 Routing scores candidates from their normalized :class:`ModelInfo` metadata —
 cost, latency, context capacity and capabilities — plus optional historical
-performance fed back via :meth:`ModelRouter.record`.
+performance fed back via :meth:`ModelRouter.record` and optional
+:class:`~aire.optimization.cost_policy.CostPolicy` budget guards.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from aire.core.errors import ConfigurationError, ContextLengthError, NotFoundErr
 from aire.core.types import Capability, HealthStatus, Manifest
 from aire.models.base import Model, estimate_tokens
 from aire.models.types import GenerationRequest, GenerationResult, ModelInfo
+from aire.optimization.cost_policy import CostPolicy, estimate_request_cost_usd
 
 Objective = Literal[
     "lowest_cost",
@@ -44,6 +46,7 @@ class RouteDecision(BaseModel):
     scores: dict[str, float] = Field(default_factory=dict)
     objective: str
     reason: str = ""
+    policy_blocked: list[str] = Field(default_factory=list)
 
 
 class RoutingStats(BaseModel):
@@ -72,6 +75,7 @@ class ModelRouter(Model):
         cost_limit_usd: float | None = None,
         latency_target_ms: float | None = None,
         fallback: bool = True,
+        policy: CostPolicy | None = None,
     ) -> None:
         if not candidates:
             raise ConfigurationError("router requires at least one candidate model")
@@ -80,6 +84,7 @@ class ModelRouter(Model):
         self.cost_limit_usd = cost_limit_usd
         self.latency_target_ms = latency_target_ms
         self.fallback = fallback
+        self.policy = policy
         self.history: dict[str, RoutingStats] = {m.info.ref: RoutingStats() for m in candidates}
 
     @property
@@ -94,53 +99,87 @@ class ModelRouter(Model):
 
     # -- routing ---------------------------------------------------------------------
 
+    def _estimated_cost(self, model: Model, request: GenerationRequest) -> float:
+        info = model.info
+        cost_rate = (info.cost.input_per_million or 0.0) + (info.cost.output_per_million or 0.0)
+        estimated_tokens = sum(estimate_tokens(m.text_content) for m in request.messages)
+        return estimate_request_cost_usd(cost_rate, estimated_tokens)
+
     def score(self, model: Model, request: GenerationRequest) -> float:
         """Score a candidate in [0, 1]; higher is better for the objective."""
         info = model.info
         stats = self.history.get(info.ref, RoutingStats())
         estimated_tokens = sum(estimate_tokens(m.text_content) for m in request.messages)
         if info.context_window and estimated_tokens > info.context_window:
-            return -1.0  # cannot serve this request
-        cost_rate = (info.cost.input_per_million or 0.0) + (info.cost.output_per_million or 0.0)
-        cost_score = 1.0 / (1.0 + cost_rate)
-        latency_ms = stats.avg_latency_ms or info.latency_ms_p50 or 500.0
-        latency_score = 1.0 / (1.0 + latency_ms / 1000.0)
-        quality = _QUALITY_PRIOR.get(info.provider, 0.5) * (0.5 + 0.5 * stats.success_rate)
+            return -1.0
         if request.tools and not info.supports(Capability.TOOL_CALLING):
             return -1.0
         if request.response_format and not info.supports(Capability.STRUCTURED_OUTPUT):
             return -1.0
-        objective = self.objective
-        if objective == "lowest_cost":
+        cost_rate = (info.cost.input_per_million or 0.0) + (info.cost.output_per_million or 0.0)
+        estimated_cost = estimate_request_cost_usd(cost_rate, estimated_tokens)
+        if self._cost_blocked(estimated_cost):
+            return -1.0
+        cost_score = 1.0 / (1.0 + cost_rate)
+        latency_ms = stats.avg_latency_ms or info.latency_ms_p50 or 500.0
+        latency_score = 1.0 / (1.0 + latency_ms / 1000.0)
+        quality = _QUALITY_PRIOR.get(info.provider, 0.5) * (0.5 + 0.5 * stats.success_rate)
+        return self._objective_score(quality, cost_score, latency_score)
+
+    def _cost_blocked(self, estimated_cost: float) -> bool:
+        limit = self.cost_limit_usd
+        if self.policy is not None:
+            if not self.policy.allows_estimated_cost(estimated_cost):
+                return True
+            if self.policy.max_cost_per_request_usd is not None:
+                limit = self.policy.max_cost_per_request_usd
+        return limit is not None and estimated_cost > limit
+
+    def _objective_score(self, quality: float, cost_score: float, latency_score: float) -> float:
+        if self.objective == "lowest_cost":
             return cost_score
-        if objective == "lowest_latency":
+        if self.objective == "lowest_latency":
             return latency_score
-        if objective == "highest_quality":
-            return quality
-        if objective == "quality_under_budget":
-            if self.cost_limit_usd is not None:
-                estimated_cost = cost_rate * max(estimated_tokens, 1) / 1_000_000
-                if estimated_cost > self.cost_limit_usd:
-                    return -1.0
+        if self.objective in ("highest_quality", "quality_under_budget"):
             return quality
         return 0.4 * quality + 0.3 * cost_score + 0.3 * latency_score
 
     def route(self, request: GenerationRequest) -> RouteDecision:
         """Decide which candidate would serve this request, with full reasoning."""
         scores = {m.info.ref: round(self.score(m, request), 4) for m in self.candidates}
+        blocked = [ref for ref, s in scores.items() if s < 0]
         eligible = {ref: s for ref, s in scores.items() if s >= 0}
         if not eligible:
             raise NotFoundError(
                 "router candidate",
                 f"objective={self.objective}",
-                context={"scores": scores, "objective": self.objective},
+                context={"scores": scores, "objective": self.objective, "policy_blocked": blocked},
             )
         chosen = max(eligible, key=lambda ref: eligible[ref])
+        reason = f"best score for objective '{self.objective}'"
+        if self.policy is not None and self.policy.prefer_cheaper_within > 0:
+            top = eligible[chosen]
+            chosen_model = next(c for c in self.candidates if c.info.ref == chosen)
+            chosen_cost = self._estimated_cost(chosen_model, request)
+            by_cost = sorted(self.candidates, key=lambda m: self._estimated_cost(m, request))
+            for model in by_cost:
+                ref = model.info.ref
+                if ref not in eligible:
+                    continue
+                within = top - eligible[ref] <= self.policy.prefer_cheaper_within
+                if within and self._estimated_cost(model, request) < chosen_cost:
+                    chosen = ref
+                    reason = (
+                        f"cheaper within margin {self.policy.prefer_cheaper_within} "
+                        f"of top score under cost policy"
+                    )
+                    break
         return RouteDecision(
             chosen=chosen,
             scores=scores,
             objective=self.objective,
-            reason=f"best score for objective '{self.objective}'",
+            reason=reason,
+            policy_blocked=blocked,
         )
 
     # -- model interface --------------------------------------------------------------
@@ -149,11 +188,16 @@ class ModelRouter(Model):
         decision = self.route(request)
         order = sorted(
             (m for m in self.candidates if decision.scores.get(m.info.ref, -1) >= 0),
-            key=lambda m: decision.scores[m.info.ref],
-            reverse=True,
+            key=lambda m: (0 if m.info.ref == decision.chosen else 1, -decision.scores[m.info.ref]),
         )
         last_error: BaseException | None = None
         for model in order if self.fallback else order[:1]:
+            if (
+                self.policy is not None
+                and not self.policy.escalate_on_failure
+                and model.info.ref != decision.chosen
+            ):
+                break
             started = time.perf_counter()
             try:
                 result = await model.generate(request)
@@ -167,6 +211,8 @@ class ModelRouter(Model):
                 (time.perf_counter() - started) * 1000.0,
                 result.usage.cost_usd,
             )
+            if self.policy is not None:
+                self.policy.record_spend(result.usage.cost_usd)
             return result
         assert last_error is not None
         raise last_error
@@ -192,16 +238,15 @@ class ModelRouter(Model):
 
     def describe(self) -> Manifest:
         base = super().describe()
-        return base.model_copy(
-            update={
-                "extra": {
-                    **base.extra,
-                    "objective": self.objective,
-                    "candidates": [m.info.ref for m in self.candidates],
-                    "history": {k: v.model_dump() for k, v in self.history.items()},
-                }
-            }
-        )
+        extra = {
+            **base.extra,
+            "objective": self.objective,
+            "candidates": [m.info.ref for m in self.candidates],
+            "history": {k: v.model_dump() for k, v in self.history.items()},
+        }
+        if self.policy is not None:
+            extra["cost_policy"] = self.policy.model_dump()
+        return base.model_copy(update={"extra": extra})
 
 
 def estimate_context_tokens(request: GenerationRequest) -> int:

@@ -77,15 +77,24 @@ _MEMORY_KINDS: dict[str, type[Memory]] = {
 
 
 def resolve_memory(spec: str | Memory | None) -> Memory:
-    """Resolve a memory spec like ``"buffer"``, ``"jsonl:path"`` or an instance."""
+    """Resolve a memory spec like ``"buffer"``, ``"jsonl:path"``, ``"long-term"`` or an instance."""
     if isinstance(spec, Memory):
         return spec
     if spec is None or spec == "buffer":
         return BufferMemory()
     if spec.startswith("jsonl:"):
         return JsonlMemory(spec.split(":", 1)[1])
+    if spec == "long-term" or spec.startswith("long-term:"):
+        from aire.memory.store import LongTermMemory
+
+        path = spec.split(":", 1)[1] if ":" in spec else None
+        return LongTermMemory(path=path or None)
     if spec in _MEMORY_KINDS:
         return _MEMORY_KINDS[spec]()
     from aire.core.errors import NotFoundError
 
-    raise NotFoundError("memory", spec, context={"available": sorted(_MEMORY_KINDS)})
+    raise NotFoundError(
+        "memory",
+        spec,
+        context={"available": sorted([*_MEMORY_KINDS, "long-term", "jsonl:<path>"])},
+    )

@@ -1,6 +1,20 @@
-"""Vision pipelines: image understanding through capability-negotiated models."""
+"""Vision pipelines: image understanding and generation through capability-negotiated models."""
 
-from aire.vision.pipelines import VisionPipeline
+from aire.vision.pipelines import (
+    Detection,
+    ImageGenerationPipeline,
+    ImageGenerationResult,
+    VisionPipeline,
+    VisionResult,
+)
 from aire.vision.video import VideoPipeline, VideoSummary
 
-__all__ = ["VideoPipeline", "VideoSummary", "VisionPipeline"]
+__all__ = [
+    "Detection",
+    "ImageGenerationPipeline",
+    "ImageGenerationResult",
+    "VideoPipeline",
+    "VideoSummary",
+    "VisionPipeline",
+    "VisionResult",
+]

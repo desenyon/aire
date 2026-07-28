@@ -1,6 +1,14 @@
 # aire — Roadmap
 
-## 0.3.0 (current) — agent-operable AI platform
+## 0.3.2 — depth (eval, cost, quant/distill, multimodal)
+
+- [x] Faithfulness / embedding / BLEU / ROUGE-L metrics + model/embedding rerank
+- [x] Cost-optimization policies in the model router
+- [x] Quantization/distillation adapter interfaces
+- [x] Image generation + object detection adapters; audio TTS synthesize
+- [x] `resolve_memory("long-term")` string spec
+
+## 0.3.0 — agent-operable AI platform
 
 - [x] Query rewriting + context compression in RAG
 - [x] Incremental index updates and access-control filters
@@ -122,19 +130,19 @@ with citations → evaluate → trace → deploy, all offline-capable.
 - [x] Test suites: unit, contract, integration, security, performance
 - [x] Quality gates: ruff, mypy --strict, pytest all green
 
-## 0.4 — training & optimization (partially pulled into 0.3)
+## 0.4 — training & optimization (pulled forward)
 
 - [x] PEFT/LoRA fine-tuning interface (lazy); deeper HF Trainer resume later
 - [x] Hyperparameter search orchestration (random + Optuna)
-- [ ] Quantization/distillation adapter interfaces
-- [ ] Cost-optimization policies in the model router
+- [x] Quantization/distillation adapter interfaces
+- [x] Cost-optimization policies in the model router
 - [x] Toy/torch LM trainer for composed architectures
 
-## 0.5 — multimodal depth (stubs in 0.3; deepen later)
+## 0.5 — multimodal depth
 
 - [x] Document understanding pipeline (PDF → text/pages via pypdf)
-- [x] Voice agent reference pipeline (ASR → agent → TTS stub)
-- [ ] Image generation + object detection adapters
+- [x] Voice agent reference pipeline (ASR → agent → TTS)
+- [x] Image generation + object detection adapters
 - [x] Video summarization pipeline (model-delegated / offline stub)
 
 ## 0.6 — scale (basics in 0.3)

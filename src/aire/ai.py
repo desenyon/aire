@@ -93,11 +93,20 @@ class _ModelsNamespace(_Namespace):
         objective: Objective = "balanced",
         **kwargs: Any,
     ) -> ModelRouter:
-        """Build a model router over candidate models or specs."""
+        """Build a model router over candidate models or specs.
+
+        Pass ``policy=CostPolicy(...)`` for daily/per-request budget guards.
+        """
         from aire.optimization.router import ModelRouter
 
         resolved = [self.use_sync(c) if isinstance(c, str) else c for c in candidates]
         return ModelRouter(resolved, objective=objective, **kwargs)
+
+    def cost_policy(self, **options: Any) -> Any:
+        """Create a :class:`~aire.optimization.cost_policy.CostPolicy` for routers."""
+        from aire.optimization.cost_policy import CostPolicy
+
+        return CostPolicy(**options)
 
     def cache(self, model: Model, **kwargs: Any) -> Any:
         backend = kwargs.pop("backend", "memory")
@@ -991,6 +1000,16 @@ class _TrainingNamespace(_Namespace):
 
         return create_lm_trainer(architecture, **options)
 
+    def quantize(self, model_name: str = "gpt2", **options: Any) -> Any:
+        from aire.training.quantize import create_quantizer
+
+        return create_quantizer(model_name, **options)
+
+    def distill(self, **options: Any) -> Any:
+        from aire.training.distill import create_distiller
+
+        return create_distiller(**options)
+
     async def hpo(
         self,
         objective: Any,
@@ -1007,7 +1026,7 @@ class _TrainingNamespace(_Namespace):
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "training",
-            "trainers": ["function", "lora", "lm"],
+            "trainers": ["function", "lora", "lm", "quantize", "distill"],
             "hpo": ["random", "optuna (optional)"],
         }
 

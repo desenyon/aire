@@ -94,6 +94,8 @@ and in-memory lists. `aire.data.loaders.html_to_text` is exported for direct use
 from aire.rag import (
     Knowledge, Document, Chunk, ScoredChunk, Citation, Answer, IndexReport,
     VectorStore, LocalVectorStore, Retriever, get_reranker,
+    EmbeddingReranker, ModelReranker, LexicalOverlapReranker,
+)
     IdentityReranker, LexicalOverlapReranker,
 )
 ```
@@ -224,6 +226,12 @@ from aire.observability import OTLPExporter  # batched OTLP/HTTP+JSON to any col
 
 - `FunctionTrainer(step, config)` — `await trainer.fit(dataset, resume_from=...)`
   (continues from a checkpoint), `FunctionTrainer.load_checkpoint(path)`.
+- `AI.training.quantize(...)` / `AI.training.distill(...)` — quantization and
+  knowledge-distillation adapter interfaces (lazy / offline-capable).
+- Metrics: `exact_match`, `semantic_overlap`, `embedding_similarity`, `bleu`,
+  `rouge_l`, `groundedness`, `faithfulness`, `model_judge`, … via `get_metric`.
+- Vision: `VisionPipeline.detect`, `ImageGenerationPipeline.generate`;
+  Audio: `AudioPipeline.synthesize` (TTS).
 
 ## Safety & optimization
 
@@ -232,9 +240,13 @@ from aire.safety import (
     Guardrail, GuardrailChain, PIIGuardrail, InjectionGuardrail, SecretGuardrail,
     ApprovalPolicy, redact, redact_pii, redact_secrets,
 )
-from aire.optimization import CachedModel, SemanticCachedModel, ModelRouter, RouteDecision
+from aire.optimization import (
+    CachedModel, SemanticCachedModel, ModelRouter, RouteDecision, CostPolicy,
+)
 ```
 
+- `ModelRouter(..., policy=CostPolicy(daily_budget_usd=..., max_cost_per_request_usd=...))`
+  applies budget guards and prefer-cheaper-within-margin routing.
 ## Deployment & CLI
 
 ```python

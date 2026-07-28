@@ -29,7 +29,7 @@ from tests.conftest import arun
 def test_version_030() -> None:
     from aire import __version__
 
-    assert __version__ == "0.3.0"
+    assert __version__.startswith("0.3.")
 
 
 def test_community_detection() -> None:

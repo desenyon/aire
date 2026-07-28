@@ -7,6 +7,20 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.3.2] — 2026-07-28
+
+Depth pass: evaluation/rerank, cost policies, quant/distill adapters, multimodal.
+
+### Added
+- **Eval metrics**: `faithfulness`, `embedding_similarity`, `bleu`, `rouge_l`;
+  Evaluator accepts `embedder=`.
+- **Rerankers**: `EmbeddingReranker`, `ModelReranker` (`cross_encoder` alias).
+- **CostPolicy** for `ModelRouter` (per-request + daily budget, prefer-cheaper).
+- **Quantizer** + **Distiller** training adapters (`AI.training.quantize` /
+  `distill`); offline stub + pure-Python soft KL.
+- **Vision** `detect()` + `ImageGenerationPipeline`; **Audio** `synthesize()` TTS.
+- **Memory**: `resolve_memory("long-term")` / `long-term:<path>`.
+
 ## [0.3.1] — 2026-07-28
 
 P0 correctness from the post-0.2 audit — memory/state, gateway timestamps,
