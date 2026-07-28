@@ -276,6 +276,62 @@ class _WorkflowNamespace(_Namespace):
         return Workflow(name, **options)
 
 
+class _GatewayNamespace(_Namespace):
+    def create(self, **options: Any) -> Any:
+        """Build an OpenAI-compatible gateway app (requires aire[serve]).
+
+        Unset options fall back to the ``gateway:`` section of aire.yaml.
+        """
+        from aire.deployment.gateway import create_gateway
+
+        config = self._rt().settings.gateway
+        defaults: dict[str, Any] = {
+            "models": config.models or None,
+            "aliases": config.aliases or None,
+            "embeddings": config.embeddings or None,
+            "routing": config.routing,
+            "objective": config.objective,
+            "auth_token": config.auth_token,
+            "rate_limit_per_minute": config.rate_limit_per_minute,
+        }
+        merged = {**defaults, **{k: v for k, v in options.items() if v is not None}}
+        return create_gateway(self._rt(), **merged)
+
+    def serve(self, host: str = "127.0.0.1", port: int = 4000, **options: Any) -> None:
+        """Build the gateway and serve it with uvicorn."""
+        try:
+            import uvicorn
+        except ImportError as exc:
+            from aire.core.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "uvicorn required: pip install 'aire[serve]'",
+                code="deploy.uvicorn_missing",
+                cause=exc,
+            ) from exc
+        uvicorn.run(self.create(**options), host=host, port=port)
+
+    def endpoints(self) -> dict[str, Any]:
+        """Catalog of known OpenAI-compatible endpoints (local + hosted)."""
+        from aire.integrations.openai_compat import describe_endpoints
+
+        return describe_endpoints()
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "gateway",
+            "routing_modes": ["first", "round_robin"],
+            "objectives": [
+                "lowest_cost",
+                "lowest_latency",
+                "highest_quality",
+                "quality_under_budget",
+                "balanced",
+            ],
+            "endpoints": self.endpoints(),
+        }
+
+
 class _TrainingNamespace(_Namespace):
     def create(self, step: Any, **options: Any) -> Any:
         from aire.training.trainer import FunctionTrainer, TrainingConfig
@@ -320,6 +376,7 @@ class AI:
     agents = _AgentsNamespace()
     observe = _ObserveNamespace()
     deploy = _DeployNamespace()
+    gateway = _GatewayNamespace()
     workflows = _WorkflowNamespace()
     training = _TrainingNamespace()
     safety = _SafetyNamespace()
@@ -467,6 +524,7 @@ class AI:
                 "training",
                 "observe",
                 "deploy",
+                "gateway",
                 "safety",
                 "synthetic",
             ],
