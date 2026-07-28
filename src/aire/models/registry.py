@@ -110,6 +110,10 @@ _INTEGRATION_MODULES: dict[str, str] = {
     "huggingface": "aire.integrations.huggingface",
     "qdrant": "aire.integrations.qdrant",
     "chroma": "aire.integrations.chroma",
+    "pinecone": "aire.integrations.pinecone",
+    "weaviate": "aire.integrations.weaviate",
+    "milvus": "aire.integrations.milvus",
+    "sqlite": "aire.rag.sqlite",
 }
 
 # OpenAI-compatible endpoints (local servers and hosted APIs) all live in one

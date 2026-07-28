@@ -115,8 +115,12 @@ class LocalVectorStore(VectorStore):
         if target is None:
             raise RetrievalError("no path configured for persistence")
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"chunks": [c.model_dump(mode="json") for c in self._chunks.values()]}
-        target.write_text(json.dumps(payload))
+        serialized = []
+        for chunk in self._chunks.values():
+            data = chunk.model_dump(mode="json")
+            data["embedding"] = chunk.embedding  # embedding is excluded from model_dump
+            serialized.append(data)
+        target.write_text(json.dumps({"chunks": serialized}))
         self._path = target
         return target
 
@@ -202,9 +206,11 @@ class LocalVectorStore(VectorStore):
 
 
 def register(runtime: Any) -> None:
-    """Register the local vector store factory on a runtime."""
+    """Register the local (and embedded sqlite) vector store factories on a runtime."""
+    from aire.rag.sqlite import register as register_sqlite
 
     def _factory(name: str = "default", *, runtime: Any = None, **options: Any) -> VectorStore:
         return LocalVectorStore(**options)
 
     runtime.vector_stores.register("local", _factory, replace=True)
+    register_sqlite(runtime)
