@@ -231,6 +231,20 @@ def gateway(
     uvicorn.run(app, host=host, port=port)
 
 
+@app.command(name="mcp-serve")
+def mcp_serve() -> None:
+    """Serve builtin + registered tools over MCP (stdio JSON-RPC).
+
+    Point any MCP host (Claude Code, IDEs) at this command::
+
+        aire mcp-serve
+    """
+    from aire.mcp.server import main as serve_main
+
+    typer.secho("aire MCP server on stdio", fg=typer.colors.GREEN, err=True)
+    serve_main()
+
+
 @app.command()
 def inspect(
     what: str = typer.Argument("all", help="models|tools|plugins|config|all"),
