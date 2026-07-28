@@ -1,6 +1,6 @@
 # aire
 
-**The agent-first AI creation library.** One consistent interface from idea to deployed AI system.
+**The agent-first AI creation library.** One consistent interface from idea to deployed AI system — models, data, RAG, agents, tools, workflows, evaluation, safety, observability, and deployment, all composable, all inspectable, all provider-independent.
 
 ```python
 from aire import AI
@@ -9,7 +9,7 @@ assistant = (
     AI.project("knowledge_assistant")
     .documents("./docs")
     .model("openai:gpt-4o-mini")  # or mock:echo, ollama:llama3.2, anthropic:claude-sonnet-4-5
-    .vector_store("local")
+    .vector_store("local:default")
     .citations(True)
 )
 
@@ -20,83 +20,573 @@ print(answer.text)
 print(answer.citations)
 
 assistant.evaluate("./evals.jsonl", metrics=["accuracy", "groundedness"])
-app = assistant.deploy()  # production FastAPI app
+app = assistant.deploy()  # production FastAPI app with /health, /ready, /manifest, /metrics
 ```
 
-Works **fully offline** out of the box (`mock:echo` model + `local:hashing` embedder) — every subsystem is testable with zero credentials. Swap providers by changing one string.
+**Works fully offline out of the box** (`mock:echo` model + `local:hashing` embedder) — every subsystem, example, and test runs with zero credentials and zero network. Swapping providers is a one-string change.
+
+---
+
+## Table of contents
+
+- [Why agent-first](#why-agent-first)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+- [The AI facade](#the-ai-facade)
+- [Models](#models)
+- [Data](#data)
+- [Retrieval augmented generation](#retrieval-augmented-generation)
+- [Tools](#tools)
+- [Agents](#agents)
+- [Workflows](#workflows)
+- [Evaluation](#evaluation)
+- [Observability](#observability)
+- [Safety](#safety)
+- [Optimization](#optimization)
+- [Multimodal, vision and audio](#multimodal-vision-and-audio)
+- [Synthetic data](#synthetic-data)
+- [Training](#training)
+- [Deployment](#deployment)
+- [Configuration](#configuration)
+- [CLI reference](#cli-reference)
+- [Plugins and providers](#plugins-and-providers)
+- [Examples](#examples)
+- [Documentation map](#documentation-map)
+- [Development](#development)
+- [License](#license)
+
+---
 
 ## Why agent-first
 
-- **Everything is discoverable**: every component emits a machine-readable `.describe()` manifest (schemas, capabilities, permissions) so agents can introspect the library at runtime.
-- **Everything is a tool**: `@AI.tool` turns any function into a self-describing, permissioned, auditable tool with JSON-schema contracts.
-- **Deterministic agent runtime**: agents run as explicit state machines with budgets, permission checks, and full step traces — never unbounded recursion.
-- **Structured everything**: Pydantic models for all requests/responses; structured errors with stable codes (`error.code`, `error.retryable`).
-- **Provider independence**: `provider:name` references (`openai:gpt-4o-mini`, `anthropic:claude-sonnet-4-5`, `ollama:llama3.2`) resolved through a registry. Core never imports vendor SDKs.
+aire is designed so that **both humans and coding agents** can build production AI systems on it without reading its source code:
 
-## Install
+- **Everything is discoverable.** Every component — model, tool, workflow, vector store — emits a machine-readable `.describe()` manifest with schemas, capabilities and permissions. An agent can enumerate what exists and what it accepts at runtime.
+- **Everything is a tool.** `@AI.tool` turns any Python function into a self-describing, permissioned, rate-limited, auditable tool with JSON-schema contracts derived from its signature.
+- **Deterministic agent runtime.** Agents execute as explicit state machines (model call → permission check → tool call → observation → finish) with token/cost/step budgets — never unbounded recursion. Every transition is a recorded `AgentStep`.
+- **Structured everything.** All requests, responses and configuration are Pydantic models. All failures are `AireError` subclasses with stable machine-readable `code`, `context`, and `retryable` flags.
+- **Provider independence.** `provider:name` references (`openai:gpt-4o-mini`, `anthropic:claude-sonnet-4-5`, `ollama:llama3.2`) resolve through a plugin registry. The core never imports a vendor SDK — providers are plain HTTP adapters.
+- **Inspectable by default.** OpenTelemetry-shaped tracing, metrics, event history, evaluation reports, and workflow checkpoints are built in, not bolted on.
+
+See [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) for the full product principles and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the ten architectural decisions behind this design.
+
+## Installation
 
 ```bash
-pip install aire                 # core (zero heavy deps)
-pip install "aire[serve]"        # FastAPI deployment
+pip install aire                 # core — zero heavy dependencies
+pip install "aire[serve]"        # + FastAPI/uvicorn for deployment
+pip install "aire[numpy]"        # + numpy acceleration
+pip install "aire[datasets]"     # + Hugging Face datasets loader
+pip install "aire[training]"     # + PyTorch training adapters
+pip install "aire[vision]"       # + Pillow for image pipelines
 pip install "aire[all]"          # everything
+pip install "aire[dev]"          # development tooling (ruff, mypy, pytest)
 ```
 
-Requires Python 3.11+.
+Requires **Python 3.11+**. Core dependencies are only `pydantic`, `httpx`, `pyyaml`, and `typer`; provider integrations share one `httpx` plumbing layer, so optional extras stay truly optional.
 
-## The five-minute tour
+## Quick start
 
 ```bash
 pip install aire
-aire init my-project && cd my-project
-aire doctor                      # diagnose environment
-aire run "hello, aire"           # one-shot generation
-python app.py                    # full RAG pipeline, offline
+aire init my-project && cd my-project   # scaffold a project (aire.yaml + app.py)
+aire doctor                             # check environment, config, provider access
+aire run "hello, aire"                  # one-shot generation (offline by default)
+python app.py                           # a complete offline RAG pipeline
 ```
 
-## Capabilities
+From Python, three levels of abstraction are always available:
 
-| Namespace | What you get |
+```python
+from aire import AI
+
+# 1. Declarative — everything from config
+app = AI.from_config("aire.yaml")
+
+# 2. Composable — wire subsystems yourself
+model = AI.models.use_sync("openai:gpt-4o-mini")
+knowledge = AI.rag.create()
+agent = AI.agents.create_sync(model, tools=["calculator", "read_file"])
+
+# 3. Low level — direct protocol access
+from aire.models.types import GenerationRequest
+result = await model.generate(GenerationRequest.of("hello"))
+```
+
+## Core concepts
+
+### References: `provider:name`
+
+Every resolvable component is identified by a `Ref` string:
+
+```
+openai:gpt-4o-mini        anthropic:claude-sonnet-4-5     ollama:llama3.2
+huggingface:meta-llama    mock:echo                       callable:my_function
+local:default             qdrant:my-collection            chroma:docs
+```
+
+The left side selects the provider factory from a registry; the right side is passed to it. Changing providers never changes application code.
+
+### The Runtime
+
+`aire.core.runtime.Runtime` is the composition root: it holds settings, component registries, the plugin manager, the event bus, the resource manager, and a tracer. The `AI` facade operates on a lazily-created process-wide default runtime; tests and multi-tenant apps construct their own:
+
+```python
+from aire.core.runtime import Runtime
+
+runtime = Runtime.from_config("aire.yaml")
+await runtime.aclose()   # closes every tracked resource, LIFO
+```
+
+### Manifests
+
+Every public component implements `.describe()`, returning a `Manifest` (kind, name, provider, capabilities, input/output/config schemas). This is the discovery contract agents use to explore the library.
+
+### Structured errors
+
+```python
+from aire.core.errors import AireError
+
+try:
+    answer = await knowledge.ask("...")
+except AireError as exc:
+    exc.code          # e.g. "provider.rate_limited" — stable, machine-readable
+    exc.retryable     # can this be retried?
+    exc.context       # structured details (provider, path, missing permissions, ...)
+    exc.to_dict()     # JSON-safe payload for APIs and logs
+```
+
+The hierarchy includes `ProviderError`, `RateLimitError`, `AuthenticationError`, `TimeoutError`, `NotFoundError`, `BudgetExceededError`, `PermissionDeniedError`, `SafetyError`, `OutputValidationError`, `WorkflowError`, `DataError`, `ConfigurationError`, and `PluginError`. Provider HTTP failures are mapped once in the shared HTTP client, so every vendor looks identical to callers.
+
+### Multimodal content
+
+Normalized content primitives flow through the whole library:
+
+```python
+from aire.core.content import TextContent, ImageContent, AudioContent, StructuredContent
+
+result = await model.generate(GenerationRequest(messages=[
+    Message(role="user", content=[
+        TextContent(text="Analyze this diagram"),
+        ImageContent.from_file("diagram.png"),
+    ])
+]))
+```
+
+## The AI facade
+
+`AI` is the single entry point. Each namespace is lazily bound to the default runtime:
+
+| Namespace | Purpose |
 |---|---|
-| `AI.models` | Unified model interface, `provider:name` registry, streaming, structured output, tool calling, model router, caching |
-| `AI.data` | Load (files/dirs/URLs/JSONL/CSV), validate, dedupe, split, sample, lineage, quality reports, chunkers |
-| `AI.rag` | Knowledge pipelines: ingest → chunk → embed → hybrid retrieve → rerank → grounded answer with citations |
-| `AI.agents` | Deterministic state-machine agents: tools, memory, budgets, permissions, human approval, full traces |
-| `AI.workflows` | Graph engine: conditional branches, parallel execution, retries, checkpoints, streaming events |
-| `AI.evaluate` | Metrics (exact, semantic, groundedness, latency, cost, model-judge), regression suites, rich reports |
-| `AI.observe` | OpenTelemetry-style tracing, metrics, event history |
-| `AI.deploy` | FastAPI app factory (health/ready/metrics/manifest), Dockerfile + artifact generation |
-| `AI.safety` | Guardrails (PII, injection, secrets), risk-classified side effects, redaction, approval policies |
-| `AI.training` | Framework-independent trainer contract + function trainer (PyTorch/JAX via plugins) |
-| `AI.synthetic` | Synthetic QA/eval data generation |
+| `AI.models` | Resolve/route/cache models and embedders |
+| `AI.data` | Load and transform datasets; chunkers |
+| `AI.rag` | Knowledge pipelines and vector stores |
+| `AI.tool` / `AI.tools()` | Tool decorator / runtime tool registry |
+| `AI.agents` | Create agents with tools, memory, budgets |
+| `AI.workflows` | Graph workflow engine |
+| `AI.evaluate(...)` | Evaluate any target, synchronously |
+| `AI.observe` | Tracer, metrics, trace/event history |
+| `AI.safety` | Guardrail chains, redaction |
+| `AI.training` | Trainer factory |
+| `AI.synthetic(...)` | Synthetic data generator factory |
+| `AI.deploy` | FastAPI apps and deployment artifacts |
+| `AI.project` | Fluent builder (the flagship experience) |
+| `AI.configure` | Replace the default runtime/settings |
 
-## Providers
+The full, stability-guaranteed surface is enumerated in [docs/PUBLIC_API.md](docs/PUBLIC_API.md).
 
-`openai` (any OpenAI-compatible endpoint), `anthropic`, `huggingface`, `ollama`, `mock` (offline), `callable` (any Python function). Vector stores: `local`, `qdrant`, `chroma`. All reached over plain HTTP — no vendor SDKs. Write your own in ~30 lines: see [PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md).
+## Models
 
-## CLI
+```python
+from aire import AI
+
+model = await AI.models.use("openai:gpt-4o-mini")
+text = await model.ask("summarize aire in one sentence")
+
+# Streaming
+async for chunk in model.stream(GenerationRequest.of("tell me a story")):
+    print(chunk.text, end="")
+
+# Structured output — validated, retried
+from pydantic import BaseModel
+class Summary(BaseModel):
+    title: str
+    points: list[str]
+summary = await model.ask_structured("summarize the refund policy", Summary)
+
+# Tool calling: pass tool definitions, get ToolCall objects back
+result = await model.generate(GenerationRequest.of("add 2 and 3", tools=registry.definitions()))
+
+# Embeddings
+embedder = await AI.models.embedder()              # default: local:hashing (offline)
+vectors = await embedder.embed(EmbeddingRequest(texts=["hello", "world"]))
+```
+
+Every model exposes normalized `ModelInfo` metadata (context window, capabilities, streaming/tool/structured-output support, cost rates) via `.info`, plus `.health()` and `.describe()`.
+
+**Any Python function can be a model:**
+
+```python
+AI.models.register_callable("uppercase", lambda prompt: prompt.upper())
+model = await AI.models.use("callable:uppercase")
+```
+
+Built-in offline implementations (`mock:echo`, `local:hashing`) make every test and example runnable with no credentials.
+
+## Data
+
+```python
+from aire import AI
+
+dataset = AI.data.load("./support_data")            # file, directory, URL, JSONL/CSV/JSON/text
+dataset = (
+    dataset
+    .validate(min_length=10)                         # quality gates with a QualityReport
+    .deduplicate()                                   # content-hash based
+    .filter(lambda r: "refund" in r.text)
+    .map(lambda r: r.model_copy(update={"text": r.text.strip()}))
+)
+split = dataset.split(train=0.8, validation=0.1, test=0.1, seed=42)
+dataset.to_jsonl("clean.jsonl")                      # round-trips losslessly
+
+report = dataset.quality_report()                    # counts, lengths, PII hints, duplicates
+```
+
+Chunkers prepare text for embedding:
+
+```python
+chunker = AI.data.chunker("recursive", chunk_size=512, overlap=64)  # fixed | sentence | recursive
+chunks = chunker.chunk("long document text ...")
+```
+
+## Retrieval augmented generation
+
+```python
+from aire import AI
+
+knowledge = AI.rag.create()                    # or via AI.project(...) fluent builder
+report = await knowledge.ingest("./documents") # load → chunk → embed → store
+answer = await knowledge.ask(
+    "What are the refund rules?",
+    model="openai:gpt-4o-mini",
+    k=5,
+    citations=True,
+)
+print(answer.text)
+for c in answer.citations:
+    print(c.source, c.score)
+```
+
+Under the hood: pluggable **chunker** → **embedder** → **vector store** (`local:default`, `qdrant:*`, `chroma:*`) → **hybrid retriever** (vector similarity + keyword, fused with reciprocal rank) → **reranker** (`lexical` by default) → grounded prompt with numbered citations.
+
+## Tools
+
+```python
+from aire import AI
+from aire.tools import SideEffect
+
+@AI.tool(
+    description="Search orders for a customer.",
+    permissions=["database.read"],
+    side_effect=SideEffect.READ_ONLY,
+    timeout_seconds=5.0,
+    retries=2,
+)
+async def search_orders(customer_id: str) -> list[dict]:
+    ...
+```
+
+The decorator introspects the signature and docstring to produce a `ToolSpec`: name, description, JSON input/output schemas, permissions, timeout, retry policy, side-effect classification. Input validation is strict (`extra="forbid"`) — unknown arguments are rejected.
+
+Builtin tools: `calculator` (restricted AST evaluator — no `eval`), `read_file`/`list_files` (sandboxed to a root), `http_get`, `current_time`.
+
+## Agents
+
+```python
+from aire import AI
+from aire.agents import AgentConfig
+
+agent = AI.agents.create_sync(
+    "openai:gpt-4o-mini",
+    tools=[search_orders],            # @AI.tool-decorated functions
+    builtins=True,                    # + calculator, read_file, list_files, http_get, ...
+    config=AgentConfig(
+        max_steps=12,
+        token_budget=50_000,
+        cost_budget_usd=0.25,
+        permissions={"file.read"},
+        approval_levels={"external_side_effect"},   # require approval for these
+    ),
+    memory="buffer",                                 # or jsonl:<path> for durable memory
+)
+result = agent.run_sync("What is 18% of 2450?")
+print(result.output, result.status)                  # completed | max_steps | budget_exceeded | failed
+for step in result.steps:                            # full audit trail
+    print(step.index, step.kind, step.detail)
+```
+
+The executor is a deterministic state machine: **model call → permission check → (approval check) → tool execution → observation → completion decision**. Budgets are enforced by the `ExecutionContext` on every tick; state is resumable via `AgentState` checkpoints. Unknown tools and denied permissions become error observations fed back to the model — never crashes.
+
+## Workflows
+
+```python
+from aire import AI
+
+wf = AI.workflows.create("research_pipeline", max_visits=3)
+
+wf.add("search", search_node)
+wf.add("analyze", analysis_node, retries=2, timeout_seconds=30)
+wf.add("verify", verification_node, requires_approval=True)
+wf.add("publish", publish_node)
+
+wf.connect("search", "analyze")
+wf.connect("analyze", "verify")
+wf.connect("analyze", "publish", when=lambda out: out["confidence"] > 0.9)  # conditional edge
+wf.connect("verify", "publish")
+
+result = await wf.run({"topic": "aire plugins"})     # parallel fan-out, fan-in joins
+async for event in wf.run_stream({"topic": "x"}):    # live transition events
+    print(event.kind, event.node)
+```
+
+Features: directed graphs, conditional branches (untaken branches marked `SKIPPED`), parallel execution of ready nodes, retries with backoff, per-node timeouts, **bounded loops** (cycles legal up to `max_visits`), JSON checkpoints after every node, resume from `WorkflowState`, human-approval nodes. Agents are valid node functions but are never required.
+
+## Evaluation
+
+```python
+from aire import AI
+from aire.evaluation.runner import save_report
+
+report = AI.evaluate(
+    agent,                               # model, agent, knowledge pipeline, or callable
+    "tests/evaluation.jsonl",            # or list[EvalCase] / list[dict]
+    metrics=["accuracy", "groundedness", "contains", "latency", "cost"],
+)                                        # sync; use AI.evaluator().run(...) for async
+print(report.metric_summary())
+save_report(report, "reports/run-42.json")
+```
+
+Built-in metrics: `exact_match`, `contains`, `regex_match`, `json_valid`, `semantic_overlap`, `groundedness`, `latency`, `cost`, `accuracy`, and `model_judge` (LLM-as-judge with any aire model). Every `CaseResult` preserves input, output, expected value, scores, error category, model, config, latency, usage, timestamp and trace id.
+
+## Observability
+
+```python
+from aire import AI
+
+tracer = AI.observe.tracer()               # OpenTelemetry-shaped spans
+with tracer.span("pipeline.run", user_id="u1"):
+    answer = await knowledge.ask("...")    # nested spans: retrieve, rerank, generate
+
+metrics = AI.observe.metrics
+metrics.snapshot()                         # counters, gauges, latency histograms
+```
+
+Traces propagate through models, RAG, agents and deployment endpoints via `contextvars`; sensitive attribute keys (tokens, keys, secrets) are masked automatically. Exporters: in-memory (tests), JSONL (audit). The event bus broadcasts domain events (`model.generate`, `agent.tool_call`, …) for subscribers.
+
+## Safety
+
+```python
+from aire import AI
+
+chain = AI.safety.guardrails("pii", "injection", "secret")
+verdicts = chain.check(user_input)         # raises SafetyError on blocking failures
+clean = AI.safety.redact(user_input)       # remove PII + secrets
+
+from aire.safety import ApprovalPolicy, SideEffect
+policy = ApprovalPolicy(require_approval={SideEffect.EXTERNAL_SIDE_EFFECT, SideEffect.HIGH_IMPACT})
+```
+
+Every tool action carries a side-effect risk class: `read_only → reversible_write → external_side_effect → high_impact → prohibited`. High-impact actions require explicit approval unless a trusted policy grants it. Additional controls: sandboxed file access (path-traversal proof), `yaml.safe_load`-only deserialization (no pickle anywhere — enforced by test), secret redaction in traces, strict structured-output validation. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for the threat model.
+
+## Optimization
+
+```python
+from aire import AI
+
+# Model routing by objective
+router = AI.models.router(
+    candidates=["openai:gpt-4o-mini", "anthropic:claude-sonnet-4-5", "ollama:llama3.2"],
+    objective="quality_under_budget",       # lowest_cost | lowest_latency | highest_quality | balanced
+    cost_limit_usd=0.01,
+)
+text = await router.ask("...")              # routes + falls back + records history
+decision = router.route(GenerationRequest.of("..."))
+print(decision.chosen, decision.scores, decision.reason)
+
+# Caching
+cached = AI.models.cache(model)             # exact-match cache
+semantic = SemanticCachedModel(model, embedder, threshold=0.95)  # similarity cache
+```
+
+## Multimodal, vision and audio
+
+```python
+from aire.core.content import AudioContent, ImageContent
+from aire.multimodal import transcribe, describe_image
+from aire.vision import VisionPipeline
+
+text = await transcribe(asr_model, AudioContent.from_file("recording.mp3"))
+caption = await describe_image(vision_model, ImageContent.from_file("photo.png"))
+
+vision = VisionPipeline(vision_model)
+label = await vision.classify("cat.png", labels=["cat", "dog"])
+answer = await vision.vqa("chart.png", "What is the peak value?")
+```
+
+Conversions delegate to any model advertising the required capability (`SPEECH_RECOGNITION`, `VISION_INPUT`, …) — no vendor lock-in.
+
+## Synthetic data
+
+```python
+from aire.synthetic import SyntheticGenerator
+
+generator = SyntheticGenerator(model)
+pairs = await generator.qa_pairs(document_text, n=20)            # grounded QA pairs
+eval_dataset = await generator.augment(dataset, pairs_per_doc=3) # dataset → QA eval set
+```
+
+Generation goes through structured output validation, so malformed samples are retried or dropped rather than silently polluting datasets.
+
+## Training
+
+```python
+from aire.training import FunctionTrainer, TrainingConfig
+
+async def step(epoch, dataset, config, state):
+    # your framework code (torch, jax, numpy, ...) — fully framework-agnostic
+    ...
+    return {"loss": 0.42}, state                 # (metrics, new_state)
+
+trainer = FunctionTrainer(step, TrainingConfig(epochs=10, early_stopping_patience=2))
+result = await trainer.fit(train_dataset)        # checkpoints + history in TrainResult
+```
+
+The trainer contract is framework-independent (checkpointing, early stopping, metrics, resume); PyTorch/TensorFlow/JAX arrive as lazy adapters (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+
+## Deployment
+
+```python
+from aire import AI
+
+app = AI.deploy.api(
+    agent_or_knowledge_or_model,
+    title="support API",
+    auth_token="...",                    # optional bearer auth
+    rate_limit_per_minute=60,            # optional per-client rate limit
+    metrics=AI.observe.metrics,
+)
+# Endpoints: GET /health /ready /manifest /metrics
+#            POST /v1/run (agent) | /v1/ask (knowledge) | /v1/generate (model)
+
+artifacts = AI.deploy.artifacts("./dist")   # Dockerfile, entrypoint.py, .env.template, requirements.lock
+```
+
+Errors surface as structured JSON (`error.code`, `error.context`) — the same contract as the Python API.
+
+## Configuration
+
+Layered configuration with explicit priority — **Python arguments > project file > environment > user config > defaults**:
+
+```yaml
+# aire.yaml
+project:
+  name: support_agent
+
+model:
+  ref: openai:gpt-4o-mini
+  temperature: 0.2
+
+agent:
+  max_steps: 12
+  token_budget: 50000
+
+safety:
+  require_approval:
+    - external_side_effect
+
+providers:
+  openai:
+    api_key: ${OPENAI_API_KEY}
+```
+
+Environment overrides use `AIRE_<SECTION>__<KEY>` (e.g. `AIRE_MODEL__REF=ollama:llama3.2`). Secrets are `SecretStr` and excluded from serialization.
+
+## CLI reference
 
 ```bash
-aire init | run | evaluate | serve | inspect | plugins | doctor
+aire init [NAME] [--dir DIR]      # scaffold a project (aire.yaml, app.py)
+aire run "prompt" [--model REF]   # one-shot generation
+aire evaluate DATASET [--model REF] [--metrics a,b] [--output report.json]
+aire serve [--host H] [--port P] [--app-file app.py]
+aire inspect                      # show resolved config, registries, providers
+aire plugins                      # list discovered plugins
+aire doctor                       # environment/dependency/credential diagnostics
+aire version
 ```
 
-## Documentation
+## Plugins and providers
 
-- [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) — product principles and scope
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layers, contracts, decisions
-- [docs/PUBLIC_API.md](docs/PUBLIC_API.md) — stability guarantees
+Ship a provider without touching aire's core — implement the interface, register it, done:
+
+```toml
+# your package's pyproject.toml
+[project.entry-points."aire.providers"]
+myprovider = "my_package.aire_plugin:MyPlugin"
+```
+
+```python
+def register(runtime):
+    runtime.model_providers.register("myprovider", my_model_factory)
+    return PluginInfo(name="myprovider", version="1.0.0", providers=["myprovider"])
+```
+
+Contract tests in `tests/contract` verify any model/embedder/vector-store against the shared interface. The complete contract — factory signatures, error rules, lifecycle, manifest requirements — is in [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md).
+
+**Included providers:** `openai` (any OpenAI-compatible endpoint), `anthropic`, `huggingface`, `ollama`, `mock`/`echo` (offline), `callable` (any Python function). **Vector stores:** `local` (persistent, in-memory speed), `qdrant`, `chroma`. All reached over plain HTTP through one shared client — no vendor SDKs.
+
+## Examples
+
+Runnable, offline, no credentials required:
+
+| Example | What it demonstrates |
+|---|---|
+| [examples/rag_assistant](examples/rag_assistant/main.py) | The full vertical slice: ingest → index → ask with citations → evaluate |
+| [examples/chatbot](examples/chatbot/main.py) | Tool-calling agent with budgets, permissions, step traces |
+| [examples/model_router](examples/model_router/main.py) | Routing decisions with scores + cache hits |
+| [examples/workflows](examples/workflows/main.py) | Branches, fan-in, streaming events, checkpoints |
+| [examples/deployment_api](examples/deployment_api/main.py) | Auth-guarded FastAPI app + artifact generation |
+
+```bash
+python examples/rag_assistant/main.py
+```
+
+## Documentation map
+
+- [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) — product principles, subsystem scope, success criteria
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layers, module map, and 10 architectural decision records
+- [docs/PUBLIC_API.md](docs/PUBLIC_API.md) — the supported surface and stability guarantees
 - [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md) — writing providers and plugins
-- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — threat model and controls
-- [docs/ROADMAP.md](docs/ROADMAP.md) — phases and version plan
-- [examples/](examples/) — runnable projects (all offline-capable)
+- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — threat model and the seven control classes
+- [docs/ROADMAP.md](docs/ROADMAP.md) — 0.2 → 1.0 plan (training adapters, multimodal depth, multi-agent, stability)
 
 ## Development
 
 ```bash
+git clone https://github.com/desenyon/aire.git && cd aire
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-ruff check . && ruff format --check .
-mypy src
-pytest
+
+# Quality gates (all must pass):
+ruff check .
+ruff format --check .
+mypy src               # strict mode, 86 files
+pytest                 # 217 tests: unit, contract, integration, security, performance
+pytest tests/integration tests/security
 ```
+
+Test suites: `tests/unit` (isolated), `tests/contract` (provider interface conformance), `tests/integration` (cross-module, including the offline vertical slice and mocked-provider HTTP), `tests/security` (injection, traversal, unsafe YAML, permission bypass), `tests/performance` (import time, throughput, latency budgets).
 
 ## License
 
