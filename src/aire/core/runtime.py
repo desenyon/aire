@@ -60,6 +60,10 @@ class Runtime:
         return self.registries.of("vector_store")
 
     @property
+    def graph_stores(self) -> Registry[Any]:
+        return self.registries.of("graph_store")
+
+    @property
     def tools(self) -> Registry[Any]:
         return self.registries.of("tool")
 
