@@ -124,7 +124,18 @@ class _DataNamespace(_Namespace):
 
     def describe(self) -> dict[str, Any]:
         return {
-            "loaders": ["jsonl", "json", "csv", "text", "directory", "url", "memory"],
+            "loaders": [
+                "jsonl",
+                "json",
+                "csv",
+                "html",
+                "parquet",
+                "excel",
+                "text",
+                "directory",
+                "url",
+                "memory",
+            ],
             "chunkers": ["fixed", "sentence", "recursive", "semantic"],
         }
 
@@ -221,11 +232,28 @@ class _AgentsNamespace(_Namespace):
             )
         return Team(members, supervisor, **options)
 
+    def approver(self, kind: str = "rule", **options: Any) -> Any:
+        """Build an approval policy: "rule" (side-effect thresholds) or
+        "interactive" (human-in-the-loop stdin prompts)."""
+        from aire.agents.approvals import InteractiveApprover, RuleApprover
+        from aire.core.errors import ConfigurationError
+
+        if kind == "rule":
+            return RuleApprover(**options)
+        if kind == "interactive":
+            return InteractiveApprover(**options)
+        raise ConfigurationError(
+            f"unknown approver kind {kind!r}",
+            code="agents.approver_unknown",
+            context={"available": ["rule", "interactive"]},
+        )
+
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "agents",
             "memory": ["buffer", "jsonl:<path>", "long-term (AI.memory)"],
             "composition": ["agent.as_tool()", "AI.agents.team(...)"],
+            "approvers": ["rule", "interactive"],
         }
 
 

@@ -133,13 +133,7 @@ class Workflow:
         """Execute, yielding an event after every node transition."""
         wf_state = state or WorkflowState(input=input)
         context: dict[str, Any] = {"workflow": self.name, "run_id": wf_state.id}
-        status: dict[str, NodeStatus] = {rec.name: rec.status for rec in wf_state.records}
-        visits: dict[str, int] = {rec.name: rec.visits for rec in wf_state.records}
-        fired: dict[tuple[str, str], int] = {}  # edge -> times fired
-        consumed: dict[tuple[str, str], int] = {}  # edge -> firings already scheduled
-        ready: set[str] = set()
-        if self._entry is not None and status.get(self._entry) not in _TERMINAL:
-            ready.add(self._entry)
+        status, visits, fired, consumed, ready = self._init_scheduling(wf_state, state)
 
         def _finish_node(
             name: str,
@@ -280,6 +274,56 @@ class Workflow:
                 node_status, output, duration_ms = result
                 yield finish_node(name, node_status, output, duration_ms=duration_ms)
 
+    def _init_scheduling(
+        self, wf_state: WorkflowState, state: WorkflowState | None
+    ) -> tuple[
+        dict[str, NodeStatus],
+        dict[str, int],
+        dict[tuple[str, str], int],
+        dict[tuple[str, str], int],
+        set[str],
+    ]:
+        """Build the initial scheduling maps, including resume seeding."""
+        status: dict[str, NodeStatus] = {rec.name: rec.status for rec in wf_state.records}
+        visits: dict[str, int] = {rec.name: rec.visits for rec in wf_state.records}
+        fired: dict[tuple[str, str], int] = {}  # edge -> times fired
+        consumed: dict[tuple[str, str], int] = {}  # edge -> firings already scheduled
+        ready: set[str] = set()
+        resuming = state is not None and bool(state.records)
+        if resuming:
+            status = self._prepare_resume(wf_state, status, fired, consumed)
+        if self._entry is not None and status.get(self._entry) not in _TERMINAL:
+            ready.add(self._entry)
+        elif resuming:
+            # The entry is terminal: seed the first wave from reconstructed
+            # edge firings — otherwise nothing would ever run.
+            ready |= self._schedule_next(status, visits, fired, consumed, ready)
+        return status, visits, fired, consumed, ready
+
+    def _prepare_resume(
+        self,
+        wf_state: WorkflowState,
+        status: dict[str, NodeStatus],
+        fired: dict[tuple[str, str], int],
+        consumed: dict[tuple[str, str], int],
+    ) -> dict[str, NodeStatus]:
+        """Resume semantics: clear the persisted failure, treat FAILED nodes as
+        pending, and rebuild runtime-local edge firing counts from persisted
+        statuses + outputs (edges into finished targets are consumed so those
+        never re-run). Returns the filtered status map."""
+        wf_state.error = None
+        wf_state.completed = False
+        status = {n: s for n, s in status.items() if s != NodeStatus.FAILED}
+        for source, target, condition in self._edges:
+            if status.get(source) != NodeStatus.COMPLETED or source not in wf_state.outputs:
+                continue
+            output = wf_state.outputs[source]
+            if condition is None or condition(output):
+                edge = (source, target)
+                fired[edge] = 1
+                consumed[edge] = 1 if status.get(target) in _TERMINAL else 0
+        return status
+
     def _schedule_next(
         self,
         status: dict[str, NodeStatus],
@@ -360,6 +404,35 @@ class Workflow:
     def _checkpoint(self, wf_state: WorkflowState) -> None:
         if self.checkpoint_path is not None:
             write_json_file(self.checkpoint_path, wf_state)
+
+    @staticmethod
+    def load_checkpoint(path: str | Path) -> WorkflowState:
+        """Load a persisted :class:`WorkflowState` from a checkpoint file."""
+        from aire.core.errors import ConfigurationError
+        from aire.core.serialization import read_json_file
+
+        target = Path(path)
+        if not target.exists():
+            raise ConfigurationError(
+                f"workflow checkpoint not found: {target}",
+                code="workflow.checkpoint_missing",
+                context={"path": str(target)},
+            )
+        return WorkflowState.model_validate(read_json_file(target))
+
+    async def resume(self, checkpoint_path: str | Path | None = None) -> WorkflowResult:
+        """Resume from a checkpoint file (defaults to ``checkpoint_path``).
+
+        Completed nodes are not re-executed; pending nodes continue with the
+        persisted inputs/outputs.
+        """
+        path = Path(checkpoint_path) if checkpoint_path else self.checkpoint_path
+        if path is None:
+            raise WorkflowError(
+                "resume() requires a checkpoint path",
+                context={"workflow": self.name},
+            )
+        return await self.run(state=self.load_checkpoint(path))
 
     # -- introspection -----------------------------------------------------------------
 

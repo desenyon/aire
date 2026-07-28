@@ -18,6 +18,8 @@ from aire.data.dataset import Dataset
 from aire.data.types import Record
 
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".log"}
+HTML_SUFFIXES = {".html", ".htm"}
+PANDAS_SUFFIXES = {".parquet", ".xlsx", ".xls"}
 
 
 def load(
@@ -31,8 +33,9 @@ def load(
     """Load a dataset from a path, URL, directory, or in-memory values.
 
     Args:
-        source: File path (.jsonl/.json/.csv/text), directory of text files,
-            ``http(s)://`` URL, or a list of strings/dicts.
+        source: File path (.jsonl/.json/.csv/.html/.parquet/.xlsx/text),
+            directory of text/HTML files, ``http(s)://`` URL, or a list of
+            strings/dicts.
         text_field: Field name carrying the text in structured sources.
         glob: Pattern for directory sources (default: text-like files).
         name: Dataset name (defaults to the source stem).
@@ -82,12 +85,18 @@ def _load_directory(
     pattern = glob or "**/*"
     records: list[Record] = []
     for file in sorted(path.glob(pattern)):
-        if not file.is_file() or file.suffix.lower() not in TEXT_SUFFIXES:
+        if not file.is_file():
+            continue
+        suffix = file.suffix.lower()
+        if suffix not in TEXT_SUFFIXES and suffix not in HTML_SUFFIXES:
             continue
         checked = _check_sandbox(file, sandbox_root)
+        text = checked.read_text(errors="replace")
+        if suffix in HTML_SUFFIXES:
+            text = html_to_text(text)
         records.append(
             Record(
-                text=checked.read_text(errors="replace"),
+                text=text,
                 metadata={"source": str(checked), "filename": checked.name},
             )
         )
@@ -127,6 +136,19 @@ def _load_path(
         with path.open(newline="") as fh:
             rows = list(csv.DictReader(fh))
         return Dataset.from_dicts(rows, text_field=text_field, name=ds_name)
+    if suffix in PANDAS_SUFFIXES:
+        return _load_tabular(path, suffix, text_field=text_field, name=ds_name)
+    if suffix in HTML_SUFFIXES:
+        return Dataset(
+            [
+                Record(
+                    text=html_to_text(path.read_text(errors="replace")),
+                    metadata={"source": str(path), "filename": path.name},
+                )
+            ],
+            name=ds_name,
+            source=str(path),
+        )
     if suffix in TEXT_SUFFIXES:
         return Dataset(
             [
@@ -143,6 +165,50 @@ def _load_path(
         code="data.type_unsupported",
         context={"path": str(path)},
     )
+
+
+def html_to_text(html: str) -> str:
+    """Extract readable text from HTML (stdlib only).
+
+    Strips script/style blocks and tags, decodes entities, collapses
+    whitespace while preserving paragraph breaks.
+    """
+    import html as html_module
+    import re
+
+    text = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?is)<!--.*?-->", " ", text)
+    blocks = r"br|p|div|li|tr|h[1-6]|section|article|header|footer"
+    text = re.sub(rf"(?i)<\s*({blocks})\b[^>]*>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_module.unescape(text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _load_tabular(path: Path, suffix: str, *, text_field: str, name: str) -> Dataset:
+    """Load parquet/excel via pandas (lazy; requires ``aire[ml]``)."""
+    import importlib.util
+
+    if importlib.util.find_spec("pandas") is None:
+        raise DataError(
+            f"reading {suffix} files requires pandas: pip install 'aire[ml]'",
+            code="data.pandas_missing",
+            context={"path": str(path)},
+        )
+    import pandas  # type: ignore[import-untyped]
+
+    try:
+        frame = pandas.read_parquet(path) if suffix == ".parquet" else pandas.read_excel(path)
+    except Exception as exc:
+        raise DataError(
+            f"failed to read {path}: {exc}",
+            code="data.parse_failed",
+            context={"path": str(path)},
+            cause=exc,
+        ) from exc
+    rows = frame.to_dict("records")
+    return Dataset.from_dicts(rows, text_field=text_field, name=name)
 
 
 def _ensure_dicts(rows: Any, path: Path) -> list[dict[str, Any]]:
@@ -195,8 +261,11 @@ def _load_url(url: str, *, text_field: str, name: str | None) -> Dataset:
         return Dataset.from_dicts(
             _ensure_dicts(rows, Path(url)), text_field=text_field, name=name or "remote"
         )
+    text = response.text
+    if "html" in content_type or url.endswith((".html", ".htm")):
+        text = html_to_text(text)
     return Dataset(
-        [Record(text=response.text, metadata={"source": url})],
+        [Record(text=text, metadata={"source": url})],
         name=name or "remote",
         source=url,
     )

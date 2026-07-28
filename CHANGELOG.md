@@ -7,6 +7,34 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.4] — 2026-07-27
+
+Hardening pass 2: workflow checkpoint resume actually works now, approval
+policies ship in the box, and the data loaders cover HTML and tabular files.
+
+### Added
+- **Approval policies** (`src/aire/agents/approvals.py`): `RuleApprover`
+  (auto-approve below a side-effect severity, per-tool allow/deny overrides,
+  built-in audit trail) and `InteractiveApprover` (human-in-the-loop stdin
+  prompts with per-session `always`/`never` memory, non-blocking).
+  `AI.agents.approver("rule" | "interactive")` facade helper.
+- **HTML loader**: `html_to_text()` (stdlib-only: strips script/style/tags,
+  decodes entities, preserves paragraph breaks); `.html`/`.htm` files,
+  HTML pages in directory loads, and HTML URLs all produce clean text.
+- **Tabular loaders**: `.parquet`/`.xlsx`/`.xls` via lazy pandas
+  (`pip install aire[ml]`), rows → records through the standard path.
+
+### Fixed
+- **Workflow resume was broken** for any multi-node graph: edge firing counts
+  are runtime-local, so resumed runs never scheduled downstream nodes of
+  completed predecessors; the persisted error carried into the new run; and
+  FAILED nodes were never eligible for re-execution. `Workflow.resume()` now
+  reconstructs edge firings from persisted statuses + outputs, clears the
+  failure, retries failed nodes, and seeds the first wave when the entry
+  node is already terminal. Untaken conditional branches stay skipped.
+- Added `Workflow.load_checkpoint(path)` + `Workflow.resume(path?)`.
+- 12 new tests (`tests/unit/test_hardening_024.py`).
+
 ## [0.2.3] — 2026-07-27
 
 Hardening pass 1: correctness fixes in the caches, resumable training, and a
