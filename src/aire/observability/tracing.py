@@ -144,7 +144,7 @@ class Tracer:
         self, exporter: SpanExporter | None = None, *, mask_fields: list[str] | None = None
     ) -> None:
         self.exporter = exporter or MemoryExporter()
-        self.mask_fields = set(mask_fields or [])
+        self.mask_fields = {f.lower() for f in mask_fields or []}
 
     @contextmanager
     def span(self, name: str, *, attributes: dict[str, Any] | None = None) -> Iterator[Span]:

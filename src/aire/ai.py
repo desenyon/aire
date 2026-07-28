@@ -244,6 +244,10 @@ class _ObserveNamespace(_Namespace):
             exporter: Any = None
             if obs.exporter == "jsonl" and obs.trace_file:
                 exporter = JsonlExporter(obs.trace_file)
+            elif obs.exporter == "otlp" and obs.otlp_endpoint:
+                from aire.observability.otlp import OTLPExporter
+
+                exporter = OTLPExporter(obs.otlp_endpoint, service_name=obs.service_name)
             runtime.tracer = Tracer(exporter=exporter, mask_fields=obs.mask_fields)
         return runtime.tracer
 

@@ -66,8 +66,10 @@ class ObservabilityConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     enabled: bool = True
-    exporter: str = "memory"  # memory | jsonl | none
+    exporter: str = "memory"  # memory | jsonl | otlp | none
     trace_file: str | None = None
+    otlp_endpoint: str | None = None  # e.g. http://localhost:4318
+    service_name: str = "aire"
     mask_fields: list[str] = Field(default_factory=lambda: ["api_key", "authorization", "password"])
 
 

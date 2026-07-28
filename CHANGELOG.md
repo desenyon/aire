@@ -7,6 +7,35 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.3] — 2026-07-27
+
+Hardening pass 1: correctness fixes in the caches, resumable training, and a
+real OpenTelemetry exporter.
+
+### Added
+- **OTLP exporter** (`src/aire/observability/otlp.py`): batched OTLP/HTTP+JSON
+  spans to any collector (`/v1/traces`) over httpx — no OTel SDK required.
+  Failures are counted, never raised; configurable via
+  `observability.exporter: otlp` + `otlp_endpoint` in `aire.yaml`.
+- **Resumable training**: `FunctionTrainer.fit(dataset, resume_from=...)`
+  continues from a checkpoint (epoch, step state, best metric), and
+  `FunctionTrainer.load_checkpoint(path)` loads one explicitly.
+
+### Fixed
+- **Cache poisoning via mutation** (`CachedModel`, `SemanticCachedModel`):
+  cached `GenerationResult`s were returned by reference, so a caller mutating
+  a result corrupted every future hit. Both stores and hits now use deep
+  copies.
+- **Semantic cache ignored generation parameters**: a request differing only
+  in `temperature`/`response_format`/etc. could be served a stale entry.
+  Hits now require an exact parameter signature in addition to prompt
+  similarity — structured-output requests can never be served plain-text
+  entries.
+- **Tracer `mask_fields` case sensitivity**: fields are now matched
+  case-insensitively (`API_Key` masks `api_key`), matching the documented
+  behavior.
+- 10 new tests (`tests/unit/test_hardening_023.py`).
+
 ## [0.2.2] — 2026-07-27
 
 MCP knowledge: agents can now learn how to operate aire through MCP itself —

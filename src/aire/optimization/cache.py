@@ -47,14 +47,16 @@ class CachedModel(Model):
             created, result = self._cache[key]
             if self.ttl_seconds is None or now - created < self.ttl_seconds:
                 self.hits += 1
-                return result
+                # Deep copy: callers must never mutate another caller's result.
+                return result.model_copy(deep=True)
             del self._cache[key]
         self.misses += 1
         result = await self.inner.generate(request)
         if len(self._cache) >= self.max_entries:
             oldest = min(self._cache, key=lambda k: self._cache[k][0])
             del self._cache[oldest]
-        self._cache[key] = (now, result)
+        # Store a copy: mutating the returned result must not poison the cache.
+        self._cache[key] = (now, result.model_copy(deep=True))
         return result
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
@@ -77,8 +79,18 @@ class CachedModel(Model):
         self._cache.clear()
 
 
+def _params_signature(request: GenerationRequest) -> str:
+    """Exact signature of generation-affecting parameters (everything but the
+    messages/metadata). Semantic hits require this to match — a structured
+    output request must never be served a plain-text cache entry."""
+    payload = request.model_dump_json(exclude={"messages", "metadata"}, exclude_none=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 class SemanticCachedModel(Model):
-    """Caches by embedding similarity: near-duplicate prompts hit the cache."""
+    """Caches by embedding similarity: near-duplicate prompts hit the cache,
+    but only when generation parameters (temperature, response_format, ...)
+    match exactly."""
 
     def __init__(
         self,
@@ -92,7 +104,7 @@ class SemanticCachedModel(Model):
         self.embedder = embedder
         self.threshold = threshold
         self.max_entries = max_entries
-        self._entries: list[tuple[list[float], str, GenerationResult]] = []
+        self._entries: list[tuple[str, list[float], str, GenerationResult]] = []
         self.hits = 0
         self.misses = 0
 
@@ -102,16 +114,19 @@ class SemanticCachedModel(Model):
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         prompt = "\n".join(m.text_content for m in request.messages)
+        signature = _params_signature(request)
         vector = await self.embedder.embed_one(prompt)
-        for cached_vector, _cached_prompt, result in self._entries:
+        for cached_signature, cached_vector, _cached_prompt, result in self._entries:
+            if cached_signature != signature:
+                continue
             if cosine_similarity(vector, cached_vector) >= self.threshold:
                 self.hits += 1
-                return result
+                return result.model_copy(deep=True)
         self.misses += 1
         result = await self.inner.generate(request)
         if len(self._entries) >= self.max_entries:
             self._entries.pop(0)
-        self._entries.append((vector, prompt, result))
+        self._entries.append((signature, vector, prompt, result.model_copy(deep=True)))
         return result
 
     async def health(self) -> HealthStatus:

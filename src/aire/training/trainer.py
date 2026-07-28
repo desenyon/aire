@@ -15,7 +15,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from aire.core.serialization import write_json_file
+from aire.core.errors import ConfigurationError
+from aire.core.serialization import read_json_file, write_json_file
 from aire.data.dataset import Dataset
 
 
@@ -85,7 +86,18 @@ class FunctionTrainer:
         self.metric = metric
         self.minimize = minimize
 
-    async def fit(self, dataset: Dataset) -> TrainResult:
+    async def fit(
+        self, dataset: Dataset, *, resume_from: str | Path | None = None
+    ) -> TrainResult:
+        """Run the training loop.
+
+        Args:
+            dataset: Training data.
+            resume_from: Path to a checkpoint written by a previous run
+                (``checkpoint-epochN.json``). Training continues at
+                ``checkpoint.epoch + 1`` with the saved step state and best
+                metric, so interrupted runs never start over.
+        """
         import inspect
 
         started = time.time()
@@ -93,10 +105,25 @@ class FunctionTrainer:
         history: list[dict[str, float]] = []
         checkpoints: list[Checkpoint] = []
         best: float | None = None
+        start_epoch = 0
         patience_left = self.config.early_stopping_patience
         stopped_early = False
 
-        for epoch in range(self.config.epochs):
+        if resume_from is not None:
+            checkpoint = self.load_checkpoint(resume_from)
+            state = dict(checkpoint.state)
+            best = checkpoint.metrics.get(self.metric, best)
+            start_epoch = checkpoint.epoch + 1
+            checkpoints.append(checkpoint)
+            if start_epoch >= self.config.epochs:
+                raise ConfigurationError(
+                    f"checkpoint is at epoch {checkpoint.epoch} but config only "
+                    f"runs {self.config.epochs} epochs; increase epochs to resume",
+                    code="training.resume_exhausted",
+                    context={"checkpoint_epoch": checkpoint.epoch, "epochs": self.config.epochs},
+                )
+
+        for epoch in range(start_epoch, self.config.epochs):
             outcome = self.step(epoch, dataset, self.config, state)
             if inspect.isawaitable(outcome):
                 outcome = await outcome
@@ -135,6 +162,18 @@ class FunctionTrainer:
             write_json_file(path, checkpoint)
             checkpoint.path = str(path)
         return checkpoint
+
+    @staticmethod
+    def load_checkpoint(path: str | Path) -> Checkpoint:
+        """Load a checkpoint written to ``checkpoint_dir`` by a previous run."""
+        target = Path(path)
+        if not target.exists():
+            raise ConfigurationError(
+                f"checkpoint not found: {target}",
+                code="training.checkpoint_missing",
+                context={"path": str(target)},
+            )
+        return Checkpoint.model_validate(read_json_file(target))
 
     def describe(self) -> dict[str, Any]:
         return {
