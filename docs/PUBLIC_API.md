@@ -29,6 +29,7 @@ from aire.core.errors import AireError
 | `AI.observe` | `tracer()`, `metrics()` |
 | `AI.safety` | `guardrails(*names)`, `redact(text)` |
 | `AI.deploy` | `api(target, ...)`, `artifacts(target, dir)` |
+| `AI.gateway` | `create(...)`, `serve(host, port, ...)`, `endpoints()` |
 | `AI.project` | fluent builder (`aire.knowledge_assistant.Assistant`) |
 | `AI.configure` | `configure(settings_or_path)`, `runtime()` |
 
@@ -128,10 +129,21 @@ from aire.optimization import CachedModel, SemanticCachedModel, ModelRouter, Rou
 ## Deployment & CLI
 
 ```python
-from aire.deployment import create_app, generate_artifacts
+from aire.deployment import Gateway, create_app, create_gateway, generate_artifacts
 ```
 
-CLI: `aire init · run · evaluate · serve · inspect · plugins · doctor · version`.
+- `create_gateway(runtime, models=..., aliases=..., embeddings=..., routing=..., objective=..., auth_token=..., rate_limit_per_minute=..., metrics=...)` —
+  OpenAI-compatible gateway app (`/v1/chat/completions` with SSE streaming,
+  `/v1/embeddings`, `/v1/models`, `/v1/gateway/manifest`).
+- `Gateway(runtime, chat_routes=..., embedding_routes=..., routing=..., objective=...)` —
+  transport-independent routing core; `.describe()` emits the gateway manifest.
+- OpenAI-compatible provider aliases (registered lazily on first use):
+  `lmstudio · llamacpp · llamafile · vllm · mlx · localai · tgi` (local),
+  `groq · together · fireworks · deepseek · mistral · xai · openrouter · cerebras · perplexity` (hosted),
+  and generic `openai_compatible:<model>` with `base_url=`.
+- Config: `Settings.gateway` (`GatewayConfig`) — the `gateway:` section of `aire.yaml`.
+
+CLI: `aire init · run · evaluate · serve · gateway · inspect · plugins · doctor · version`.
 
 ## Stability guarantees
 

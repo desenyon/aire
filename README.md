@@ -30,6 +30,7 @@ app = assistant.deploy()  # production FastAPI app with /health, /ready, /manife
 ## Table of contents
 
 - [Why agent-first](#why-agent-first)
+- [The problems aire fixes](#the-problems-aire-fixes)
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
@@ -48,6 +49,7 @@ app = assistant.deploy()  # production FastAPI app with /health, /ready, /manife
 - [Synthetic data](#synthetic-data)
 - [Training](#training)
 - [Deployment](#deployment)
+- [Model gateway](#model-gateway)
 - [Configuration](#configuration)
 - [CLI reference](#cli-reference)
 - [Plugins and providers](#plugins-and-providers)
@@ -70,6 +72,19 @@ aire is designed so that **both humans and coding agents** can build production 
 - **Inspectable by default.** OpenTelemetry-shaped tracing, metrics, event history, evaluation reports, and workflow checkpoints are built in, not bolted on.
 
 See [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) for the full product principles and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the ten architectural decisions behind this design.
+
+## The problems aire fixes
+
+Building AI systems today means fighting the same structural problems over and over. aire exists to fix them at the library level:
+
+| Problem in AI creation today | How aire fixes it |
+|---|---|
+| **Provider lock-in.** Every vendor SDK has its own payload shapes, error formats and streaming quirks; swapping providers means rewriting application code. | One normalized `Model` / `EmbeddingModel` interface. Providers are thin HTTP adapters behind `provider:name` refs — swapping OpenAI for a local GGUF model is a one-string change. |
+| **Local models are second-class.** GGUF, MLX and self-hosted servers all speak slightly different dialects and are painful to wire into agent stacks. | First-class refs for every local server — `llamacpp:`, `lmstudio:`, `vllm:`, `mlx:`, `localai:`, `llamafile:`, `tgi:`, `ollama:` — plus `openai_compatible:` with a custom `base_url` for anything else. |
+| **No built-in routing or gateway.** Teams hand-roll proxies for fallbacks, round-robin and cost-based routing, then again for auth, rate limits and observability. | `AI.gateway.create()` / `aire gateway` serves an OpenAI-compatible endpoint in front of any refs, with fallback chains, round-robin or objective routing, bearer auth, rate limiting, streaming, tracing and metrics built in. |
+| **Frameworks are hostile to coding agents.** Magic globals, stringly-typed configs and hidden state make agent-driven development unreliable. | Agent-first contracts: `.describe()` manifests, Pydantic-everything, structured `AireError` codes, deterministic agent state machines with explicit budgets and permissions. |
+| **Production concerns arrive too late.** Tracing, cost accounting, evaluation, guardrails and deployment get bolted on after the demo works — if ever. | They are core subsystems: observability, evaluation, safety and FastAPI deployment ship in the box and work offline from the first line of code. |
+| **Nothing runs without credentials.** Most libraries can't even be tested without an API key, so CI and local development depend on live vendors. | `mock:echo` + `local:hashing` run the entire stack — agents, RAG, workflows, evals, gateway — fully offline. |
 
 ## Installation
 
@@ -111,6 +126,7 @@ agent = AI.agents.create_sync(model, tools=["calculator", "read_file"])
 
 # 3. Low level — direct protocol access
 from aire.models.types import GenerationRequest
+
 result = await model.generate(GenerationRequest.of("hello"))
 ```
 
@@ -136,7 +152,7 @@ The left side selects the provider factory from a registry; the right side is pa
 from aire.core.runtime import Runtime
 
 runtime = Runtime.from_config("aire.yaml")
-await runtime.aclose()   # closes every tracked resource, LIFO
+await runtime.aclose()  # closes every tracked resource, LIFO
 ```
 
 ### Manifests
@@ -151,10 +167,10 @@ from aire.core.errors import AireError
 try:
     answer = await knowledge.ask("...")
 except AireError as exc:
-    exc.code          # e.g. "provider.rate_limited" — stable, machine-readable
-    exc.retryable     # can this be retried?
-    exc.context       # structured details (provider, path, missing permissions, ...)
-    exc.to_dict()     # JSON-safe payload for APIs and logs
+    exc.code  # e.g. "provider.rate_limited" — stable, machine-readable
+    exc.retryable  # can this be retried?
+    exc.context  # structured details (provider, path, missing permissions, ...)
+    exc.to_dict()  # JSON-safe payload for APIs and logs
 ```
 
 The hierarchy includes `ProviderError`, `RateLimitError`, `AuthenticationError`, `TimeoutError`, `NotFoundError`, `BudgetExceededError`, `PermissionDeniedError`, `SafetyError`, `OutputValidationError`, `WorkflowError`, `DataError`, `ConfigurationError`, and `PluginError`. Provider HTTP failures are mapped once in the shared HTTP client, so every vendor looks identical to callers.
@@ -166,12 +182,19 @@ Normalized content primitives flow through the whole library:
 ```python
 from aire.core.content import TextContent, ImageContent, AudioContent, StructuredContent
 
-result = await model.generate(GenerationRequest(messages=[
-    Message(role="user", content=[
-        TextContent(text="Analyze this diagram"),
-        ImageContent.from_file("diagram.png"),
-    ])
-]))
+result = await model.generate(
+    GenerationRequest(
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    TextContent(text="Analyze this diagram"),
+                    ImageContent.from_file("diagram.png"),
+                ],
+            )
+        ]
+    )
+)
 ```
 
 ## The AI facade
@@ -192,6 +215,7 @@ result = await model.generate(GenerationRequest(messages=[
 | `AI.training` | Trainer factory |
 | `AI.synthetic(...)` | Synthetic data generator factory |
 | `AI.deploy` | FastAPI apps and deployment artifacts |
+| `AI.gateway` | OpenAI-compatible model gateway (routing, fallbacks, auth) |
 | `AI.project` | Fluent builder (the flagship experience) |
 | `AI.configure` | Replace the default runtime/settings |
 
@@ -211,16 +235,20 @@ async for chunk in model.stream(GenerationRequest.of("tell me a story")):
 
 # Structured output — validated, retried
 from pydantic import BaseModel
+
+
 class Summary(BaseModel):
     title: str
     points: list[str]
+
+
 summary = await model.ask_structured("summarize the refund policy", Summary)
 
 # Tool calling: pass tool definitions, get ToolCall objects back
 result = await model.generate(GenerationRequest.of("add 2 and 3", tools=registry.definitions()))
 
 # Embeddings
-embedder = await AI.models.embedder()              # default: local:hashing (offline)
+embedder = await AI.models.embedder()  # default: local:hashing (offline)
 vectors = await embedder.embed(EmbeddingRequest(texts=["hello", "world"]))
 ```
 
@@ -235,23 +263,50 @@ model = await AI.models.use("callable:uppercase")
 
 Built-in offline implementations (`mock:echo`, `local:hashing`) make every test and example runnable with no credentials.
 
+### Local models and OpenAI-compatible endpoints
+
+Any server that speaks the OpenAI chat-completions protocol works out of the box — no per-vendor adapter, no vendor SDK. Named aliases carry sensible default base URLs and env vars:
+
+```python
+# Local inference servers — no API key needed
+model = AI.models.use_sync("lmstudio:qwen2.5-7b-instruct")  # LM Studio (GGUF/MLX)
+model = AI.models.use_sync("llamacpp:llama-3.2")  # llama.cpp server (GGUF)
+model = AI.models.use_sync("vllm:meta-llama/Llama-3.1-8B")  # vLLM
+model = AI.models.use_sync("mlx:mlx-community/Llama-3.2-3B")  # mlx-lm (Apple Silicon)
+model = AI.models.use_sync("ollama:llama3.2")  # Ollama
+
+# Hosted OpenAI-compatible APIs — key from env (GROQ_API_KEY, MISTRAL_API_KEY, ...)
+model = AI.models.use_sync("groq:llama-3.3-70b-versatile")
+model = AI.models.use_sync("deepseek:deepseek-chat")
+model = AI.models.use_sync("mistral:mistral-large-latest")
+model = AI.models.use_sync("openrouter:anthropic/claude-sonnet-4-5")
+
+# Anything else with an OpenAI-compatible endpoint
+model = AI.models.use_sync(
+    "openai_compatible:my-finetune",
+    base_url="http://gpu-box:8000/v1",
+    api_key="...",
+)
+```
+
+Full catalog (including `localai`, `llamafile`, `tgi`, `together`, `fireworks`, `xai`, `cerebras`, `perplexity`): `AI.gateway.endpoints()` — machine-readable for agents.
+
 ## Data
 
 ```python
 from aire import AI
 
-dataset = AI.data.load("./support_data")            # file, directory, URL, JSONL/CSV/JSON/text
+dataset = AI.data.load("./support_data")  # file, directory, URL, JSONL/CSV/JSON/text
 dataset = (
-    dataset
-    .validate(min_length=10)                         # quality gates with a QualityReport
-    .deduplicate()                                   # content-hash based
+    dataset.validate(min_length=10)  # quality gates with a QualityReport
+    .deduplicate()  # content-hash based
     .filter(lambda r: "refund" in r.text)
     .map(lambda r: r.model_copy(update={"text": r.text.strip()}))
 )
 split = dataset.split(train=0.8, validation=0.1, test=0.1, seed=42)
-dataset.to_jsonl("clean.jsonl")                      # round-trips losslessly
+dataset.to_jsonl("clean.jsonl")  # round-trips losslessly
 
-report = dataset.quality_report()                    # counts, lengths, PII hints, duplicates
+report = dataset.quality_report()  # counts, lengths, PII hints, duplicates
 ```
 
 Chunkers prepare text for embedding:
@@ -266,8 +321,8 @@ chunks = chunker.chunk("long document text ...")
 ```python
 from aire import AI
 
-knowledge = AI.rag.create()                    # or via AI.project(...) fluent builder
-report = await knowledge.ingest("./documents") # load → chunk → embed → store
+knowledge = AI.rag.create()  # or via AI.project(...) fluent builder
+report = await knowledge.ingest("./documents")  # load → chunk → embed → store
 answer = await knowledge.ask(
     "What are the refund rules?",
     model="openai:gpt-4o-mini",
@@ -287,6 +342,7 @@ Under the hood: pluggable **chunker** → **embedder** → **vector store** (`lo
 from aire import AI
 from aire.tools import SideEffect
 
+
 @AI.tool(
     description="Search orders for a customer.",
     permissions=["database.read"],
@@ -294,8 +350,7 @@ from aire.tools import SideEffect
     timeout_seconds=5.0,
     retries=2,
 )
-async def search_orders(customer_id: str) -> list[dict]:
-    ...
+async def search_orders(customer_id: str) -> list[dict]: ...
 ```
 
 The decorator introspects the signature and docstring to produce a `ToolSpec`: name, description, JSON input/output schemas, permissions, timeout, retry policy, side-effect classification. Input validation is strict (`extra="forbid"`) — unknown arguments are rejected.
@@ -310,20 +365,20 @@ from aire.agents import AgentConfig
 
 agent = AI.agents.create_sync(
     "openai:gpt-4o-mini",
-    tools=[search_orders],            # @AI.tool-decorated functions
-    builtins=True,                    # + calculator, read_file, list_files, http_get, ...
+    tools=[search_orders],  # @AI.tool-decorated functions
+    builtins=True,  # + calculator, read_file, list_files, http_get, ...
     config=AgentConfig(
         max_steps=12,
         token_budget=50_000,
         cost_budget_usd=0.25,
         permissions={"file.read"},
-        approval_levels={"external_side_effect"},   # require approval for these
+        approval_levels={"external_side_effect"},  # require approval for these
     ),
-    memory="buffer",                                 # or jsonl:<path> for durable memory
+    memory="buffer",  # or jsonl:<path> for durable memory
 )
 result = agent.run_sync("What is 18% of 2450?")
-print(result.output, result.status)                  # completed | max_steps | budget_exceeded | failed
-for step in result.steps:                            # full audit trail
+print(result.output, result.status)  # completed | max_steps | budget_exceeded | failed
+for step in result.steps:  # full audit trail
     print(step.index, step.kind, step.detail)
 ```
 
@@ -346,8 +401,8 @@ wf.connect("analyze", "verify")
 wf.connect("analyze", "publish", when=lambda out: out["confidence"] > 0.9)  # conditional edge
 wf.connect("verify", "publish")
 
-result = await wf.run({"topic": "aire plugins"})     # parallel fan-out, fan-in joins
-async for event in wf.run_stream({"topic": "x"}):    # live transition events
+result = await wf.run({"topic": "aire plugins"})  # parallel fan-out, fan-in joins
+async for event in wf.run_stream({"topic": "x"}):  # live transition events
     print(event.kind, event.node)
 ```
 
@@ -360,10 +415,10 @@ from aire import AI
 from aire.evaluation.runner import save_report
 
 report = AI.evaluate(
-    agent,                               # model, agent, knowledge pipeline, or callable
-    "tests/evaluation.jsonl",            # or list[EvalCase] / list[dict]
+    agent,  # model, agent, knowledge pipeline, or callable
+    "tests/evaluation.jsonl",  # or list[EvalCase] / list[dict]
     metrics=["accuracy", "groundedness", "contains", "latency", "cost"],
-)                                        # sync; use AI.evaluator().run(...) for async
+)  # sync; use AI.evaluator().run(...) for async
 print(report.metric_summary())
 save_report(report, "reports/run-42.json")
 ```
@@ -375,12 +430,12 @@ Built-in metrics: `exact_match`, `contains`, `regex_match`, `json_valid`, `seman
 ```python
 from aire import AI
 
-tracer = AI.observe.tracer()               # OpenTelemetry-shaped spans
+tracer = AI.observe.tracer()  # OpenTelemetry-shaped spans
 with tracer.span("pipeline.run", user_id="u1"):
-    answer = await knowledge.ask("...")    # nested spans: retrieve, rerank, generate
+    answer = await knowledge.ask("...")  # nested spans: retrieve, rerank, generate
 
 metrics = AI.observe.metrics
-metrics.snapshot()                         # counters, gauges, latency histograms
+metrics.snapshot()  # counters, gauges, latency histograms
 ```
 
 Traces propagate through models, RAG, agents and deployment endpoints via `contextvars`; sensitive attribute keys (tokens, keys, secrets) are masked automatically. Exporters: in-memory (tests), JSONL (audit). The event bus broadcasts domain events (`model.generate`, `agent.tool_call`, …) for subscribers.
@@ -391,10 +446,11 @@ Traces propagate through models, RAG, agents and deployment endpoints via `conte
 from aire import AI
 
 chain = AI.safety.guardrails("pii", "injection", "secret")
-verdicts = chain.check(user_input)         # raises SafetyError on blocking failures
-clean = AI.safety.redact(user_input)       # remove PII + secrets
+verdicts = chain.check(user_input)  # raises SafetyError on blocking failures
+clean = AI.safety.redact(user_input)  # remove PII + secrets
 
 from aire.safety import ApprovalPolicy, SideEffect
+
 policy = ApprovalPolicy(require_approval={SideEffect.EXTERNAL_SIDE_EFFECT, SideEffect.HIGH_IMPACT})
 ```
 
@@ -408,15 +464,15 @@ from aire import AI
 # Model routing by objective
 router = AI.models.router(
     candidates=["openai:gpt-4o-mini", "anthropic:claude-sonnet-4-5", "ollama:llama3.2"],
-    objective="quality_under_budget",       # lowest_cost | lowest_latency | highest_quality | balanced
+    objective="quality_under_budget",  # lowest_cost | lowest_latency | highest_quality | balanced
     cost_limit_usd=0.01,
 )
-text = await router.ask("...")              # routes + falls back + records history
+text = await router.ask("...")  # routes + falls back + records history
 decision = router.route(GenerationRequest.of("..."))
 print(decision.chosen, decision.scores, decision.reason)
 
 # Caching
-cached = AI.models.cache(model)             # exact-match cache
+cached = AI.models.cache(model)  # exact-match cache
 semantic = SemanticCachedModel(model, embedder, threshold=0.95)  # similarity cache
 ```
 
@@ -443,8 +499,8 @@ Conversions delegate to any model advertising the required capability (`SPEECH_R
 from aire.synthetic import SyntheticGenerator
 
 generator = SyntheticGenerator(model)
-pairs = await generator.qa_pairs(document_text, n=20)            # grounded QA pairs
-eval_dataset = await generator.augment(dataset, pairs_per_doc=3) # dataset → QA eval set
+pairs = await generator.qa_pairs(document_text, n=20)  # grounded QA pairs
+eval_dataset = await generator.augment(dataset, pairs_per_doc=3)  # dataset → QA eval set
 ```
 
 Generation goes through structured output validation, so malformed samples are retried or dropped rather than silently polluting datasets.
@@ -454,13 +510,15 @@ Generation goes through structured output validation, so malformed samples are r
 ```python
 from aire.training import FunctionTrainer, TrainingConfig
 
+
 async def step(epoch, dataset, config, state):
     # your framework code (torch, jax, numpy, ...) — fully framework-agnostic
     ...
-    return {"loss": 0.42}, state                 # (metrics, new_state)
+    return {"loss": 0.42}, state  # (metrics, new_state)
+
 
 trainer = FunctionTrainer(step, TrainingConfig(epochs=10, early_stopping_patience=2))
-result = await trainer.fit(train_dataset)        # checkpoints + history in TrainResult
+result = await trainer.fit(train_dataset)  # checkpoints + history in TrainResult
 ```
 
 The trainer contract is framework-independent (checkpointing, early stopping, metrics, resume); PyTorch/TensorFlow/JAX arrive as lazy adapters (see [docs/ROADMAP.md](docs/ROADMAP.md)).
@@ -473,17 +531,55 @@ from aire import AI
 app = AI.deploy.api(
     agent_or_knowledge_or_model,
     title="support API",
-    auth_token="...",                    # optional bearer auth
-    rate_limit_per_minute=60,            # optional per-client rate limit
+    auth_token="...",  # optional bearer auth
+    rate_limit_per_minute=60,  # optional per-client rate limit
     metrics=AI.observe.metrics,
 )
 # Endpoints: GET /health /ready /manifest /metrics
 #            POST /v1/run (agent) | /v1/ask (knowledge) | /v1/generate (model)
 
-artifacts = AI.deploy.artifacts("./dist")   # Dockerfile, entrypoint.py, .env.template, requirements.lock
+artifacts = AI.deploy.artifacts(
+    "./dist"
+)  # Dockerfile, entrypoint.py, .env.template, requirements.lock
 ```
 
 Errors surface as structured JSON (`error.code`, `error.context`) — the same contract as the Python API.
+
+## Model gateway
+
+aire doubles as a **model gateway**: one OpenAI-compatible server in front of every provider — local or hosted — with routing, fallbacks, auth, rate limits and observability built in. Point any existing OpenAI client at it unchanged.
+
+```python
+from aire import AI
+
+app = AI.gateway.create(
+    models=["ollama:llama3.2"],  # exposed under their own ref
+    aliases={
+        "smart": ["anthropic:claude-sonnet-4-5", "openai:gpt-4o-mini"],  # fallback chain
+        "local": "lmstudio:qwen2.5-7b-instruct",
+    },
+    embeddings={"emb": "openai:text-embedding-3-small"},
+    routing="first",  # or "round_robin" …
+    # objective="lowest_cost",    # … or score candidates per request with ModelRouter
+    auth_token="sk-internal",
+    rate_limit_per_minute=600,
+    metrics=AI.observe.metrics,
+)
+# Endpoints: POST /v1/chat/completions (streaming SSE supported)
+#            POST /v1/embeddings
+#            GET  /v1/models  /v1/gateway/manifest  /health
+```
+
+Or from the shell (config falls back to the `gateway:` section of `aire.yaml`):
+
+```bash
+aire gateway -m ollama:llama3.2 \
+             -a smart=anthropic:claude-sonnet-4-5,openai:gpt-4o-mini \
+             --embed-alias emb=openai:text-embedding-3-small \
+             --auth-token sk-internal --port 4000
+```
+
+Clients see a standard OpenAI API; responses additionally carry `aire.resolved_model` (and the `X-Aire-Resolved-Model` header) so routing decisions stay inspectable. Unknown models return OpenAI-shaped errors; a candidate that fails mid-chain falls back automatically.
 
 ## Configuration
 
@@ -506,9 +602,19 @@ safety:
   require_approval:
     - external_side_effect
 
+gateway:
+  aliases:
+    smart: [anthropic:claude-sonnet-4-5, openai:gpt-4o-mini]
+  embeddings:
+    emb: local:hashing
+  routing: first
+  rate_limit_per_minute: 600
+
 providers:
   openai:
     api_key: ${OPENAI_API_KEY}
+  groq:
+    api_key: ${GROQ_API_KEY}
 ```
 
 Environment overrides use `AIRE_<SECTION>__<KEY>` (e.g. `AIRE_MODEL__REF=ollama:llama3.2`). Secrets are `SecretStr` and excluded from serialization.
@@ -520,6 +626,7 @@ aire init [NAME] [--dir DIR]      # scaffold a project (aire.yaml, app.py)
 aire run "prompt" [--model REF]   # one-shot generation
 aire evaluate DATASET [--model REF] [--metrics a,b] [--output report.json]
 aire serve [--host H] [--port P] [--app-file app.py]
+aire gateway [-m REF]... [-a public=ref[,ref...]]... [--objective O] [--port 4000]
 aire inspect                      # show resolved config, registries, providers
 aire plugins                      # list discovered plugins
 aire doctor                       # environment/dependency/credential diagnostics
@@ -544,7 +651,7 @@ def register(runtime):
 
 Contract tests in `tests/contract` verify any model/embedder/vector-store against the shared interface. The complete contract — factory signatures, error rules, lifecycle, manifest requirements — is in [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md).
 
-**Included providers:** `openai` (any OpenAI-compatible endpoint), `anthropic`, `huggingface`, `ollama`, `mock`/`echo` (offline), `callable` (any Python function). **Vector stores:** `local` (persistent, in-memory speed), `qdrant`, `chroma`. All reached over plain HTTP through one shared client — no vendor SDKs.
+**Included providers:** `openai`, `anthropic`, `huggingface`, `ollama`, `mock`/`echo` (offline), `callable` (any Python function), plus named OpenAI-compatible aliases — local: `lmstudio`, `llamacpp`, `llamafile`, `vllm`, `mlx`, `localai`, `tgi`; hosted: `groq`, `together`, `fireworks`, `deepseek`, `mistral`, `xai`, `openrouter`, `cerebras`, `perplexity` — and generic `openai_compatible` with a custom `base_url`. **Vector stores:** `local` (persistent, in-memory speed), `qdrant`, `chroma`. All reached over plain HTTP through one shared client — no vendor SDKs.
 
 ## Examples
 
@@ -557,6 +664,7 @@ Runnable, offline, no credentials required:
 | [examples/model_router](examples/model_router/main.py) | Routing decisions with scores + cache hits |
 | [examples/workflows](examples/workflows/main.py) | Branches, fan-in, streaming events, checkpoints |
 | [examples/deployment_api](examples/deployment_api/main.py) | Auth-guarded FastAPI app + artifact generation |
+| [examples/gateway](examples/gateway/main.py) | OpenAI-compatible gateway: aliases, fallback, streaming, embeddings |
 
 ```bash
 python examples/rag_assistant/main.py
@@ -570,6 +678,7 @@ python examples/rag_assistant/main.py
 - [docs/PLUGIN_SPEC.md](docs/PLUGIN_SPEC.md) — writing providers and plugins
 - [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — threat model and the seven control classes
 - [docs/ROADMAP.md](docs/ROADMAP.md) — 0.2 → 1.0 plan (training adapters, multimodal depth, multi-agent, stability)
+- [CHANGELOG.md](CHANGELOG.md) — release history, updated with every major/minor version
 
 ## Development
 
@@ -581,8 +690,8 @@ pip install -e ".[dev]"
 # Quality gates (all must pass):
 ruff check .
 ruff format --check .
-mypy src               # strict mode, 86 files
-pytest                 # 217 tests: unit, contract, integration, security, performance
+mypy src               # strict mode, 88 files
+pytest                 # 247 tests: unit, contract, integration, security, performance
 pytest tests/integration tests/security
 ```
 

@@ -1,6 +1,23 @@
 # aire — Roadmap
 
-## 0.1 (current) — architecture proof
+## 0.1.1 (current) — model routing & gateway
+
+Every local model server and every OpenAI-compatible API reachable through
+named refs; aire can itself serve as the OpenAI-compatible gateway in front of
+all of them.
+
+- [x] Model gateway: OpenAI-compatible `/v1/chat/completions` (streaming SSE),
+      `/v1/embeddings`, `/v1/models`, manifest endpoint
+- [x] Gateway routing: ordered fallback chains, round-robin, objective-based
+      scoring via ModelRouter; auth, rate limits, tracing, metrics
+- [x] Local model refs: llamacpp, lmstudio, vllm, mlx, localai, llamafile, tgi
+- [x] Hosted OpenAI-compatible refs: groq, together, fireworks, deepseek,
+      mistral, xai, openrouter, cerebras, perplexity
+- [x] Generic `openai_compatible:` provider with custom base_url/api_key
+- [x] `gateway:` config section, `AI.gateway` facade, `aire gateway` CLI
+- [x] CHANGELOG.md — updated with every major/minor release from now on
+
+## 0.1 — architecture proof
 
 The vertical slice release: load → chunk → embed → store → retrieve → answer
 with citations → evaluate → trace → deploy, all offline-capable.
@@ -33,6 +50,8 @@ with citations → evaluate → trace → deploy, all offline-capable.
 - [ ] `aire doctor` provider connectivity checks (live mode)
 - [ ] Prompt optimization loops (evaluation-guided)
 - [ ] Postgres/pgvector store, Redis cache backend
+- [ ] Gateway: per-model cost budgets, circuit breakers, Anthropic-compatible
+      endpoint shape, request/response logging sinks
 
 ## 0.3 — training & optimization
 
