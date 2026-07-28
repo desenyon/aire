@@ -102,15 +102,49 @@ class ModelRegistry:
         }
 
 
+# Provider prefix → integration module with a ``register(runtime)`` function.
+_INTEGRATION_MODULES: dict[str, str] = {
+    "openai": "aire.integrations.openai",
+    "anthropic": "aire.integrations.anthropic",
+    "ollama": "aire.integrations.ollama",
+    "huggingface": "aire.integrations.huggingface",
+    "qdrant": "aire.integrations.qdrant",
+    "chroma": "aire.integrations.chroma",
+}
+
+# OpenAI-compatible endpoints (local servers and hosted APIs) all live in one
+# module; touching any single alias registers the whole catalog.
+for _alias in (
+    "openai_compatible",
+    "lmstudio",
+    "llamacpp",
+    "llamafile",
+    "vllm",
+    "mlx",
+    "localai",
+    "tgi",
+    "groq",
+    "together",
+    "fireworks",
+    "deepseek",
+    "mistral",
+    "xai",
+    "openrouter",
+    "cerebras",
+    "perplexity",
+):
+    _INTEGRATION_MODULES[_alias] = "aire.integrations.openai_compat"
+
+
 def _maybe_hint_integration(provider: str, runtime: Runtime) -> None:
     """Lazily activate a bundled first-party integration, if one exists."""
     import importlib
 
-    known = {"openai", "anthropic", "ollama", "huggingface", "qdrant", "chroma"}
-    if provider not in known:
+    module_name = _INTEGRATION_MODULES.get(provider)
+    if module_name is None:
         return
     try:
-        module = importlib.import_module(f"aire.integrations.{provider}")
+        module = importlib.import_module(module_name)
     except ImportError:
         return
     register = getattr(module, "register", None)
