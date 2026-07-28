@@ -375,26 +375,25 @@ scikit-learn, PyTorch, Keras, XGBoost, and LightGBM, all addressed by
 ```python
 from aire import AI
 
-AI.ml.backends()  # native/sklearn/torch/keras/xgboost/lightgbm/pandas
+AI.ml.backends()  # native/sklearn/torch/keras/xgboost/lightgbm/catboost/pandas/polars
 
 est = await AI.ml.fit("simple:centroid", dataset)  # offline, zero deps
 est = await AI.ml.fit("sklearn:random_forest", dataset, n_estimators=100)  # aire[ml]
 est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), epochs=300,
-                      optimizer="adamw", loss="cross_entropy", batch_size=32)  # aire[torch]
-est = await AI.ml.fit("keras:mlp", dataset)  # aire[keras]
-est = await AI.ml.fit("xgboost:classifier", dataset)  # aire[xgboost]
+                      optimizer="adamw", validation_split=0.2, amp=False)  # aire[torch]
+est = await AI.ml.fit("keras:mlp", dataset, metrics=["accuracy"],
+                      callbacks=["early_stopping"])  # aire[keras]
+est = await AI.ml.fit("catboost:classifier", dataset)  # aire[catboost]
 
+ct = AI.ml.column_transformer([("num", "native:standard_scaler", ["x", "y"])])
 pipe = AI.ml.pipeline([
     ("scale", "native:standard_scaler"),
     ("clf", "simple:centroid"),
 ])
 await pipe.fit(dataset)
 
-AI.ml.catalog()  # creatable refs by backend
-cv = await AI.ml.cross_validate("simple:centroid", dataset, k=5)
-gs = await AI.ml.grid_search("simple:knn", dataset, {"k": [1, 3, 5]}, k=3)
-rs = await AI.ml.random_search("simple:knn", dataset, {"k": [1, 3, 5, 7]}, n_iter=3)
-importance = await est.feature_importance(dataset)
+AI.ml.scorers()  # accuracy, roc_auc, log_loss, …
+cv = await AI.ml.cross_validate("simple:centroid", dataset, k=5, stratified=True)
 ```
 
 ### Composable architectures (`AI.ml.arch`)

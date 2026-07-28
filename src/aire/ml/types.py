@@ -14,6 +14,8 @@ from aire.data.types import Record
 class TaskType(StrEnum):
     CLASSIFICATION = "classification"
     REGRESSION = "regression"
+    CLUSTERING = "clustering"
+    MULTI_LABEL = "multi_label"
 
 
 class FeatureVector(BaseModel):

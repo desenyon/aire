@@ -78,6 +78,7 @@ class Pipeline(Estimator):
             "keras",
             "xgboost",
             "lightgbm",
+            "catboost",
         } or (final and step.split(":")[-1] in native_estimators):
             from aire.ml.factory import create_estimator
 

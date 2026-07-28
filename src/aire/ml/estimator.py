@@ -55,13 +55,17 @@ class Estimator(abc.ABC):
     # -- shared pipeline --------------------------------------------------------------
 
     def _prepare(
-        self, dataset: Dataset, target: str
+        self, dataset: Dataset, target: str | None
     ) -> tuple[list[list[float]], list[Any], list[str]]:
         rows = [extract_features(record) for record in dataset]
         names, x = vectorize(rows)
         y: list[Any] = []
         ids: list[str] = []
         for record in dataset:
+            ids.append(record.id)
+            if target is None or self.task == TaskType.CLUSTERING:
+                y.append(record.metadata.get(target) if target else None)
+                continue
             if target not in record.metadata:
                 raise ConfigurationError(
                     f"record {record.id} is missing target field {target!r}",
@@ -69,16 +73,22 @@ class Estimator(abc.ABC):
                     context={"target": target, "record": record.id},
                 )
             y.append(record.metadata[target])
-            ids.append(record.id)
         if not x:
             raise ConfigurationError("cannot fit on an empty dataset", code="ml.empty_dataset")
         self.feature_names = names
         return x, y, ids
 
-    async def fit(self, dataset: Dataset, *, target: str = "label") -> FitReport:
+    async def fit(self, dataset: Dataset, *, target: str | None = "label") -> FitReport:
         """Fit the estimator on a dataset (records carry features + target)."""
         started = time.time()
-        x, y, _ = self._prepare(dataset, target)
+        use_target: str | None = target
+        if self.task == TaskType.CLUSTERING:
+            use_target = (
+                target
+                if target is not None and any(target in r.metadata for r in dataset)
+                else None
+            )
+        x, y, _ = self._prepare(dataset, use_target)
         metrics = await asyncio.to_thread(self._fit_sync, x, y)
         self.report = FitReport(
             backend=self.backend_name(),
@@ -121,7 +131,14 @@ class Estimator(abc.ABC):
         records = list(dataset)
         truth = [record.metadata.get(target) for record in records]
         pred_values = [p.value for p in predictions]
-        if self.task == TaskType.CLASSIFICATION:
+        if self.task == TaskType.CLUSTERING:
+            # unsupervised: report agreement with optional labels if present
+            labeled = [t for t in truth if t is not None]
+            if len(labeled) == len(truth) and truth:
+                return classification_report(truth, pred_values).as_metrics()
+            n_clusters = len({str(v) for v in pred_values})
+            return {"n_clusters": float(n_clusters), "samples": float(len(pred_values))}
+        if self.task == TaskType.CLASSIFICATION or self.task == TaskType.MULTI_LABEL:
             return classification_report(truth, pred_values).as_metrics()
         return regression_metrics(truth, pred_values)
 

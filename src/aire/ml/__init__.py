@@ -2,11 +2,13 @@
 
 aire orchestrates the ML ecosystem rather than reimplementing it: native
 zero-dependency estimators work offline, and scikit-learn / PyTorch / Keras /
-XGBoost / LightGBM / pandas plug in lazily through the same :class:`Estimator`
-contract, :class:`Transform` / :class:`Pipeline` stages, and ``backend:name`` refs.
+XGBoost / LightGBM / CatBoost / pandas / polars plug in lazily through the same
+:class:`Estimator` contract, :class:`Transform` / :class:`Pipeline` stages, and
+``backend:name`` refs.
 """
 
 from aire.ml.callbacks import EarlyStopping, HistoryCallback
+from aire.ml.compose import ColumnTransformer, FeatureUnion
 from aire.ml.estimator import Estimator
 from aire.ml.native import (
     CentroidClassifier,
@@ -35,8 +37,10 @@ from aire.ml.types import (
 
 __all__ = [
     "CentroidClassifier",
+    "ColumnTransformer",
     "EarlyStopping",
     "Estimator",
+    "FeatureUnion",
     "FeatureVector",
     "FitReport",
     "HistoryCallback",

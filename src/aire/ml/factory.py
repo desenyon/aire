@@ -23,6 +23,8 @@ def ensure_estimators(runtime: Any) -> None:
         boosting.register_xgboost(runtime)
     if not runtime.estimators.has("lightgbm"):
         boosting.register_lightgbm(runtime)
+    if not runtime.estimators.has("catboost"):
+        boosting.register_catboost(runtime)
 
 
 def create_estimator(spec: str, *, runtime: Any | None = None, **options: Any) -> Any:

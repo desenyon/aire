@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.2.8"
+version = "0.2.9"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -46,6 +46,8 @@ torch = ["torch>=2.2"]
 keras = ["keras>=3.0"]
 xgboost = ["xgboost>=2.0"]
 lightgbm = ["lightgbm>=4.0"]
+catboost = ["catboost>=1.2"]
+polars = ["polars>=0.20"]
 training = ["torch>=2.2"]
 vision = ["pillow>=10.0"]
 all = [
@@ -56,9 +58,12 @@ all = [
     "scikit-learn>=1.4",
     "pandas>=2.0",
     "pillow>=10.0",
+    "torch>=2.2",
     "keras>=3.0",
     "xgboost>=2.0",
     "lightgbm>=4.0",
+    "catboost>=1.2",
+    "polars>=0.20",
 ]
 dev = [
     "ruff>=0.5",
@@ -144,6 +149,7 @@ module = [
     "aire.ml.torch_adapter",
     "aire.ml.keras_adapter",
     "aire.ml.boosting",
+    "aire.ml.polars_bridge",
 ]
 disable_error_code = ["name-defined", "misc", "untyped-decorator"]
 

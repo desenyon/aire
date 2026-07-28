@@ -180,6 +180,54 @@ def _subset(records: list[Record], indices: list[int], name: str) -> Dataset:
     return Dataset(name=name, records=[records[i] for i in indices])
 
 
+def confusion_matrix(truth: list[Any], predictions: list[Any]) -> dict[str, Any]:
+    """Return labels + matrix counts (rows=true, cols=pred)."""
+    y_true = [str(t) for t in truth]
+    y_pred = [str(p) for p in predictions]
+    labels = sorted(set(y_true) | set(y_pred))
+    index = {label: i for i, label in enumerate(labels)}
+    matrix = [[0 for _ in labels] for _ in labels]
+    for t, p in zip(y_true, y_pred, strict=True):
+        matrix[index[t]][index[p]] += 1
+    return {"labels": labels, "matrix": matrix}
+
+
+def _stratified_kfold_indices(  # noqa: C901
+    labels: list[Any], k: int, *, seed: int = 0
+) -> list[tuple[list[int], list[int]]]:
+    """Stratified k-fold: preserve class proportions in each fold."""
+    if k < 2:
+        raise ConfigurationError("k must be >= 2", code="ml.cv_k")
+    by_class: dict[str, list[int]] = defaultdict(list)
+    for i, label in enumerate(labels):
+        by_class[str(label)].append(i)
+    rng = _LCG(seed)
+    for idxs in by_class.values():
+        for i in range(len(idxs) - 1, 0, -1):
+            j = rng.randint(0, i)
+            idxs[i], idxs[j] = idxs[j], idxs[i]
+    fold_train: list[list[int]] = [[] for _ in range(k)]
+    fold_test: list[list[int]] = [[] for _ in range(k)]
+    for idxs in by_class.values():
+        if len(idxs) < k:
+            # fall back: put all in every train, cycle test
+            for i, idx in enumerate(idxs):
+                fold_test[i % k].append(idx)
+                for f in range(k):
+                    if f != i % k:
+                        fold_train[f].append(idx)
+            continue
+        sizes = [len(idxs) // k + (1 if i < len(idxs) % k else 0) for i in range(k)]
+        start = 0
+        for f, size in enumerate(sizes):
+            test = idxs[start : start + size]
+            train = idxs[:start] + idxs[start + size :]
+            fold_test[f].extend(test)
+            fold_train[f].extend(train)
+            start += size
+    return list(zip(fold_train, fold_test, strict=True))
+
+
 async def cross_validate(
     factory: Any,
     dataset: Dataset,
@@ -188,11 +236,16 @@ async def cross_validate(
     target: str = "label",
     seed: int = 0,
     scoring: str | None = None,
+    stratified: bool = False,
 ) -> CVReport:
     """K-fold cross-validation; ``factory()`` must return a fresh Estimator."""
     started = time.time()
     records = list(dataset)
-    folds_idx = _kfold_indices(len(records), k, seed=seed)
+    if stratified:
+        labels = [record.metadata.get(target) for record in records]
+        folds_idx = _stratified_kfold_indices(labels, k, seed=seed)
+    else:
+        folds_idx = _kfold_indices(len(records), k, seed=seed)
     fold_reports: list[CVFold] = []
     for i, (train_i, test_i) in enumerate(folds_idx):
         est = factory()
@@ -200,6 +253,16 @@ async def cross_validate(
         test_ds = _subset(records, test_i, f"cv-test-{i}")
         await est.fit(train_ds, target=target)
         metrics = await est.evaluate(test_ds, target=target)
+        if scoring:
+            from aire.ml.scoring import score as _score
+
+            preds = await est.predict(list(test_ds))
+            truth = [r.metadata.get(target) for r in test_ds]
+            probs = [p.probabilities or {} for p in preds]
+            metrics = {
+                **metrics,
+                scoring: _score(scoring, truth, [p.value for p in preds], probs),
+            }
         fold_reports.append(
             CVFold(
                 fold=i,

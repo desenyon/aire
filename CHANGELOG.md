@@ -7,6 +7,28 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.2.9] — 2026-07-28
+
+Deep ML orchestration — expose the real sklearn / torch / keras surfaces under
+one aire contract (compose, train, score, catalog), plus CatBoost and Polars.
+
+### Added
+- **Sklearn depth**: large estimator/transform catalogs (clustering, NB variants,
+  GP, calibration, multi-output, encoders, text vectorizers, imputers, …);
+  `partial_fit`, `sample_weight`, native `feature_importances_` / `coef_`.
+- **Compose**: `ColumnTransformer`, `FeatureUnion` (`AI.ml.column_transformer`,
+  `AI.ml.feature_union`).
+- **Torch depth**: DataLoader, `validation_split`, AMP, `torch.compile`,
+  gradient clipping, checkpoint restore-best, softmax probabilities, richer
+  schedulers (`onecycle`, `cosine_warm`).
+- **Keras depth**: full `compile(metrics=…)`, validation_split, class_weight,
+  string/aire/keras callback mapping, predict probabilities.
+- **Selection/metrics**: scoring registry (`roc_auc`, `log_loss`,
+  `balanced_accuracy`, …), stratified CV, confusion matrix.
+- **CatBoost** (`catboost:*`) + **Polars** bridge (`AI.ml.to_polars` /
+  `from_polars`); `TaskType.CLUSTERING` / `MULTI_LABEL`.
+- Extras: `aire[catboost]`, `aire[polars]`; `aire[all]` now includes torch.
+
 ## [0.2.8] — 2026-07-28
 
 Finish the ML orchestrator: one Estimator / Transform / Pipeline contract across

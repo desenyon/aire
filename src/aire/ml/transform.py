@@ -200,13 +200,25 @@ def create_transform(spec: str, **options: Any) -> Transform:
     else:
         provider, _, name = spec.partition(":")
     if provider in ("native", "simple"):
+        if name == "column_transformer":
+            from aire.ml.compose import ColumnTransformer
+
+            return ColumnTransformer(**options)
+        if name == "feature_union":
+            from aire.ml.compose import FeatureUnion
+
+            return FeatureUnion(**options)
         try:
             return NATIVE_TRANSFORMS[name](**options)
         except KeyError:
             raise ConfigurationError(
                 f"unknown native transform {name!r}",
                 code="ml.transform_unknown",
-                context={"available": sorted(NATIVE_TRANSFORMS)},
+                context={
+                    "available": sorted(
+                        [*NATIVE_TRANSFORMS, "column_transformer", "feature_union"]
+                    )
+                },
             ) from None
     if provider == "sklearn":
         return SklearnTransform(name, **options)

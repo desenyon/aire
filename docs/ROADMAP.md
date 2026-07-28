@@ -1,6 +1,13 @@
 # aire — Roadmap
 
-## 0.2.8 (current) — ML orchestrator across ecosystems
+## 0.2.9 (current) — deep ML orchestration
+
+- [x] Sklearn compose (ColumnTransformer / FeatureUnion) + expanded zoo
+- [x] Torch trainer depth (DataLoader, val, AMP, compile, clip, proba)
+- [x] Keras compile/callbacks/metrics/validation surface
+- [x] Scoring registry, stratified CV, CatBoost, Polars bridge
+
+## 0.2.8 — ML orchestrator across ecosystems
 
 - [x] `Transform` + `Pipeline` under one Estimator contract
 - [x] Keras / XGBoost / LightGBM lazy adapters + expanded sklearn zoo

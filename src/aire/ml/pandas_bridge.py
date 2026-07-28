@@ -104,5 +104,7 @@ def available_backends() -> dict[str, bool]:
         "keras": importlib.util.find_spec("keras") is not None,
         "xgboost": importlib.util.find_spec("xgboost") is not None,
         "lightgbm": importlib.util.find_spec("lightgbm") is not None,
+        "catboost": importlib.util.find_spec("catboost") is not None,
         "pandas": importlib.util.find_spec("pandas") is not None,
+        "polars": importlib.util.find_spec("polars") is not None,
     }

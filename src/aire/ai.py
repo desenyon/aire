@@ -480,7 +480,7 @@ class _MLNamespace(_Namespace):
         """Create an estimator from a ``backend:name`` ref.
 
         Backends: ``simple:*``, ``sklearn:*``, ``torch:*``, ``keras:*``,
-        ``xgboost:*``, ``lightgbm:*``. Options flow to the estimator.
+        ``xgboost:*``, ``lightgbm:*``, ``catboost:*``. Options flow to the estimator.
         """
         from aire.ml.factory import create_estimator
 
@@ -502,6 +502,29 @@ class _MLNamespace(_Namespace):
         from aire.ml.transform import create_transform
 
         return create_transform(spec, **options)
+
+    def column_transformer(
+        self,
+        transformers: list[tuple[str, Any, list[Any]]],
+        *,
+        remainder: str = "drop",
+    ) -> Any:
+        """Column-wise transform composition (sklearn-style)."""
+        from aire.ml.compose import ColumnTransformer
+
+        return ColumnTransformer(transformers, remainder=remainder)
+
+    def feature_union(self, transformer_list: list[tuple[str, Any]]) -> Any:
+        """Concatenate outputs of multiple transforms."""
+        from aire.ml.compose import FeatureUnion
+
+        return FeatureUnion(transformer_list)
+
+    def scorers(self) -> dict[str, str]:
+        """Named scorers available for CV / search (name → direction)."""
+        from aire.ml.scoring import scorers
+
+        return scorers()
 
     async def fit(self, spec: str, dataset: Any, *, target: str = "label", **options: Any) -> Any:
         """Create + fit an estimator in one call; returns the fitted estimator."""
@@ -554,6 +577,7 @@ class _MLNamespace(_Namespace):
         out["keras"] = ["keras:mlp"]
         out["xgboost"] = ["xgboost:classifier", "xgboost:regressor"]
         out["lightgbm"] = ["lightgbm:classifier", "lightgbm:regressor"]
+        out["catboost"] = ["catboost:classifier", "catboost:regressor"]
         return out
 
     def transforms_catalog(self) -> dict[str, list[str]]:
@@ -563,7 +587,12 @@ class _MLNamespace(_Namespace):
         from aire.ml.transform import NATIVE_TRANSFORMS
 
         out: dict[str, list[str]] = {
-            "native": [f"native:{n}" for n in sorted(NATIVE_TRANSFORMS)],
+            "native": [
+                f"native:{n}"
+                for n in sorted(
+                    [*NATIVE_TRANSFORMS, "column_transformer", "feature_union"]
+                )
+            ],
         }
         if available_backends().get("sklearn"):
             out["sklearn"] = [f"sklearn:{n}" for n in sorted(_SKLEARN_TRANSFORMS)]
@@ -583,6 +612,8 @@ class _MLNamespace(_Namespace):
         k: int = 5,
         target: str = "label",
         seed: int = 0,
+        scoring: str | None = None,
+        stratified: bool = False,
         **options: Any,
     ) -> Any:
         """K-fold CV for an estimator ref; returns :class:`~aire.ml.metrics.CVReport`."""
@@ -591,7 +622,15 @@ class _MLNamespace(_Namespace):
         def factory() -> Any:
             return self.create(spec, **options)
 
-        return await _cv(factory, dataset, k=k, target=target, seed=seed)
+        return await _cv(
+            factory,
+            dataset,
+            k=k,
+            target=target,
+            seed=seed,
+            scoring=scoring,
+            stratified=stratified,
+        )
 
     def cross_validate_sync(self, spec: str, dataset: Any, **options: Any) -> Any:
         return run_sync(self.cross_validate(spec, dataset, **options))
@@ -690,8 +729,21 @@ class _MLNamespace(_Namespace):
 
         return frame_to_dataset(frame, **options)
 
+    def to_polars(self, dataset: Any, **options: Any) -> Any:
+        """Dataset → polars DataFrame (requires polars)."""
+        from aire.ml.polars_bridge import dataset_to_frame
+
+        return dataset_to_frame(dataset, **options)
+
+    def from_polars(self, frame: Any, **options: Any) -> Any:
+        """polars DataFrame → Dataset (requires polars)."""
+        from aire.ml.polars_bridge import frame_to_dataset
+
+        return frame_to_dataset(frame, **options)
+
     def describe(self) -> dict[str, Any]:
         from aire.ml.pandas_bridge import available_backends
+        from aire.ml.scoring import scorers
 
         return {
             "kind": "ml",
@@ -703,21 +755,35 @@ class _MLNamespace(_Namespace):
             "backends": available_backends(),
             "estimators": self.catalog(),
             "transforms": self.transforms_catalog(),
+            "scorers": scorers(),
+            "tasks": ["classification", "regression", "clustering", "multi_label"],
             "feature_convention": "record.metadata['features'] → numeric metadata → text-derived",
             "metrics": [
                 "accuracy",
                 "precision/recall/f1 (macro+micro+per-class)",
+                "balanced_accuracy",
+                "roc_auc",
+                "log_loss",
                 "mae",
                 "rmse",
                 "r2",
+                "confusion_matrix",
                 "permutation_importance",
             ],
-            "selection": ["cross_validate", "grid_search", "random_search"],
+            "selection": [
+                "cross_validate (stratified=)",
+                "grid_search",
+                "random_search",
+            ],
             "orchestration": [
                 "AI.ml.pipeline",
                 "AI.ml.transform",
+                "AI.ml.column_transformer",
+                "AI.ml.feature_union",
                 "AI.ml.train",
-                "callbacks (EarlyStopping, History)",
+                "callbacks (EarlyStopping, History, keras zoo)",
+                "torch: amp/compile/grad_clip/DataLoader/val_split",
+                "keras: compile(metrics)/callbacks/validation_split",
             ],
             "arch": "AI.ml.arch — composable attention/ffn/norm/residual blocks",
             "optim": "AI.ml.optim — sgd/adam/adamw/rmsprop/adagrad",
