@@ -81,6 +81,7 @@ class AgentResult(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     run_id: str = ""
     error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def ok(self) -> bool:

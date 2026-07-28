@@ -100,6 +100,18 @@ class _ModelsNamespace(_Namespace):
         return ModelRouter(resolved, objective=objective, **kwargs)
 
     def cache(self, model: Model, **kwargs: Any) -> Any:
+        backend = kwargs.pop("backend", "memory")
+        if backend == "redis":
+            from aire.optimization.redis_cache import RedisCachedModel
+
+            return RedisCachedModel(model, **kwargs)
+        if kwargs.get("embedder") is not None or kwargs.pop("semantic", False):
+            from aire.optimization.cache import SemanticCachedModel
+
+            embedder = kwargs.pop("embedder", None)
+            if embedder is None:
+                embedder = self.embedder_sync()
+            return SemanticCachedModel(model, embedder, **kwargs)
         from aire.optimization.cache import CachedModel
 
         return CachedModel(model, **kwargs)
@@ -232,28 +244,47 @@ class _AgentsNamespace(_Namespace):
             )
         return Team(members, supervisor, **options)
 
+    def swarm(self, agents: list[Agent], goal: str, **options: Any) -> Any:
+        from aire.agents.topologies import swarm
+
+        return run_sync(swarm(agents, goal, **options))
+
+    def debate(self, agents: list[Agent], goal: str, **options: Any) -> Any:
+        from aire.agents.topologies import debate
+
+        return run_sync(debate(agents, goal, **options))
+
+    def topologies(self) -> Any:
+        from aire.agents import topologies
+
+        return topologies
+
     def approver(self, kind: str = "rule", **options: Any) -> Any:
         """Build an approval policy: "rule" (side-effect thresholds) or
         "interactive" (human-in-the-loop stdin prompts)."""
         from aire.agents.approvals import InteractiveApprover, RuleApprover
         from aire.core.errors import ConfigurationError
+        from aire.workflows.hitl import NodeInteractiveApprover
 
         if kind == "rule":
             return RuleApprover(**options)
         if kind == "interactive":
             return InteractiveApprover(**options)
+        if kind in {"workflow", "node"}:
+            return NodeInteractiveApprover(**options)
         raise ConfigurationError(
             f"unknown approver kind {kind!r}",
             code="agents.approver_unknown",
-            context={"available": ["rule", "interactive"]},
+            context={"available": ["rule", "interactive", "workflow"]},
         )
 
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "agents",
             "memory": ["buffer", "jsonl:<path>", "long-term (AI.memory)"],
-            "composition": ["agent.as_tool()", "AI.agents.team(...)"],
-            "approvers": ["rule", "interactive"],
+            "composition": ["agent.as_tool()", "AI.agents.team(...)", "topologies"],
+            "approvers": ["rule", "interactive", "workflow"],
+            "topologies": ["swarm", "debate", "auction", "blackboard"],
         }
 
 
@@ -304,7 +335,14 @@ class _ObserveNamespace(_Namespace):
         return {
             "tracer": runtime.tracer.describe() if runtime.tracer else None,
             "events": len(runtime.events.history),
+            "otlp": "aire.observability.otlp.OTLPExporter",
+            "otel_sdk": "aire.observability.otel_sdk.SdkBridgeExporter",
         }
+
+    def otel_exporter(self, endpoint: str | None = None, **options: Any) -> Any:
+        from aire.observability.otel_sdk import create_exporter
+
+        return create_exporter(endpoint, **options)
 
 
 class _DeployNamespace(_Namespace):
@@ -330,6 +368,30 @@ class _WorkflowNamespace(_Namespace):
         from aire.workflows.graph import Workflow
 
         return Workflow(name, **options)
+
+    def hitl_node(
+        self,
+        workflow: Workflow,
+        name: str,
+        fn: Any,
+        **options: Any,
+    ) -> Workflow:
+        """Add a node that requires human approval before running."""
+        from aire.workflows.hitl import hitl_node
+
+        return hitl_node(workflow, name, fn, **options)
+
+    def interactive_approver(self, **options: Any) -> Any:
+        from aire.workflows.hitl import NodeInteractiveApprover
+
+        return NodeInteractiveApprover(**options)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "workflows",
+            "features": ["graph", "checkpoints", "hitl", "parallel", "retries"],
+            "hitl": ["hitl_node", "interactive_approver"],
+        }
 
 
 class _GatewayNamespace(_Namespace):
@@ -389,6 +451,7 @@ class _GatewayNamespace(_Namespace):
                 "quality_under_budget",
                 "balanced",
             ],
+            "semantic_cache": True,
             "endpoints": self.endpoints(),
         }
 
@@ -410,14 +473,24 @@ class _GraphNamespace(_Namespace):
             from aire.graph.store import register
 
             register(runtime)
+            if ref.provider == "neo4j":
+                from aire.graph.neo4j_store import register as register_neo4j
+
+                register_neo4j(runtime)
         return runtime.graph_stores.create(ref.provider, name=ref.name, runtime=runtime, **options)
+
+    def communities(self, entities: Any, relations: Any, **options: Any) -> Any:
+        from aire.graph.community import detect_communities
+
+        return detect_communities(entities, relations, **options)
 
     def describe(self) -> dict[str, Any]:
         runtime = self._rt()
         return {
             "kind": "graph",
-            "stores": runtime.graph_stores.names() or ["sqlite"],
+            "stores": runtime.graph_stores.names() or ["sqlite", "neo4j"],
             "extractors": ["lexical", "model"],
+            "communities": ["label_propagation"],
         }
 
 
@@ -908,6 +981,36 @@ class _TrainingNamespace(_Namespace):
         config = options.pop("config", None) or TrainingConfig(**options)
         return FunctionTrainer(step, config)
 
+    def lora(self, model_name: str = "gpt2", **options: Any) -> Any:
+        from aire.training.lora import create_lora
+
+        return create_lora(model_name, **options)
+
+    def lm(self, architecture: Any | None = None, **options: Any) -> Any:
+        from aire.training.lm_trainer import create_lm_trainer
+
+        return create_lm_trainer(architecture, **options)
+
+    async def hpo(
+        self,
+        objective: Any,
+        space: Any,
+        **options: Any,
+    ) -> Any:
+        from aire.training.hpo import random_search
+
+        return await random_search(objective, space, **options)
+
+    def hpo_sync(self, objective: Any, space: Any, **options: Any) -> Any:
+        return run_sync(self.hpo(objective, space, **options))
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "training",
+            "trainers": ["function", "lora", "lm"],
+            "hpo": ["random", "optuna (optional)"],
+        }
+
 
 class _SafetyNamespace(_Namespace):
     def guardrails(self, *names: str) -> Any:
@@ -931,6 +1034,105 @@ class _SafetyNamespace(_Namespace):
 
         return redact(text, **options)
 
+    def policy(self, rules: list[Any] | None = None, **options: Any) -> Any:
+        from aire.safety.policy import PolicyEngine, PolicyRule, default_engine
+
+        if rules is None and not options:
+            return default_engine()
+        parsed = [
+            r if isinstance(r, PolicyRule) else PolicyRule.model_validate(r) for r in (rules or [])
+        ]
+        return PolicyEngine(parsed, **options)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "safety",
+            "guardrails": ["pii", "injection", "secret"],
+            "policy": ["ApprovalPolicy", "PolicyEngine"],
+        }
+
+
+class _SkillsNamespace(_Namespace):
+    def registry(self) -> Any:
+        from aire.agents.skills import default_skills
+
+        return default_skills()
+
+    def get(self, name: str) -> Any:
+        return self.registry().get(name)
+
+    def load(self, path: str | Any) -> Any:
+        return self.registry().load_dir(path)
+
+    def register(self, skill: Any, **options: Any) -> Any:
+        return self.registry().register(skill, **options)
+
+    def describe(self) -> dict[str, Any]:
+        return dict(self.registry().describe())
+
+
+class _ScheduleNamespace(_Namespace):
+    def create(self) -> Any:
+        from aire.schedule import Scheduler
+
+        return Scheduler()
+
+    def every(self, interval_seconds: float, workflow: Any, **options: Any) -> Any:
+        sched = self.create()
+        return sched.every(interval_seconds, workflow, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.schedule import describe
+
+        return describe()
+
+
+class _WorkersNamespace(_Namespace):
+    def create(self, kind: str = "in_process", **options: Any) -> Any:
+        from aire.workers import create_worker
+
+        return create_worker(kind, **options)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "workers",
+            "backends": ["in_process", "file"],
+        }
+
+
+class _RecipesNamespace(_Namespace):
+    def create(self, name: str, **options: Any) -> Any:
+        from aire.recipes import recipe
+
+        return recipe(name, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.recipes import describe
+
+        return describe()
+
+
+class _ProjectNamespace(_Namespace):
+    def lock(self, project: str, **refs: Any) -> Any:
+        from aire.project.lock import create_lock
+
+        return create_lock(project, **refs)
+
+    def load_lock(self, path: str | Any | None = None) -> Any:
+        from aire.project.lock import load_lock
+
+        return load_lock(path)
+
+    def write_lock(self, lock: Any, path: str | Any | None = None) -> Any:
+        from aire.project.lock import write_lock
+
+        return write_lock(lock, path)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.project.lock import describe
+
+        return describe()
+
 
 class AI:
     """Unified entry point to the aire library.
@@ -953,6 +1155,11 @@ class AI:
     training = _TrainingNamespace()
     ml = _MLNamespace()
     safety = _SafetyNamespace()
+    skills = _SkillsNamespace()
+    schedule = _ScheduleNamespace()
+    workers = _WorkersNamespace()
+    recipes = _RecipesNamespace()
+    locks = _ProjectNamespace()
 
     # -- runtime -----------------------------------------------------------------
 
@@ -989,6 +1196,22 @@ class AI:
     @classmethod
     def workflow(cls, name: str = "workflow", **options: Any) -> Workflow:
         return cls.workflows.create(name, **options)
+
+    # -- recipes ------------------------------------------------------------------------
+
+    @classmethod
+    def recipe(cls, name: str, **options: Any) -> Any:
+        """One-call scaffold: ``rag`` | ``agent`` | ``finetune`` | ``gateway``."""
+        return cls.recipes.create(name, **options)
+
+    # -- topologies ---------------------------------------------------------------------
+
+    @classmethod
+    def topologies(cls) -> Any:
+        """Multi-agent topology helpers (swarm, debate, auction, blackboard)."""
+        from aire.agents import topologies
+
+        return topologies
 
     # -- tools --------------------------------------------------------------------------
 
@@ -1077,6 +1300,15 @@ class AI:
         )
         return SyntheticGenerator(resolved)
 
+    # -- ui -----------------------------------------------------------------------------
+
+    @classmethod
+    def ui(cls, **options: Any) -> Any:
+        """Minimal local FastAPI UI for traces/costs (requires aire[serve])."""
+        from aire.ui import create_ui_app
+
+        return create_ui_app(runtime=default_runtime(), **options)
+
     # -- introspection ---------------------------------------------------------------------
 
     @classmethod
@@ -1096,6 +1328,7 @@ class AI:
                 "memory",
                 "mcp",
                 "agents",
+                "skills",
                 "workflows",
                 "training",
                 "ml",
@@ -1103,6 +1336,10 @@ class AI:
                 "deploy",
                 "gateway",
                 "safety",
+                "schedule",
+                "workers",
+                "recipes",
+                "locks",
                 "synthetic",
             ],
         }

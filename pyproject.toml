@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.2.9"
+version = "0.3.0"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -50,6 +50,13 @@ catboost = ["catboost>=1.2"]
 polars = ["polars>=0.20"]
 training = ["torch>=2.2"]
 vision = ["pillow>=10.0"]
+# 0.3 platform extras (all lazy)
+pgvector = ["psycopg[binary]>=3.1"]
+neo4j = ["neo4j>=5.14"]
+redis = ["redis>=5.0"]
+peft = ["peft>=0.10", "transformers>=4.38"]
+optuna = ["optuna>=3.5"]
+pypdf = ["pypdf>=4.0"]
 all = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -64,6 +71,13 @@ all = [
     "lightgbm>=4.0",
     "catboost>=1.2",
     "polars>=0.20",
+    "psycopg[binary]>=3.1",
+    "neo4j>=5.14",
+    "redis>=5.0",
+    "peft>=0.10",
+    "transformers>=4.38",
+    "optuna>=3.5",
+    "pypdf>=4.0",
 ]
 dev = [
     "ruff>=0.5",
@@ -119,6 +133,12 @@ ignore = [
 "*/__init__.py" = ["F401"]
 # typer.Option in argument defaults is the idiomatic typer pattern
 "src/aire/cli/**" = ["B008"]
+# table names are validated constructor options, not user SQL
+"src/aire/rag/pgvector.py" = ["S608"]
+"src/aire/graph/neo4j_store.py" = ["S608"]
+# intentional PRNG for HPO / prompt search (not crypto)
+"src/aire/training/hpo.py" = ["S311"]
+"src/aire/optimization/prompt_opt.py" = ["S311", "S110"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -135,7 +155,7 @@ ignore_missing_imports = true
 
 # fastapi is an optional dependency; its decorators are untyped when absent
 [[tool.mypy.overrides]]
-module = ["aire.deployment.fastapi_app", "aire.deployment.gateway"]
+module = ["aire.deployment.fastapi_app", "aire.deployment.gateway", "aire.ui"]
 disable_error_code = ["untyped-decorator"]
 
 # torch/keras/boosting are optional; adapters import them lazily
@@ -150,6 +170,11 @@ module = [
     "aire.ml.keras_adapter",
     "aire.ml.boosting",
     "aire.ml.polars_bridge",
+    "aire.training.lora",
+    "aire.training.lm_trainer",
+    "aire.graph.neo4j_store",
+    "aire.optimization.redis_cache",
+    "aire.docs.pdf",
 ]
 disable_error_code = ["name-defined", "misc", "untyped-decorator"]
 

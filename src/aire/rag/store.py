@@ -134,7 +134,18 @@ class LocalVectorStore(VectorStore):
     def _matches(self, chunk: Chunk, filter: dict[str, Any] | None) -> bool:
         if not filter:
             return True
-        return all(chunk.metadata.get(key) == value for key, value in filter.items())
+        from aire.rag.acl import matches_acl
+
+        acl = filter.get("__acl__") if isinstance(filter.get("__acl__"), dict) else None
+        plain = {k: v for k, v in filter.items() if k != "__acl__"}
+        if plain and not all(chunk.metadata.get(key) == value for key, value in plain.items()):
+            return False
+        return not (acl is not None and not matches_acl(chunk.metadata, acl))
+
+    async def delete_by_document(self, document_id: str) -> int:
+        """Incremental index: remove all chunks for a document id."""
+        ids = [cid for cid, c in self._chunks.items() if c.document_id == document_id]
+        return await self.delete(ids)
 
     async def search(
         self,

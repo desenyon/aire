@@ -7,6 +7,33 @@ version (post-1.0), new subsystems and features bump the minor version, and
 fixes/docs bump the patch version. **This file and the README are updated with
 every major/minor release.**
 
+## [0.3.0] — 2026-07-28
+
+Agent-operable AI platform: retrieval/ops depth, training hooks, multimodal
+stubs, workers/schedulers, recipes, and ops UI — mostly offline-capable with
+lazy optional extras.
+
+### Added
+- **GraphRAG communities**: offline label-propagation clustering + lexical
+  summaries (`aire.graph.community`); lazy **Neo4j** GraphStore (`aire[neo4j]`).
+- **HITL workflows**: `requires_approval` + `AI.workflows.hitl_node` /
+  `NodeInteractiveApprover`.
+- **Training**: PEFT/LoRA interface (`aire[peft]`), HPO random search + Optuna
+  bridge (`aire[optuna]`), toy/torch LM trainer for `arch.compose` stacks.
+- **Prompt optimization** eval-guided loop; **Redis** exact cache (`aire[redis]`);
+  gateway **semantic cache**.
+- **PDF** pipeline (`aire[pypdf]`), **voice agent** (ASR→agent→TTS stub),
+  **video summarize** stub/pipeline.
+- **Workers** (in-process + file queue), **scheduler** (interval; APScheduler
+  optional), **OTel SDK bridge**, `aire doctor --live`, minimal **FastAPI UI**.
+- **Project lock** (`aire.lock`), deepened **PolicyEngine**, **recipes**
+  (`AI.recipe`), `aire scaffold`, facade namespaces: skills / schedule /
+  workers / recipes / locks / topologies.
+
+### Extras
+- `pgvector`, `neo4j`, `redis`, `peft`, `optuna`, `pypdf` (also folded into
+  `aire[all]`).
+
 ## [0.2.9] — 2026-07-28
 
 Deep ML orchestration — expose the real sklearn / torch / keras surfaces under

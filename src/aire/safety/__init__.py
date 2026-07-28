@@ -9,7 +9,7 @@ from aire.safety.guardrails import (
     SecretGuardrail,
 )
 from aire.safety.patterns import Match, detect_injection, detect_pii, detect_secrets
-from aire.safety.policy import ApprovalPolicy
+from aire.safety.policy import ApprovalPolicy, PolicyEngine, PolicyRule, default_engine
 from aire.safety.redaction import redact, redact_pii, redact_secrets
 
 __all__ = [
@@ -20,7 +20,10 @@ __all__ = [
     "InjectionGuardrail",
     "Match",
     "PIIGuardrail",
+    "PolicyEngine",
+    "PolicyRule",
     "SecretGuardrail",
+    "default_engine",
     "detect_injection",
     "detect_pii",
     "detect_secrets",

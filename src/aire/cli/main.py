@@ -280,12 +280,58 @@ def plugins() -> None:
     )
 
 
-@app.command()
-def doctor() -> None:
-    """Check Python, dependencies, credentials, providers and configuration."""
-    import importlib.util
+def _doctor_live_checks(check: Any) -> None:
+    """Connectivity probes used by ``aire doctor --live``."""
+    import os
 
     from aire.ai import AI
+    from aire.models.base import run_sync
+
+    for spec in ("mock:echo",):
+        try:
+            model = AI.models.use_sync(spec)
+            text = run_generate(model, "ping")
+            check(f"live:{spec}", bool(text), text[:40])
+        except Exception as exc:
+            check(f"live:{spec}", False, f"{type(exc).__name__}: {exc}")
+    try:
+        emb = AI.models.embedder_sync("local:hashing")
+        vec = run_sync(emb.embed_one("ping"))
+        check("live:local:hashing", bool(vec), f"dim={len(vec)}")
+    except Exception as exc:
+        check("live:local:hashing", False, f"{type(exc).__name__}: {exc}")
+    for env_var, spec in (
+        ("OPENAI_API_KEY", "openai:gpt-4o-mini"),
+        ("ANTHROPIC_API_KEY", "anthropic:claude-sonnet-4-5"),
+    ):
+        if not os.environ.get(env_var):
+            check(f"live:{spec}", True, "skipped (no credentials)")
+            continue
+        try:
+            model = AI.models.use_sync(spec)
+            health = run_sync(model.health())
+            ok = getattr(health, "ok", None)
+            if ok is None:
+                ok = getattr(health, "status", "ok") == "ok"
+            check(f"live:{spec}", bool(ok), str(health))
+        except Exception as exc:
+            check(f"live:{spec}", False, f"{type(exc).__name__}: {exc}")
+
+
+@app.command()
+def doctor(
+    live: bool = typer.Option(
+        False,
+        "--live",
+        help="Also probe provider connectivity (may use network/credentials).",
+    ),
+) -> None:
+    """Check Python, dependencies, credentials, providers and configuration."""
+    import importlib.util
+    import os
+
+    from aire.ai import AI
+    from aire.models.builtin import EchoModel, HashingEmbedder
 
     checks: list[dict[str, Any]] = []
 
@@ -302,8 +348,6 @@ def doctor() -> None:
     )
 
     runtime = AI.runtime()
-    import os
-
     for env_var, provider in (
         ("OPENAI_API_KEY", "openai"),
         ("ANTHROPIC_API_KEY", "anthropic"),
@@ -314,20 +358,79 @@ def doctor() -> None:
         )
         check(f"credentials:{provider}", present, env_var if not present else "configured")
 
-    from aire.models.builtin import EchoModel, HashingEmbedder
-
     check("provider:mock", True, EchoModel().info.ref)
     check("embedder:local", True, f"dimension={HashingEmbedder().dimension}")
     check("config:loaded", True, f"project={runtime.settings.project}")
+
+    if live:
+        _doctor_live_checks(check)
 
     failures = [
         c
         for c in checks
         if not c["ok"] and "optional" not in c["check"] and not c["check"].startswith("credentials")
     ]
-    _echo_json({"checks": checks, "healthy": not failures})
+    _echo_json({"checks": checks, "healthy": not failures, "live": live})
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def scaffold(
+    kind: str = typer.Argument("rag", help="rag|agent|finetune|gateway|workflow"),
+    name: str = typer.Option("demo", "--name", "-n"),
+    directory: Path = typer.Option(Path("."), "--dir", "-d"),
+) -> None:
+    """Scaffold a recipe-based project snippet into a directory."""
+    root = directory / name
+    root.mkdir(parents=True, exist_ok=True)
+    kind_key = kind.strip().lower()
+    templates: dict[str, str] = {
+        "rag": (
+            "from aire import AI\n\n"
+            "stack = AI.recipe('rag')\n"
+            "knowledge = stack['knowledge']\n"
+            "# knowledge.index('./docs')\n"
+            "# print(knowledge.ask('What is this?').text)\n"
+        ),
+        "agent": (
+            "from aire import AI\n\n"
+            "stack = AI.recipe('agent')\n"
+            "agent = stack['agent']\n"
+            "print(agent.run_sync('Say hello').output)\n"
+        ),
+        "finetune": (
+            "from aire import AI\n\n"
+            "stack = AI.recipe('finetune', backend='lm')\n"
+            "print(stack['trainer'].describe())\n"
+        ),
+        "gateway": (
+            "from aire import AI\n\n"
+            "app = AI.recipe('gateway')['app']\n"
+            "# uvicorn.run(app, host='127.0.0.1', port=4000)\n"
+        ),
+        "workflow": (
+            "from aire import AI\n\n"
+            "wf = AI.workflow('demo')\n"
+            "AI.workflows.hitl_node(wf, 'approve', lambda x, ctx: x)\n"
+            "wf.approver = AI.workflows.interactive_approver(auto={'approve': True})\n"
+            "print(wf)\n"
+        ),
+    }
+    if kind_key not in templates:
+        typer.secho(
+            f"unknown scaffold kind {kind!r}; choose from {sorted(templates)}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    (root / "main.py").write_text(templates[kind_key])
+    (root / "aire.yaml").write_text(f"project: {name}\nmodel:\n  ref: mock:echo\n")
+    from aire.project.lock import create_lock, write_lock
+
+    write_lock(create_lock(name, model="mock:echo", embedder="local:hashing"), root / "aire.lock")
+    typer.secho(f"scaffolded {kind_key} project in {root}", fg=typer.colors.GREEN)
+    typer.echo(f"next: cd {root} && python main.py")
 
 
 @app.command()

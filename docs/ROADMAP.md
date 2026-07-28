@@ -1,6 +1,24 @@
 # aire — Roadmap
 
-## 0.2.9 (current) — deep ML orchestration
+## 0.3.0 (current) — agent-operable AI platform
+
+- [x] Query rewriting + context compression in RAG
+- [x] Incremental index updates and access-control filters
+- [x] GraphRAG community summaries (hierarchical graph clustering)
+- [x] Graph database adapters (Neo4j) via the GraphStore interface
+- [x] Human-approval workflow node (interactive approver)
+- [x] OpenTelemetry SDK exporter bridge
+- [x] `aire doctor` provider connectivity checks (live mode)
+- [x] Prompt optimization loops (evaluation-guided)
+- [x] Postgres/pgvector store, Redis cache backend
+- [x] Gateway: semantic cache in front of routes
+- [x] PEFT/LoRA interface + HPO + LM trainer hooks
+- [x] PDF / voice / video pipelines (lazy / stub where needed)
+- [x] Workflow workers + scheduled execution
+- [x] Minimal local web UI for runs/traces/costs
+- [x] Project lock, policy engine, recipes, `aire scaffold`
+
+## 0.2.9 — deep ML orchestration
 
 - [x] Sklearn compose (ColumnTransformer / FeatureUnion) + expanded zoo
 - [x] Torch trainer depth (DataLoader, val, AMP, compile, clip, proba)
@@ -104,40 +122,27 @@ with citations → evaluate → trace → deploy, all offline-capable.
 - [x] Test suites: unit, contract, integration, security, performance
 - [x] Quality gates: ruff, mypy --strict, pytest all green
 
-## 0.3 — retrieval & ops depth
+## 0.4 — training & optimization (partially pulled into 0.3)
 
-- [ ] Query rewriting + context compression in RAG
-- [ ] Incremental index updates and access-control filters
-- [ ] GraphRAG community summaries (hierarchical graph clustering)
-- [ ] Graph database adapters (Neo4j) via the GraphStore interface
-- [ ] Human-approval workflow node (interactive approver)
-- [ ] OpenTelemetry SDK exporter bridge
-- [ ] `aire doctor` provider connectivity checks (live mode)
-- [ ] Prompt optimization loops (evaluation-guided)
-- [ ] Postgres/pgvector store, Redis cache backend
-- [ ] Gateway: semantic cache in front of routes, response logging sinks
-
-## 0.4 — training & optimization
-
-- [ ] PyTorch trainer adapter (lazy `aire[training]`)
-- [ ] PEFT/LoRA fine-tuning interface, checkpoint resume
-- [ ] Hyperparameter search orchestration
+- [x] PEFT/LoRA fine-tuning interface (lazy); deeper HF Trainer resume later
+- [x] Hyperparameter search orchestration (random + Optuna)
 - [ ] Quantization/distillation adapter interfaces
 - [ ] Cost-optimization policies in the model router
+- [x] Toy/torch LM trainer for composed architectures
 
-## 0.5 — multimodal depth
+## 0.5 — multimodal depth (stubs in 0.3; deepen later)
 
-- [ ] Document understanding pipeline (PDF → structured)
-- [ ] Voice agent reference pipeline (ASR → agent → TTS)
+- [x] Document understanding pipeline (PDF → text/pages via pypdf)
+- [x] Voice agent reference pipeline (ASR → agent → TTS stub)
 - [ ] Image generation + object detection adapters
-- [ ] Video summarization pipeline
+- [x] Video summarization pipeline (model-delegated / offline stub)
 
-## 0.6 — scale
+## 0.6 — scale (basics in 0.3)
 
 - [x] Multi-agent communication protocol (agent-as-tool standard) — shipped in 0.2
-- [ ] Distributed workflow workers
-- [ ] Scheduled/event-driven workflow execution
-- [ ] Local web UI for runs, traces, costs, evaluations
+- [x] In-process + file-queue workflow workers (distributed later)
+- [x] Scheduled/event-driven workflow execution (interval + optional APScheduler)
+- [x] Local web UI for runs, traces, costs
 
 ## 1.0 — stability
 

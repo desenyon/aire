@@ -90,6 +90,9 @@ class Gateway:
         circuit_breaker: bool = True,
         failure_threshold: int = 3,
         cooldown_seconds: float = 30.0,
+        semantic_cache: bool = False,
+        semantic_threshold: float = 0.95,
+        semantic_embedder: str | EmbeddingModel | None = None,
     ) -> None:
         if routing not in ("first", "round_robin"):
             raise ConfigurationError(
@@ -109,6 +112,15 @@ class Gateway:
         self.circuit_breaker = circuit_breaker
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
+        self.semantic_cache = semantic_cache
+        self.semantic_threshold = semantic_threshold
+        self._semantic_embedder_spec = semantic_embedder
+        self._semantic_embedder: EmbeddingModel | None = (
+            semantic_embedder if isinstance(semantic_embedder, EmbeddingModel) else None
+        )
+        self._semantic_entries: list[tuple[str, list[float], str, GenerationResult]] = []
+        self.semantic_hits = 0
+        self.semantic_misses = 0
         self._round_robin: dict[str, int] = defaultdict(int)
         self._routers: dict[str, Model] = {}
         self._circuits: dict[str, dict[str, Any]] = {}
@@ -222,6 +234,9 @@ class Gateway:
         self, public: str, request: GenerationRequest
     ) -> tuple[str, GenerationResult]:
         """Generate with fallback through the route's candidate chain."""
+        cached = await self._semantic_lookup(public, request)
+        if cached is not None:
+            return cached
         chain = await self._chat_chain(public)
         last_error: Exception | None = None
         for ref, model in chain if self.fallback else chain[:1]:
@@ -232,6 +247,7 @@ class Gateway:
                 last_error = exc
                 continue
             self._record_success(public, ref, result.usage.cost_usd)
+            await self._semantic_store(public, request, result)
             return ref, result
         assert last_error is not None
         if isinstance(last_error, AireError):
@@ -241,6 +257,52 @@ class Gateway:
             f"all candidates for {public!r} failed; last error: "
             f"{type(last_error).__name__}: {last_error}",
         ) from last_error
+
+    async def _ensure_semantic_embedder(self) -> EmbeddingModel | None:
+        if not self.semantic_cache:
+            return None
+        if self._semantic_embedder is not None:
+            return self._semantic_embedder
+        spec = self._semantic_embedder_spec
+        if isinstance(spec, str) or spec is None:
+            self._semantic_embedder = await self._models.embedder(spec)
+        return self._semantic_embedder
+
+    async def _semantic_lookup(
+        self, public: str, request: GenerationRequest
+    ) -> tuple[str, GenerationResult] | None:
+        embedder = await self._ensure_semantic_embedder()
+        if embedder is None:
+            return None
+        from aire.optimization.cache import _params_signature
+        from aire.rag.store import cosine_similarity
+
+        prompt = "\n".join(m.text_content for m in request.messages)
+        signature = f"{public}|{_params_signature(request)}"
+        vector = await embedder.embed_one(prompt)
+        for cached_sig, cached_vec, cached_ref, result in self._semantic_entries:
+            if cached_sig != signature:
+                continue
+            if cosine_similarity(vector, cached_vec) >= self.semantic_threshold:
+                self.semantic_hits += 1
+                return cached_ref, result.model_copy(deep=True)
+        self.semantic_misses += 1
+        return None
+
+    async def _semantic_store(
+        self, public: str, request: GenerationRequest, result: GenerationResult
+    ) -> None:
+        embedder = await self._ensure_semantic_embedder()
+        if embedder is None:
+            return
+        from aire.optimization.cache import _params_signature
+
+        prompt = "\n".join(m.text_content for m in request.messages)
+        signature = f"{public}|{_params_signature(request)}"
+        vector = await embedder.embed_one(prompt)
+        if len(self._semantic_entries) >= 1024:
+            self._semantic_entries.pop(0)
+        self._semantic_entries.append((signature, vector, public, result.model_copy(deep=True)))
 
     async def stream(
         self, public: str, request: GenerationRequest
@@ -333,6 +395,9 @@ def create_gateway(
     rate_limit_per_minute: int | None = None,
     metrics: Metrics | None = None,
     title: str = "aire gateway",
+    semantic_cache: bool = False,
+    semantic_threshold: float = 0.95,
+    semantic_embedder: str | EmbeddingModel | None = None,
 ) -> Any:
     """Build an OpenAI-compatible gateway app. Requires ``pip install aire[serve]``."""
     if FastAPI is None:
@@ -358,6 +423,9 @@ def create_gateway(
         circuit_breaker=circuit_breaker,
         failure_threshold=failure_threshold,
         cooldown_seconds=cooldown_seconds,
+        semantic_cache=semantic_cache,
+        semantic_threshold=semantic_threshold,
+        semantic_embedder=semantic_embedder,
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
     log = _make_request_logger(request_log)
