@@ -60,8 +60,44 @@ class CachedModel(Model):
         return result
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        """Stream from the inner model, then cache the full result.
+
+        Cache lookup on stream hits replays as a single chunk. Streaming does
+        not partially cache mid-flight.
+        """
+        key = _request_key(request, self.inner.info.ref)
+        now = time.time()
+        if key in self._cache:
+            created, result = self._cache[key]
+            if self.ttl_seconds is None or now - created < self.ttl_seconds:
+                self.hits += 1
+                yield GenerationChunk(
+                    text=result.text, finish_reason=result.finish_reason, usage=result.usage
+                )
+                return
+            del self._cache[key]
+        self.misses += 1
+        pieces: list[str] = []
+        finish: str | None = None
+        last_usage = None
         async for chunk in self.inner.stream(request):
+            if chunk.text:
+                pieces.append(chunk.text)
+            if chunk.finish_reason:
+                finish = chunk.finish_reason
+            if chunk.usage is not None:
+                last_usage = chunk.usage
             yield chunk
+        text = "".join(pieces)
+        result = GenerationResult.text_result(
+            text, model=self.inner.info.ref, usage=last_usage
+        )
+        if finish:
+            result = result.model_copy(update={"finish_reason": finish})
+        if len(self._cache) >= self.max_entries:
+            oldest = min(self._cache, key=lambda k: self._cache[k][0])
+            del self._cache[oldest]
+        self._cache[key] = (now, result.model_copy(deep=True))
 
     async def health(self) -> HealthStatus:
         return await self.inner.health()
@@ -128,6 +164,45 @@ class SemanticCachedModel(Model):
             self._entries.pop(0)
         self._entries.append((signature, vector, prompt, result.model_copy(deep=True)))
         return result
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        """Stream then cache the full completion; hits replay as one chunk.
+
+        Semantic + stream caching only stores after the stream completes.
+        """
+        prompt = "\n".join(m.text_content for m in request.messages)
+        signature = _params_signature(request)
+        vector = await self.embedder.embed_one(prompt)
+        for cached_signature, cached_vector, _cached_prompt, result in self._entries:
+            if cached_signature != signature:
+                continue
+            if cosine_similarity(vector, cached_vector) >= self.threshold:
+                self.hits += 1
+                yield GenerationChunk(
+                    text=result.text, finish_reason=result.finish_reason, usage=result.usage
+                )
+                return
+        self.misses += 1
+        pieces: list[str] = []
+        finish: str | None = None
+        last_usage = None
+        async for chunk in self.inner.stream(request):
+            if chunk.text:
+                pieces.append(chunk.text)
+            if chunk.finish_reason:
+                finish = chunk.finish_reason
+            if chunk.usage is not None:
+                last_usage = chunk.usage
+            yield chunk
+        text = "".join(pieces)
+        result = GenerationResult.text_result(
+            text, model=self.inner.info.ref, usage=last_usage
+        )
+        if finish:
+            result = result.model_copy(update={"finish_reason": finish})
+        if len(self._entries) >= self.max_entries:
+            self._entries.pop(0)
+        self._entries.append((signature, vector, prompt, result.model_copy(deep=True)))
 
     async def health(self) -> HealthStatus:
         return await self.inner.health()

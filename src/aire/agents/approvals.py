@@ -19,7 +19,17 @@ _SEVERITY = [
     SideEffect.READ_ONLY,
     SideEffect.REVERSIBLE_WRITE,
     SideEffect.EXTERNAL_SIDE_EFFECT,
+    SideEffect.HIGH_IMPACT,
+    SideEffect.PROHIBITED,
 ]
+
+
+def _severity_index(level: SideEffect | str) -> int:
+    """Index into ``_SEVERITY``; unknown levels default to deny (above all)."""
+    try:
+        return _SEVERITY.index(SideEffect(level))
+    except (ValueError, KeyError):
+        return len(_SEVERITY)
 
 
 class RuleApprover:
@@ -49,8 +59,8 @@ class RuleApprover:
         elif call.name in self.deny:
             approved = False
         else:
-            severity = _SEVERITY.index(SideEffect(spec.side_effect))
-            approved = severity < _SEVERITY.index(self.threshold)
+            severity = _severity_index(spec.side_effect)
+            approved = severity < _severity_index(self.threshold)
         self.decisions.append(
             {"tool": call.name, "side_effect": str(spec.side_effect), "approved": approved}
         )

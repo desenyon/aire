@@ -47,7 +47,10 @@ class Assistant:
         self._reranker: str = "lexical"
         self._citations = True
         self._hybrid = True
+        self._rewriter: str | Any | None = None
+        self._compressor: str | Any | None = "truncate"
         self._knowledge: Knowledge | None = None
+        self._indexed = False
 
     # -- configuration (chainable) -------------------------------------------------
 
@@ -97,6 +100,16 @@ class Assistant:
         self._hybrid = enabled
         return self
 
+    def rewriter(self, name: str | Any | None) -> Assistant:
+        """Set query rewriter (``None`` / identity disables rewrite)."""
+        self._rewriter = name
+        return self
+
+    def compressor(self, name: str | Any | None = "truncate") -> Assistant:
+        """Set context compressor used before generation."""
+        self._compressor = name
+        return self
+
     # -- build ------------------------------------------------------------------------
 
     def knowledge(self) -> Knowledge:
@@ -110,6 +123,8 @@ class Assistant:
                 chunker=self._chunker,
                 reranker=self._reranker,
                 hybrid=self._hybrid,
+                rewriter=self._rewriter,
+                compressor=self._compressor,
             )
         return self._knowledge
 
@@ -143,17 +158,34 @@ class Assistant:
             total.store = report.store
             total.embedder = report.embedder
             total.duration_ms += report.duration_ms
+        self._indexed = True
         return total
 
     def index(self) -> IndexReport:
         return run_sync(self.index_async())
 
-    async def ask_async(self, question: str, *, k: int = 5, **kwargs: Any) -> Answer:
-        """Ask a grounded question; returns an Answer with citations."""
+    async def ask_async(
+        self,
+        question: str,
+        *,
+        k: int = 5,
+        rewrite: bool | None = None,
+        compress: bool | None = None,
+        **kwargs: Any,
+    ) -> Answer:
+        """Ask a grounded question; returns an Answer with citations.
+
+        Optional ``rewrite`` / ``compress`` override pipeline defaults for this call.
+        """
         await self._resolve_embedder()
         model = self._model_spec or self.runtime.settings.model.ref
+        ask_kwargs = dict(kwargs)
+        if compress is not None:
+            ask_kwargs["compress"] = compress
+        if rewrite is not None:
+            ask_kwargs["rewrite"] = rewrite
         return await self.knowledge().ask(
-            question, model=model, k=k, citations=self._citations, **kwargs
+            question, model=model, k=k, citations=self._citations, **ask_kwargs
         )
 
     def ask(self, question: str, **kwargs: Any) -> Answer:
@@ -178,6 +210,15 @@ class Assistant:
 
     def deploy(self, **options: Any) -> Any:
         """Wrap the assistant in a production FastAPI app (requires aire[serve])."""
+        import warnings
+
+        if not self._indexed:
+            warnings.warn(
+                f"Assistant {self.name!r} deploy() called before index(); "
+                "the Knowledge store may be empty — call .index() first",
+                UserWarning,
+                stacklevel=2,
+            )
         from aire.deployment.fastapi_app import create_app
 
         return create_app(self.knowledge(), title=f"{self.name} API", **options)
@@ -199,5 +240,8 @@ class Assistant:
             "embedder": self._embedder_spec or self.runtime.settings.model.embedder,
             "store": self._store_spec or "local",
             "citations": self._citations,
+            "rewriter": self._rewriter,
+            "compressor": self._compressor,
+            "indexed": self._indexed,
             "knowledge": self._knowledge.describe() if self._knowledge else None,
         }

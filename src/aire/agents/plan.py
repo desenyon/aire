@@ -39,15 +39,19 @@ class PlanActVerify:
     async def run(self, goal: str) -> AgentResult:
         plan = await self._draft_plan(goal)
         for step in plan.steps:
-            if step.tool:
-                prompt = (
-                    f"Goal: {goal}\nExecute plan step {step.id}: {step.action}\n"
-                    f"Prefer tool {step.tool} with args {json.dumps(step.args)}."
-                )
+            if step.tool and self.agent.registry.has(step.tool):
+                observation = await self._execute_tool(step)
+                step.observation = observation
             else:
-                prompt = f"Goal: {goal}\nExecute plan step {step.id}: {step.action}"
-            partial = await self.agent.run(prompt)
-            step.observation = partial.output
+                if step.tool:
+                    prompt = (
+                        f"Goal: {goal}\nExecute plan step {step.id}: {step.action}\n"
+                        f"Prefer tool {step.tool} with args {json.dumps(step.args)}."
+                    )
+                else:
+                    prompt = f"Goal: {goal}\nExecute plan step {step.id}: {step.action}"
+                partial = await self.agent.run(prompt, use_planning=False)
+                step.observation = partial.output
             step.done = True
         verified, notes = await self._verify(goal, plan)
         plan.verified = verified
@@ -57,7 +61,8 @@ class PlanActVerify:
             repairs += 1
             repair = await self.agent.run(
                 f"Goal not met ({notes}). Goal: {goal}. "
-                f"Plan so far: {plan.model_dump_json()}. Fix the remaining gaps."
+                f"Plan so far: {plan.model_dump_json()}. Fix the remaining gaps.",
+                use_planning=False,
             )
             plan.notes = repair.output
             verified, notes = await self._verify(goal, plan)
@@ -66,7 +71,8 @@ class PlanActVerify:
         # Final synthesis
         result = await self.agent.run(
             f"Summarize the completed plan for: {goal}\n"
-            f"Plan JSON: {plan.model_dump_json()}\nVerified: {plan.verified}"
+            f"Plan JSON: {plan.model_dump_json()}\nVerified: {plan.verified}",
+            use_planning=False,
         )
         result.metadata = {
             **(result.metadata or {}),
@@ -74,6 +80,16 @@ class PlanActVerify:
             "verified": plan.verified,
         }
         return result
+
+    async def _execute_tool(self, step: PlanStep) -> str:
+        """Run a named tool from the agent registry directly."""
+        assert step.tool is not None
+        tool = self.agent.registry.get(step.tool)
+        outcome = await tool.execute(step.args)
+        if outcome.ok:
+            out = outcome.output
+            return out if isinstance(out, str) else json.dumps(out, default=str)
+        return f"error: {outcome.error}"
 
     async def _draft_plan(self, goal: str) -> Plan:
         prompt = (
@@ -94,13 +110,29 @@ class PlanActVerify:
             'Reply JSON: {"ok": true|false, "notes": "..."}'
         )
         text = (await self.agent.model.generate(GenerationRequest.of(prompt))).text
+        parsed = _parse_verify(text)
+        if parsed is not None:
+            return bool(parsed.get("ok")), str(parsed.get("notes") or text.strip())[:500]
+        # Fallback heuristics
         ok = "true" in text.lower().split("ok")[-1][:20] if "ok" in text.lower() else False
-        # also accept YES at start
         if text.strip().lower().startswith("yes") or '"ok": true' in text.lower():
             ok = True
         if text.strip().lower().startswith("no") or '"ok": false' in text.lower():
             ok = False
         return ok, text.strip()[:500]
+
+
+def _parse_verify(text: str) -> dict[str, Any] | None:
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict) and "ok" in payload:
+        return payload
+    return None
 
 
 def _parse_steps(text: str) -> list[PlanStep]:

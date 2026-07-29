@@ -5,8 +5,12 @@ from aire.safety.guardrails import (
     GuardrailChain,
     GuardrailVerdict,
     InjectionGuardrail,
+    ModelClassifierGuardrail,
     PIIGuardrail,
     SecretGuardrail,
+    apply_guardrails,
+    chain_from_safety,
+    resolve_guardrails,
 )
 from aire.safety.patterns import Match, detect_injection, detect_pii, detect_secrets
 from aire.safety.policy import ApprovalPolicy, PolicyEngine, PolicyRule, default_engine
@@ -19,10 +23,13 @@ __all__ = [
     "GuardrailVerdict",
     "InjectionGuardrail",
     "Match",
+    "ModelClassifierGuardrail",
     "PIIGuardrail",
     "PolicyEngine",
     "PolicyRule",
     "SecretGuardrail",
+    "apply_guardrails",
+    "chain_from_safety",
     "default_engine",
     "detect_injection",
     "detect_pii",
@@ -30,4 +37,5 @@ __all__ = [
     "redact",
     "redact_pii",
     "redact_secrets",
+    "resolve_guardrails",
 ]

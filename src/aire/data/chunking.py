@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol, cast, runtime_checkable
+import warnings
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -49,6 +50,9 @@ class FixedChunker:
                 break
         return chunks
 
+    def describe(self) -> dict[str, Any]:
+        return {"kind": "chunker", "name": "fixed", "size": self.size, "overlap": self.overlap}
+
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])|\n{2,}")
 
@@ -59,6 +63,7 @@ class SentenceChunker:
     def __init__(self, size: int = 800, overlap_sentences: int = 1) -> None:
         self.size = size
         self.overlap_sentences = overlap_sentences
+        self._label = "sentence"
 
     def chunk(self, text: str) -> list[TextChunk]:
         sentences = [s for s in _SENTENCE_RE.split(text) if s.strip()]
@@ -92,6 +97,114 @@ class SentenceChunker:
             cursor = position + len(sentence)
         _flush(len(text))
         return chunks
+
+    def describe(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "kind": "chunker",
+            "name": self._label,
+            "size": self.size,
+        }
+        if self._label != "sentence":
+            out["note"] = "sentence-boundary packing; not embedding-aware"
+        return out
+
+
+class EmbeddingSemanticChunker:
+    """Groups sentences by embedding cosine similarity when an embedder is provided.
+
+    Without ``embedder``, falls back to sentence-boundary packing (same as
+    :class:`SentenceChunker`) — a lexical/structural approximation of semantic
+    chunking, not true embedding-aware segmentation. Pass ``embedder=`` to
+    ``get_chunker("semantic", embedder=...)`` for cosine-based merging.
+    """
+
+    def __init__(
+        self,
+        size: int = 800,
+        overlap_sentences: int = 1,
+        *,
+        embedder: Any | None = None,
+        threshold: float = 0.55,
+    ) -> None:
+        self.size = size
+        self.overlap_sentences = overlap_sentences
+        self.embedder = embedder
+        self.threshold = threshold
+
+    def chunk(self, text: str) -> list[TextChunk]:
+        if self.embedder is None:
+            # Honest fallback: sentence packing, not embedding semantics.
+            return SentenceChunker(self.size, self.overlap_sentences).chunk(text)
+        return self._chunk_with_embeddings(text)
+
+    def _chunk_with_embeddings(self, text: str) -> list[TextChunk]:
+        from aire.models.base import run_sync
+        from aire.rag.store import cosine_similarity
+
+        sentences = [s for s in _SENTENCE_RE.split(text) if s.strip()]
+        if not sentences:
+            return []
+        if self.embedder is None:
+            return []
+        vectors = run_sync(self.embedder.embed_texts(sentences))
+        chunks: list[TextChunk] = []
+        group: list[str] = []
+        group_start = 0
+        cursor = 0
+        index = 0
+        prev_vec: list[float] | None = None
+
+        def _flush(end: int) -> None:
+            nonlocal index, group, prev_vec
+            piece = " ".join(group).strip()
+            if piece:
+                chunks.append(TextChunk(text=piece, start=group_start, end=end, index=index))
+                index += 1
+            group = []
+            prev_vec = None
+
+        for sentence, vec in zip(sentences, vectors, strict=True):
+            position = text.find(sentence, cursor)
+            if position == -1:
+                position = cursor
+            candidate_len = sum(len(s) for s in group) + len(sentence) + len(group)
+            sim = cosine_similarity(prev_vec, vec) if prev_vec is not None else 1.0
+            split = bool(group) and (candidate_len > self.size or sim < self.threshold)
+            if split:
+                _flush(position)
+            if not group:
+                group_start = position
+            group.append(sentence)
+            prev_vec = vec
+            cursor = position + len(sentence)
+        _flush(len(text))
+        return chunks
+
+    def describe(self) -> dict[str, Any]:
+        if self.embedder is None:
+            return {
+                "kind": "chunker",
+                "name": "semantic",
+                "mode": "sentence_approximation",
+                "size": self.size,
+                "note": "no embedder; sentence-boundary packing only",
+            }
+        return {
+            "kind": "chunker",
+            "name": "semantic",
+            "mode": "embedding",
+            "size": self.size,
+            "threshold": self.threshold,
+        }
+
+
+# Alias kept for catalog honesty: semantic_sentence == SentenceChunker.
+class SemanticSentenceChunker(SentenceChunker):
+    """Explicit sentence-based semantic approximation (no embeddings)."""
+
+    def __init__(self, size: int = 800, overlap_sentences: int = 1) -> None:
+        super().__init__(size=size, overlap_sentences=overlap_sentences)
+        self._label = "semantic_sentence"
 
 
 class RecursiveChunker:
@@ -137,21 +250,52 @@ class RecursiveChunker:
             merged.extend(self._split(current, rest) if len(current) > self.size else [current])
         return [m.strip() for m in merged if m.strip()]
 
+    def describe(self) -> dict[str, Any]:
+        return {"kind": "chunker", "name": "recursive", "size": self.size}
+
 
 _CHUNKERS: dict[str, type] = {
     "fixed": FixedChunker,
     "sentence": SentenceChunker,
-    "semantic": SentenceChunker,  # semantic boundary approximation via sentences
+    "semantic_sentence": SemanticSentenceChunker,
+    "semantic": EmbeddingSemanticChunker,
     "recursive": RecursiveChunker,
 }
 
 
 def get_chunker(name: str = "recursive", **options: object) -> Chunker:
-    """Resolve a chunker by name."""
+    """Resolve a chunker by name.
+
+    ``semantic`` uses :class:`EmbeddingSemanticChunker`. Pass ``embedder=`` for
+    cosine-based sentence grouping; without an embedder it is a sentence-boundary
+    approximation (see ``describe()``).
+    """
+    if name == "semantic" and "embedder" not in options:
+        # Keep working without embedder, but make the approximation visible.
+        warnings.warn(
+            "get_chunker('semantic') without embedder uses sentence-boundary packing "
+            "(not embedding similarity). Pass embedder=... or use 'semantic_sentence'.",
+            UserWarning,
+            stacklevel=2,
+        )
     try:
         cls = _CHUNKERS[name]
     except KeyError:
         from aire.core.errors import NotFoundError
 
         raise NotFoundError("chunker", name, context={"available": sorted(_CHUNKERS)}) from None
-    return cast("Chunker", cls(**options))
+    # EmbeddingSemanticChunker accepts embedder=; SentenceChunker does not — strip unknown.
+    if cls is EmbeddingSemanticChunker:
+        return EmbeddingSemanticChunker(**options)  # type: ignore[arg-type]
+    clean = {
+        k: v
+        for k, v in options.items()
+        if k in ("size", "overlap", "overlap_sentences", "separators")
+    }
+    if cls is FixedChunker:
+        clean = {k: v for k, v in options.items() if k in ("size", "overlap")}
+    elif cls in (SentenceChunker, SemanticSentenceChunker):
+        clean = {k: v for k, v in options.items() if k in ("size", "overlap_sentences")}
+    elif cls is RecursiveChunker:
+        clean = {k: v for k, v in options.items() if k in ("size", "separators")}
+    return cast("Chunker", cls(**clean))

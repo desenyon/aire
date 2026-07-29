@@ -87,6 +87,7 @@ class GenerationChunk(BaseModel):
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
     finish_reason: str | None = None
+    usage: Usage | None = None
 
 
 FinishReason = Literal["stop", "length", "tool_calls", "content_filter", "error"]

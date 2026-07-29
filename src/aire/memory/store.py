@@ -99,6 +99,7 @@ class LongTermMemory(Memory):
         self._episodes.clear()
         await self.store.clear()
         self._persist_store()
+        self._rewrite_episodes_file()
 
     # -- semantic memory -----------------------------------------------------------------
 
@@ -185,7 +186,34 @@ class LongTermMemory(Memory):
         for fact in facts.facts[:max_facts]:
             entries.append(await self.remember(fact, kind=MemoryKind.SEMANTIC, salience=1.5))
         del self._episodes[:-keep]
+        self._rewrite_episodes_file()
         return entries
+
+    def _rewrite_episodes_file(self) -> None:
+        """Rewrite the compacted episodic store (not append-forever)."""
+        if not self.path:
+            return
+        self.path.mkdir(parents=True, exist_ok=True)
+        episodes_file = self.path / "episodes.jsonl"
+        with episodes_file.open("w") as fh:
+            for message in self._episodes:
+                fh.write(message.model_dump_json() + "\n")
+
+    async def add_procedural(
+        self,
+        text: str,
+        *,
+        salience: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryEntry:
+        """Store a procedural memory (how to do something / successful plan)."""
+        return await self.remember(
+            text, kind=MemoryKind.PROCEDURAL, salience=salience, metadata=metadata
+        )
+
+    async def recall_procedural(self, query: str, *, k: int = 5) -> list[MemoryEntry]:
+        """Recall procedural memories by meaning."""
+        return await self.recall_semantic(query, k=k, kind=MemoryKind.PROCEDURAL)
 
     async def count(self) -> dict[str, int]:
         return {"episodes": len(self._episodes), "semantic": await self.store.count()}
@@ -194,6 +222,7 @@ class LongTermMemory(Memory):
         return {
             "kind": "memory",
             "type": "long_term",
+            "kinds": ["episodic", "semantic", "procedural"],
             "window": self.window,
             "path": str(self.path) if self.path else None,
             "episodes": len(self._episodes),

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -59,9 +60,11 @@ class ChromaVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         cid = await self._id()
-        body: dict[str, Any] = {"query_embeddings": [vector], "n_results": k}
-        if filter:
-            body["where"] = filter
+        store_filter, acl = split_acl_filter(filter)
+        limit = k * 5 if acl else k
+        body: dict[str, Any] = {"query_embeddings": [vector], "n_results": limit}
+        if store_filter:
+            body["where"] = store_filter  # Chroma where without __acl__
         data = await self.client.post_json(
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/query",
             body,
@@ -70,7 +73,7 @@ class ChromaVectorStore(VectorStore):
         docs = (data.get("documents") or [[]])[0]
         metas = (data.get("metadatas") or [[]])[0]
         distances = (data.get("distances") or [[]])[0]
-        results = []
+        results: list[ScoredChunk] = []
         for i, chunk_id in enumerate(ids):
             chunk = Chunk(
                 id=str(chunk_id),
@@ -79,7 +82,8 @@ class ChromaVectorStore(VectorStore):
             )
             distance = float(distances[i]) if i < len(distances) else 1.0
             results.append(ScoredChunk(chunk=chunk, score=1.0 - min(distance, 1.0)))
-        return results
+        results = apply_acl_to_hits(results, acl)
+        return results[:k]
 
     async def search_text(
         self,
@@ -89,9 +93,13 @@ class ChromaVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         cid = await self._id()
+        store_filter, acl = split_acl_filter(filter)
+        body: dict[str, Any] = {"limit": min(k * 20, 500)}
+        if store_filter:
+            body["where"] = store_filter
         data = await self.client.post_json(
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/get",
-            {"limit": min(k * 20, 500)},
+            body,
         )
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
@@ -106,6 +114,9 @@ class ChromaVectorStore(VectorStore):
                     metadata=dict(metas[i]) if i < len(metas) and metas[i] else {},
                 )
                 scored.append(ScoredChunk(chunk=chunk, score=float(overlap)))
+        # where may be unsupported on some get paths — enforce equality client-side.
+        scored = apply_metadata_filter(scored, store_filter)
+        scored = apply_acl_to_hits(scored, acl)
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 
@@ -116,6 +127,22 @@ class ChromaVectorStore(VectorStore):
             json={"ids": ids},
         )
         return len(ids)
+
+    async def delete_by_document(self, document_id: str) -> int:
+        """Delete points whose metadata ``document_id`` or ``source`` matches."""
+        cid = await self._id()
+        where: dict[str, Any] = {
+            "$or": [{"document_id": document_id}, {"source": document_id}]
+        }
+        # Best-effort: get matching ids then delete (where on delete varies by Chroma version).
+        data = await self.client.post_json(
+            f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/get",
+            {"where": where, "limit": 10_000},
+        )
+        ids = [str(i) for i in data.get("ids", [])]
+        if not ids:
+            return 0
+        return await self.delete(ids)
 
     async def count(self) -> int:
         cid = await self._id()

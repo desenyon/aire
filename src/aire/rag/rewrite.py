@@ -27,7 +27,7 @@ class IdentityRewriter:
 
 
 class MultiQueryRewriter:
-    """Expand a query into N lexical variants without a model."""
+    """Expand a query into N lexical template variants (no model / no embeddings)."""
 
     def __init__(self, *, n: int = 3) -> None:
         self.n = max(1, n)
@@ -44,7 +44,7 @@ class MultiQueryRewriter:
         return variants[: self.n]
 
     def describe(self) -> dict[str, Any]:
-        return {"kind": "query_rewriter", "name": "multi_query", "n": self.n}
+        return {"kind": "query_rewriter", "name": "lexical_multi_query", "n": self.n}
 
 
 class HyDERewriter:
@@ -97,17 +97,21 @@ class ModelRewriter:
 
 
 def get_rewriter(name: str, *, model: Model | None = None, **options: Any) -> QueryRewriter:
+    from aire.core.errors import ConfigurationError
+
+    if name in ("hyde", "model") and model is None:
+        raise ConfigurationError(
+            f"rewriter {name!r} requires a model= argument",
+            code="rag.rewriter_model_required",
+            context={"rewriter": name},
+        )
     table: dict[str, Any] = {
         "identity": IdentityRewriter,
         "multi_query": MultiQueryRewriter,
-        "hyde": lambda **kw: HyDERewriter(model=model, **kw) if model else IdentityRewriter(),
-        "model": lambda **kw: (
-            ModelRewriter(model=model, **kw) if model else MultiQueryRewriter(**kw)
-        ),
+        "hyde": lambda **kw: HyDERewriter(model=model, **kw),  # type: ignore[arg-type]
+        "model": lambda **kw: ModelRewriter(model=model, **kw),  # type: ignore[arg-type]
     }
     if name not in table:
-        from aire.core.errors import ConfigurationError
-
         raise ConfigurationError(
             f"unknown rewriter {name!r}",
             code="rag.rewriter_unknown",

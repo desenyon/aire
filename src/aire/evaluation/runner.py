@@ -128,8 +128,12 @@ class Evaluator:
                 try:
                     result.metrics.append(await metric_fn(case, output, ctx))
                 except Exception as exc:
+                    from aire.core.errors import ConfigurationError
                     from aire.evaluation.types import MetricResult
 
+                    # Missing judge/embedder etc. — skip rather than poison averages with 0.0.
+                    if isinstance(exc, ConfigurationError):
+                        continue
                     result.metrics.append(
                         MetricResult(
                             name=getattr(metric_fn, "__name__", "metric"),

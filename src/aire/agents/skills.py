@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
 # Map skill tool aliases → builtin tool names when packs reference legacy names.
 _TOOL_ALIASES: dict[str, str] = {
-    "web_search": "http_get",
     "fetch_url": "http_get",
-    "python_eval": "calculator",
-    "search": "http_get",
+    "web_search": "web_search",
+    "search": "web_search",
+    "python_eval": "calculator",  # no arbitrary exec; arithmetic only
 }
 
 
@@ -71,15 +71,22 @@ class SkillRegistry:
         return sorted(self._skills)
 
     def load_dir(self, path: str | Path) -> list[Skill]:
-        """Load ``*/skill.json`` packs from a directory."""
+        """Load ``*/skill.json`` packs from a directory.
+
+        Also picks up sibling ``tools.py`` modules (optional) and inline
+        ``tools`` definitions from skill.json when present.
+        """
         root = Path(path)
         loaded: list[Skill] = []
         if not root.is_dir():
             raise ConfigurationError(f"skills dir not found: {root}", code="skill.dir")
         for skill_json in sorted(root.glob("*/skill.json")):
             payload = json.loads(skill_json.read_text())
-            skill = Skill.model_validate(payload)
-            self.register(skill, replace=True)
+            skill = Skill.model_validate(
+                {k: v for k, v in payload.items() if k != "tools"}
+            )
+            pack_tools = _load_skill_tools(skill_json.parent, payload)
+            self.register(skill, tools=pack_tools or None, replace=True)
             loaded.append(skill)
         return loaded
 
@@ -161,24 +168,77 @@ def skill(
     return deco
 
 
+def _load_skill_tools(skill_dir: Path, payload: dict[str, Any]) -> list[Tool]:  # noqa: C901
+    """Load tools from sibling tools.py and/or inline skill.json ``tools`` entries."""
+    found: list[Tool] = []
+    tools_py = skill_dir / "tools.py"
+    if tools_py.is_file():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            f"aire_skill_{skill_dir.name}_tools", tools_py
+        )
+        if spec is not None and spec.loader is not None:
+            module = importlib.util.module_from_spec(spec)
+            loaded_ok = False
+            try:
+                spec.loader.exec_module(module)
+                loaded_ok = True
+            except Exception:
+                loaded_ok = False
+            if loaded_ok:
+                for attr in ("TOOLS", "tools", "get_tools"):
+                    value = getattr(module, attr, None)
+                    if callable(value) and attr == "get_tools":
+                        try:
+                            value = value()
+                        except Exception:
+                            value = None
+                    if isinstance(value, list):
+                        found.extend(t for t in value if isinstance(t, Tool))
+                        break
+
+    inline = payload.get("tools")
+    if isinstance(inline, list):
+        for item in inline:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not name:
+                continue
+            # Light support: register a stub that returns the description/body text.
+            body = str(item.get("body") or item.get("description") or "")
+            desc = str(item.get("description") or f"Skill-defined tool {name}")
+
+            def _make(n: str, b: str, d: str) -> Tool:
+                def _fn() -> str:
+                    return b
+
+                _fn.__doc__ = d
+                return Tool(_fn, name=n)
+
+            found.append(_make(str(name), body, desc))
+    return found
+
+
 def _register_builtins(reg: SkillRegistry) -> None:
     reg.register(
         Skill(
             name="research",
-            description="Search and summarize sources",
+            description="Search and summarize sources via web_search + http_get",
             prompts={
                 "main": "Research the topic thoroughly. Cite sources. Be concise.",
             },
-            tool_names=["web_search", "fetch_url"],
+            tool_names=["web_search", "http_get", "fetch_url"],
         ),
         replace=True,
     )
     reg.register(
         Skill(
             name="code",
-            description="Write and explain code",
+            description="Write and explain code using calculator + filesystem builtins",
             prompts={"main": "Write correct, minimal code. Explain briefly."},
-            tool_names=["python_eval", "calculator"],
+            tool_names=["calculator", "read_file", "list_files"],
         ),
         replace=True,
     )

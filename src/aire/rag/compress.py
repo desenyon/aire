@@ -39,7 +39,10 @@ class TruncateCompressor:
 
 
 class ExtractiveCompressor:
-    """Keep sentences that share tokens with the query (offline)."""
+    """Lexical extractive compression: keep sentences that share tokens with the query.
+
+    Offline and deterministic — not model-based extractive summarization.
+    """
 
     async def compress(
         self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000
@@ -64,7 +67,7 @@ class ExtractiveCompressor:
         return "\n\n".join(parts)
 
     def describe(self) -> dict[str, Any]:
-        return {"kind": "context_compressor", "name": "extractive"}
+        return {"kind": "context_compressor", "name": "lexical_extractive"}
 
 
 class ModelCompressor:
@@ -96,16 +99,19 @@ class ModelCompressor:
 
 
 def get_compressor(name: str, *, model: Model | None = None) -> ContextCompressor:
+    from aire.core.errors import ConfigurationError
+
     if name == "truncate":
         return TruncateCompressor()
     if name == "extractive":
         return ExtractiveCompressor()
     if name == "model":
         if model is None:
-            return ExtractiveCompressor()
+            raise ConfigurationError(
+                "compressor 'model' requires a model= argument",
+                code="rag.compressor_model_required",
+            )
         return ModelCompressor(model)
-    from aire.core.errors import ConfigurationError
-
     raise ConfigurationError(
         f"unknown compressor {name!r}",
         code="rag.compressor_unknown",

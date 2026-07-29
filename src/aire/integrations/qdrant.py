@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -18,6 +19,18 @@ if TYPE_CHECKING:
     from aire.core.runtime import Runtime
 
 DEFAULT_BASE_URL = "http://localhost:6333"
+
+
+def _qdrant_must_filter(store_filter: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Build a Qdrant Filter with must match conditions on ``metadata.*`` payload keys."""
+    if not store_filter:
+        return None
+    return {
+        "must": [
+            {"key": f"metadata.{key}", "match": {"value": value}}
+            for key, value in store_filter.items()
+        ]
+    }
 
 
 class QdrantVectorStore(VectorStore):
@@ -74,9 +87,19 @@ class QdrantVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
-        body: dict[str, Any] = {"vector": vector, "limit": k, "with_payload": True}
+        store_filter, acl = split_acl_filter(filter)
+        # Over-fetch when ACL post-filter may drop hits.
+        limit = k * 5 if acl else k
+        body: dict[str, Any] = {"vector": vector, "limit": limit, "with_payload": True}
+        native = _qdrant_must_filter(store_filter)
+        if native:
+            body["filter"] = native
         data = await self.client.post_json(f"/collections/{self.collection}/points/search", body)
-        return [_to_scored(hit) for hit in data.get("result", [])]
+        hits = [_to_scored(hit) for hit in data.get("result", [])]
+        # If native filter failed to express a key, still enforce equality client-side.
+        hits = apply_metadata_filter(hits, store_filter)
+        hits = apply_acl_to_hits(hits, acl)
+        return hits[:k]
 
     async def search_text(
         self,
@@ -86,7 +109,11 @@ class QdrantVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         # Qdrant has no built-in BM25; scroll and score client-side for hybrid fusion.
+        store_filter, acl = split_acl_filter(filter)
         body: dict[str, Any] = {"limit": min(k * 20, 500), "with_payload": True}
+        native = _qdrant_must_filter(store_filter)
+        if native:
+            body["filter"] = native
         data = await self.client.post_json(f"/collections/{self.collection}/points/scroll", body)
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
@@ -95,6 +122,8 @@ class QdrantVectorStore(VectorStore):
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
                 scored.append(ScoredChunk(chunk=hit.chunk, score=float(overlap)))
+        scored = apply_metadata_filter(scored, store_filter)
+        scored = apply_acl_to_hits(scored, acl)
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 
@@ -103,6 +132,21 @@ class QdrantVectorStore(VectorStore):
             f"/collections/{self.collection}/points/delete", json={"points": ids}
         )
         return len(ids)
+
+    async def delete_by_document(self, document_id: str) -> int:
+        """Delete points whose payload metadata ``document_id`` or ``source`` matches."""
+        filt = {
+            "should": [
+                {"key": "metadata.document_id", "match": {"value": document_id}},
+                {"key": "metadata.source", "match": {"value": document_id}},
+            ]
+        }
+        await self.client.raw.post(
+            f"/collections/{self.collection}/points/delete",
+            json={"filter": filt},
+        )
+        # Qdrant filter-delete does not return a count; best-effort.
+        return 0
 
     async def count(self) -> int:
         data = await self.client.get_json(f"/collections/{self.collection}")

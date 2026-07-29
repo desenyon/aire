@@ -6,7 +6,7 @@ import asyncio
 import importlib.util
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -146,26 +146,46 @@ class Scheduler:
 
 
 def create_apscheduler(scheduler: Scheduler | None = None) -> Any:
-    """Bridge to APScheduler when installed."""
+    """Bridge to APScheduler when installed.
+
+    Interval jobs are mirrored from :class:`Scheduler` entries. Cron expressions
+    require APScheduler directly (``apo.add_job(..., 'cron', ...)``) — the built-in
+    :class:`Scheduler` only supports fixed intervals.
+    """
     if importlib.util.find_spec("apscheduler") is None:
         raise ConfigurationError(
             "APScheduler is optional: pip install apscheduler "
-            "(or use aire.schedule.Scheduler interval runner)",
+            "(required for cron; or use aire.schedule.Scheduler interval runner)",
             code="schedule.apscheduler_missing",
         )
     from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-not-found]
 
     sched = scheduler or Scheduler()
     apo = AsyncIOScheduler()
-    for entry in sched.entries.values():
 
-        async def _job(name: str = entry.name) -> None:
-            e = sched.entries[name]
-            await sched._run_entry(e)
+    def _make_job(entry_name: str) -> Callable[[], Awaitable[Any]]:
+        async def _job() -> None:
+            e = sched.entries[entry_name]
+            record = await sched._run_entry(e)
             e.last_run = time.time()
             e.runs += 1
+            sched.history.append(record)
 
-        apo.add_job(_job, "interval", seconds=entry.interval_seconds, id=entry.name)
+        return _job
+
+    for entry in list(sched.entries.values()):
+        apo.add_job(
+            _make_job(entry.name),
+            "interval",
+            seconds=entry.interval_seconds,
+            id=entry.name,
+            replace_existing=True,
+        )
+    cast(Any, apo)._aire_scheduler = sched
+    cast(Any, apo)._aire_note = (
+        "cron requires APScheduler add_job(..., 'cron', ...); "
+        "this bridge only registers interval jobs from Scheduler.entries"
+    )
     return apo
 
 
@@ -173,5 +193,6 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "schedule",
         "backends": ["interval", "apscheduler (optional)"],
+        "note": "cron expressions require APScheduler; built-in Scheduler is interval-only",
         "apscheduler": importlib.util.find_spec("apscheduler") is not None,
     }

@@ -9,9 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from aire.agents.types import AgentResult, AgentStep
+from aire.agents.types import AgentResult, AgentState, AgentStatus, AgentStep
+from aire.core.content import Message
 from aire.core.errors import ConfigurationError
-from aire.core.types import new_id
+from aire.core.types import Usage, new_id
 
 
 class SessionState(BaseModel):
@@ -23,6 +24,37 @@ class SessionState(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     updated_at: float = Field(default_factory=time.time)
     result: dict[str, Any] | None = None
+
+    def to_agent_state(self, input: str | None = None) -> AgentState:
+        """Rebuild an :class:`AgentState` from persisted messages/steps/status."""
+        messages: list[Message] = []
+        for raw in self.messages:
+            try:
+                messages.append(Message.model_validate(raw))
+            except Exception:  # noqa: S112
+                continue
+        steps: list[AgentStep] = []
+        for raw in self.steps:
+            try:
+                steps.append(AgentStep.model_validate(raw))
+            except Exception:  # noqa: S112
+                continue
+        status_map = {
+            "running": AgentStatus.RUNNING,
+            "paused": AgentStatus.RUNNING,  # resume continues as running
+            "completed": AgentStatus.COMPLETED,
+            "failed": AgentStatus.FAILED,
+        }
+        return AgentState(
+            id=self.id,
+            input=input if input is not None else self.goal,
+            messages=messages,
+            steps=steps,
+            usage=Usage(),
+            status=status_map.get(self.status, AgentStatus.RUNNING),
+            output=(self.result or {}).get("output") if self.result else None,
+            error=self.metadata.get("error"),
+        )
 
 
 class DurableSession:
@@ -56,6 +88,24 @@ class DurableSession:
         self.state.steps.append(payload)
         self.save()
 
+    def persist_messages(self, messages: list[Message] | list[dict[str, Any]]) -> None:
+        """Persist conversation messages (as model_dump dicts)."""
+        dumped: list[dict[str, Any]] = []
+        for m in messages:
+            if isinstance(m, Message):
+                dumped.append(m.model_dump(mode="json"))
+            else:
+                dumped.append(dict(m))
+        self.state.messages = dumped
+        self.save()
+
+    def hydrate_agent_state(self, input: str | None = None) -> AgentState:
+        """Return an AgentState rebuilt from this session (for resume)."""
+        return self.state.to_agent_state(input)
+
+    def to_agent_state(self, input: str | None = None) -> AgentState:
+        return self.hydrate_agent_state(input)
+
     def complete(self, result: AgentResult | dict[str, Any]) -> None:
         self.state.status = "completed"
         self.state.result = (
@@ -78,5 +128,6 @@ class DurableSession:
             "id": self.state.id,
             "status": self.state.status,
             "steps": len(self.state.steps),
+            "messages": len(self.state.messages),
             "path": str(self.path),
         }

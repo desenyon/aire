@@ -7,7 +7,9 @@ aire serve                  serve the project's build_target() via uvicorn
 aire gateway                serve an OpenAI-compatible model gateway
 aire inspect <what>         inspect models|tools|plugins|config
 aire plugins                list discovered plugins
-aire doctor                 diagnose environment, credentials and config
+aire doctor [--live]        diagnose env; --live probes providers + Ollama
+aire foundation             toy architecture only (NOT pretrained weights)
+aire analytics              demo counters unless process metrics attached
 """
 
 from __future__ import annotations
@@ -249,15 +251,19 @@ def mcp_serve() -> None:
 def inspect(
     what: str = typer.Argument("all", help="models|tools|plugins|config|all"),
 ) -> None:
-    """Inspect models, tools, plugins and configuration."""
+    """Inspect models, tools (incl. builtins), plugins and configuration."""
     from aire.ai import AI
+    from aire.tools.builtins import builtin_tools
 
     runtime = AI.runtime()
     report: dict[str, Any] = {}
     if what in {"models", "all"}:
         report["models"] = AI.models.describe()
     if what in {"tools", "all"}:
-        report["tools"] = runtime.tools.names()
+        report["tools"] = {
+            "registered": runtime.tools.names(),
+            "builtin_tools": [t.name for t in builtin_tools()],
+        }
     if what in {"plugins", "all"}:
         report["plugins"] = list(runtime.plugins.loaded)
     if what in {"config", "all"}:
@@ -316,6 +322,19 @@ def _doctor_live_checks(check: Any) -> None:
             check(f"live:{spec}", bool(ok), str(health))
         except Exception as exc:
             check(f"live:{spec}", False, f"{type(exc).__name__}: {exc}")
+    # Local Ollama probe (no credentials required)
+    try:
+        import httpx
+
+        resp = httpx.get("http://127.0.0.1:11434/api/tags", timeout=2.0)
+        ok = resp.status_code == 200
+        detail = f"status={resp.status_code}"
+        if ok:
+            models = (resp.json() or {}).get("models") or []
+            detail = f"models={len(models)}"
+        check("live:ollama", ok, detail)
+    except Exception as exc:
+        check("live:ollama", False, f"{type(exc).__name__}: {exc}")
 
 
 @app.command()
@@ -326,7 +345,11 @@ def doctor(
         help="Also probe provider connectivity (may use network/credentials).",
     ),
 ) -> None:
-    """Check Python, dependencies, credentials, providers and configuration."""
+    """Check Python, dependencies, credentials, providers and configuration.
+
+    ``--live`` probes mock/local embedders, optional cloud keys, and Ollama at
+    http://127.0.0.1:11434/api/tags.
+    """
     import importlib.util
     import os
 
@@ -451,6 +474,103 @@ def scaffold(
 def version() -> None:
     """Print the aire version."""
     typer.echo(__version__)
+
+
+deploy_app = typer.Typer(help="Deployment helpers (artifacts, scale packs).")
+app.add_typer(deploy_app, name="deploy")
+
+
+@deploy_app.command("scale")
+def deploy_scale(
+    directory: Path = typer.Argument(Path("."), help="Output directory."),
+    project: str = typer.Option("aire-app", help="Project name."),
+    replicas: int = typer.Option(2, help="Desired replicas."),
+    max_replicas: int = typer.Option(10, help="HPA max replicas."),
+    image: str = typer.Option("aire-app:latest", help="Container image."),
+) -> None:
+    """Generate Docker Compose + Kubernetes scale pack."""
+    from aire.deployment.scale import ScaleConfig, generate_scale_pack
+
+    try:
+        artifacts = generate_scale_pack(
+            directory,
+            config=ScaleConfig(
+                project=project,
+                name=project,
+                replicas=replicas,
+                max_replicas=max_replicas,
+                image=image,
+            ),
+        )
+        _echo_json(artifacts.model_dump(mode="json"))
+        typer.secho(f"wrote {len(artifacts.files)} files under {directory}", fg=typer.colors.GREEN)
+    except AireError as exc:
+        _fail(exc)
+
+
+@app.command("foundation")
+def foundation_cmd(
+    family: str = typer.Option("gpt2", help="gpt2|llama|mistral|moe|custom (toy family)"),
+    n_layer: int = typer.Option(4, help="Transformer layers."),
+    describe_only: bool = typer.Option(False, "--describe", help="Print catalog only."),
+) -> None:
+    """Create or describe a toy foundational architecture (NOT pretrained weights)."""
+    from aire.training.foundation import catalog, create_foundation
+
+    if describe_only:
+        _echo_json(catalog())
+        return
+    try:
+        model = create_foundation(family, n_layer=n_layer)
+        payload = model.describe()
+        payload["cli_note"] = "toy architecture only — not pretrained weights"
+        _echo_json(payload)
+    except AireError as exc:
+        _fail(exc)
+    except Exception as exc:  # torch may be missing
+        typer.secho(f"foundation unavailable: {exc}", fg=typer.colors.YELLOW, err=True)
+        _echo_json(catalog())
+
+
+@app.command()
+def analytics(
+    prometheus: bool = typer.Option(False, help="Emit Prometheus text instead of JSON."),
+) -> None:
+    """Print an analytics report (demo mode unless AIRE_ANALYTICS is set)."""
+    import os
+
+    from aire.observability.analytics import create_analytics
+
+    # Prefer a module-level singleton if present; else env-named import; else demo.
+    analytics_obj = None
+    try:
+        from aire import observability as obs
+
+        analytics_obj = getattr(obs, "ANALYTICS", None) or getattr(obs, "default_analytics", None)
+        if callable(analytics_obj):
+            analytics_obj = analytics_obj()
+    except Exception:
+        analytics_obj = None
+    env_ref = os.environ.get("AIRE_ANALYTICS")
+    demo = analytics_obj is None and not env_ref
+    if analytics_obj is None:
+        analytics_obj = create_analytics()
+        analytics_obj.record_run(
+            model="mock:echo", cost_usd=0.0, latency_ms=1.0, operation="cli"
+        )
+    if prometheus:
+        if demo:
+            typer.echo("# aire analytics: demo mode (no process metrics attached)")
+        typer.echo(analytics_obj.prometheus())
+    else:
+        report = analytics_obj.report().describe()
+        report["demo_mode"] = demo
+        if demo:
+            report["note"] = (
+                "demo counters only — attach Metrics via create_analytics(metrics=...) "
+                "or set observability.ANALYTICS / AIRE_ANALYTICS for live data"
+            )
+        _echo_json(report)
 
 
 def main() -> None:

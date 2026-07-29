@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -77,13 +78,20 @@ class WeaviateVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         await self._ensure_class()
+        store_filter, acl = split_acl_filter(filter)
+        # Metadata lives in a JSON text property — GraphQL where on nested keys is
+        # awkward; over-fetch then apply equality + ACL client-side.
+        limit = k * 5 if (store_filter or acl) else k
         query = (
             "{ Get { "
-            f"{self._class}(nearVector: {{vector: {json.dumps(vector)}}}, limit: {k})"
-            " { aire_id text metadata_json _additional { distance } } } }"
+            f"{self._class}(nearVector: {{vector: {json.dumps(vector)}}}, limit: {limit})"
+            " { aire_id text metadata_json _additional { distance id } } } }"
         )
         rows = await self._graphql(query)
-        return [_to_scored(row) for row in rows] if isinstance(rows, list) else []
+        hits = [_to_scored(row) for row in rows] if isinstance(rows, list) else []
+        hits = apply_metadata_filter(hits, store_filter)
+        hits = apply_acl_to_hits(hits, acl)
+        return hits[:k]
 
     async def search_text(
         self,
@@ -93,16 +101,21 @@ class WeaviateVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         await self._ensure_class()
+        store_filter, acl = split_acl_filter(filter)
+        limit = k * 5 if (store_filter or acl) else k
         safe = json.dumps(query)
         gql = (
             "{ Get { "
-            f'{self._class}(bm25: {{query: {safe}, properties: ["text"]}}, limit: {k})'
-            " { aire_id text metadata_json _additional { score } } } }"
+            f'{self._class}(bm25: {{query: {safe}, properties: ["text"]}}, limit: {limit})'
+            " { aire_id text metadata_json _additional { score id } } } }"
         )
         rows = await self._graphql(gql)
         if not isinstance(rows, list):
             return []
-        return [_to_scored(row, score_key="score") for row in rows]
+        hits = [_to_scored(row, score_key="score") for row in rows]
+        hits = apply_metadata_filter(hits, store_filter)
+        hits = apply_acl_to_hits(hits, acl)
+        return hits[:k]
 
     async def delete(self, ids: list[str]) -> int:
         await self._ensure_class()
@@ -111,6 +124,27 @@ class WeaviateVectorStore(VectorStore):
             response = await self.client.raw.delete(f"/v1/objects/{self._class}/{chunk_id}")
             removed += int(response.status_code < 400)
         return removed
+
+    async def delete_by_document(self, document_id: str) -> int:
+        """Best-effort: page objects, match metadata document_id/source, delete by aire_id."""
+        await self._ensure_class()
+        gql = (
+            "{ Get { "
+            f"{self._class}(limit: 10000)"
+            " { aire_id text metadata_json _additional { id } } } }"
+        )
+        rows = await self._graphql(gql)
+        if not isinstance(rows, list):
+            return 0
+        ids: list[str] = []
+        for row in rows:
+            hit = _to_scored(row)
+            meta = hit.chunk.metadata
+            if meta.get("document_id") == document_id or meta.get("source") == document_id:
+                ids.append(hit.chunk.id)
+        if not ids:
+            return 0
+        return await self.delete(ids)
 
     async def count(self) -> int:
         await self._ensure_class()
@@ -147,7 +181,10 @@ def _to_scored(row: dict[str, Any], *, score_key: str = "distance") -> ScoredChu
         metadata = {}
     return ScoredChunk(
         chunk=Chunk(
-            id=str(row.get("aire_id", "")), text=str(row.get("text", "")), metadata=metadata
+            id=str(row.get("aire_id", "")),
+            text=str(row.get("text", "")),
+            metadata=metadata,
+            document_id=str(metadata.get("document_id") or ""),
         ),
         score=score,
     )

@@ -53,10 +53,14 @@ class AgentConfig(BaseModel):
     planning: bool = False
     system_prompt: str | None = None
     # Side-effect levels that require approval before tool execution.
-    approval_levels: list[str] = Field(default_factory=lambda: ["high_impact"])
+    approval_levels: list[str] = Field(
+        default_factory=lambda: ["external_side_effect", "high_impact", "prohibited"]
+    )
     # Permissions granted to this agent for tool execution.
     permissions: list[str] = Field(default_factory=list)
     temperature: float | None = None
+    # When True, independent tool calls in one model turn run concurrently.
+    parallel_tools: bool = False
 
 
 class AgentState(BaseModel):

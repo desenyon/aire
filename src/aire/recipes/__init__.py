@@ -8,10 +8,14 @@ from aire.core.errors import ConfigurationError
 
 
 def recipe(name: str, **options: Any) -> Any:
-    """Build a ready-made stack: ``rag`` | ``agent`` | ``finetune`` | ``gateway``."""
+    """Build a ready-made stack: ``rag`` | ``agent`` | ``finetune`` | ``gateway``.
+
+    Pass ``execute=True`` to run setup steps where defined (e.g. RAG indexing).
+    """
+    execute = bool(options.pop("execute", False))
     key = name.strip().lower()
     if key == "rag":
-        return rag_recipe(**options)
+        return rag_recipe(execute=execute, **options)
     if key == "agent":
         return agent_recipe(**options)
     if key in {"finetune", "fine_tune", "lora"}:
@@ -29,18 +33,37 @@ def rag_recipe(
     *,
     store: str = "local:default",
     documents: str | None = None,
+    execute: bool = False,
     **options: Any,
 ) -> dict[str, Any]:
-    """Knowledge pipeline + optional document path."""
+    """Knowledge pipeline + optional document path.
+
+    When ``execute=True`` and ``documents`` is set, indexes immediately.
+    """
     from aire.ai import AI
+    from aire.models.base import run_sync
 
     knowledge = AI.rag.create(**options)
+    indexed = False
+    index_report = None
+    if execute and documents:
+        index_report = run_sync(knowledge.ingest(documents))
+        indexed = True
     return {
         "kind": "rag",
         "knowledge": knowledge,
         "documents": documents,
         "store": store,
-        "next": "knowledge.index(documents) then knowledge.ask(question)",
+        "execute": execute,
+        "indexed": indexed,
+        "index_report": (
+            index_report.model_dump(mode="json")
+            if index_report is not None and hasattr(index_report, "model_dump")
+            else index_report
+        ),
+        "next": "knowledge.index(documents) then knowledge.ask(question)"
+        if not indexed
+        else "knowledge.ask(question)",
     }
 
 

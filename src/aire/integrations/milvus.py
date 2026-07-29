@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from aire.core.types import Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -67,14 +68,21 @@ class MilvusVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        store_filter, acl = split_acl_filter(filter)
+        # Metadata is stored as a JSON string field — native scalar filters on nested
+        # keys are awkward; over-fetch then apply equality + ACL client-side.
+        limit = k * 5 if (store_filter or acl) else k
         body: dict[str, Any] = {
             "collectionName": self.collection,
             "data": [vector],
-            "limit": k,
+            "limit": limit,
             "outputFields": ["id", "text", "metadata"],
         }
         data = await self.client.post_json("/v2/vectordb/entities/search", body)
-        return [_to_scored(row) for row in data.get("data", [])]
+        hits = [_to_scored(row) for row in data.get("data", [])]
+        hits = apply_metadata_filter(hits, store_filter)
+        hits = apply_acl_to_hits(hits, acl)
+        return hits[:k]
 
     async def search_text(
         self,
@@ -84,6 +92,7 @@ class MilvusVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         # Milvus vector search only; page rows and score client-side for hybrid fusion.
+        store_filter, acl = split_acl_filter(filter)
         data = await self.client.post_json(
             "/v2/vectordb/entities/query",
             {
@@ -100,6 +109,8 @@ class MilvusVectorStore(VectorStore):
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
                 scored.append(ScoredChunk(chunk=hit.chunk, score=float(overlap)))
+        scored = apply_metadata_filter(scored, store_filter)
+        scored = apply_acl_to_hits(scored, acl)
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 
@@ -110,6 +121,31 @@ class MilvusVectorStore(VectorStore):
             {"collectionName": self.collection, "filter": f"id in [{quoted}]"},
         )
         return len(ids)
+
+    async def delete_by_document(self, document_id: str) -> int:
+        """Best-effort: query a page, match metadata document_id/source, delete by id."""
+        data = await self.client.post_json(
+            "/v2/vectordb/entities/query",
+            {
+                "collectionName": self.collection,
+                "filter": "id != ''",
+                "limit": 10_000,
+                "outputFields": ["id", "text", "metadata"],
+            },
+        )
+        ids: list[str] = []
+        for row in data.get("data", []):
+            hit = _to_scored(row)
+            meta = hit.chunk.metadata
+            if (
+                meta.get("document_id") == document_id
+                or meta.get("source") == document_id
+                or hit.chunk.document_id == document_id
+            ):
+                ids.append(hit.chunk.id)
+        if not ids:
+            return 0
+        return await self.delete(ids)
 
     async def count(self) -> int:
         data = await self.client.post_json(
@@ -133,7 +169,12 @@ def _to_scored(row: dict[str, Any]) -> ScoredChunk:
         metadata = {}
     distance = float(row.get("distance", 0.0) or 0.0)
     return ScoredChunk(
-        chunk=Chunk(id=str(row.get("id", "")), text=str(row.get("text", "")), metadata=metadata),
+        chunk=Chunk(
+            id=str(row.get("id", "")),
+            text=str(row.get("text", "")),
+            metadata=metadata,
+            document_id=str(metadata.get("document_id") or ""),
+        ),
         score=distance,
     )
 

@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aire.agents.memory import Memory, resolve_memory
 from aire.agents.runtime import AgentExecutor, Approver
 from aire.agents.session import DurableSession
-from aire.agents.types import AgentConfig, AgentResult, AgentState
+from aire.agents.types import AgentConfig, AgentResult, AgentState, AgentStatus
+from aire.core.content import Message
 from aire.models.base import Model
 from aire.tools.registry import ToolRegistry
 from aire.tools.tool import Tool
 
 if TYPE_CHECKING:
+    from aire.agents.streaming import AgentEvent
     from aire.core.runtime import Runtime
+    from aire.safety.policy import PolicyEngine
 
 
 class Agent:
@@ -29,6 +33,7 @@ class Agent:
         config: AgentConfig | None = None,
         runtime: Runtime | None = None,
         approver: Approver | None = None,
+        policy: PolicyEngine | None = None,
         name: str = "agent",
         session: DurableSession | str | Path | None = None,
     ) -> None:
@@ -42,6 +47,7 @@ class Agent:
         self.memory = resolve_memory(memory)
         self.config = config or AgentConfig()
         self.approver = approver
+        self.policy = policy
         self.state = AgentState()
         self._skills: list[str] = []
         if isinstance(session, DurableSession):
@@ -51,25 +57,60 @@ class Agent:
         else:
             self.session = None
 
-    # -- execution -----------------------------------------------------------------
-
-    async def run(self, input: str) -> AgentResult:
-        """Run the agent to a terminal state and persist memory (+ optional session)."""
-        self.state = AgentState(input=input)
-        if self.session is not None:
-            self.session.state.goal = input
-            self.session.state.status = "running"
-            self.session.save()
-        executor = AgentExecutor(
+    def _executor(self) -> AgentExecutor:
+        return AgentExecutor(
             self.model,
             self.registry,
             config=self.config,
             memory=self.memory,
             runtime=self.runtime,
             approver=self.approver,
+            policy=self.policy,
         )
-        from aire.core.content import Message
 
+    # -- execution -----------------------------------------------------------------
+
+    async def run(  # noqa: C901
+        self, input: str, *, use_planning: bool | None = None
+    ) -> AgentResult:
+        """Run the agent to a terminal state and persist memory (+ optional session).
+
+        ``use_planning`` overrides ``config.planning``. When planning is on,
+        delegates to :class:`~aire.agents.plan.PlanActVerify` with
+        ``use_planning=False`` on nested calls to avoid recursion.
+        """
+        planning = self.config.planning if use_planning is None else use_planning
+        if planning:
+            from aire.agents.plan import PlanActVerify
+
+            return await PlanActVerify(self).run(input)
+
+        # Resume from durable session when paused/running with prior messages
+        resumed = False
+        if (
+            self.session is not None
+            and self.session.state.status in ("paused", "running")
+            and self.session.state.messages
+        ):
+            self.state = self.session.hydrate_agent_state(input)
+            # Continuing turn: append new user input if not already the last message
+            if input and (
+                not self.state.messages
+                or self.state.messages[-1].role != "user"
+                or self.state.messages[-1].text_content != input
+            ):
+                self.state.messages.append(Message.text("user", input))
+            self.state.status = AgentStatus.RUNNING
+            resumed = True
+        else:
+            self.state = AgentState(input=input)
+
+        if self.session is not None:
+            self.session.state.goal = input if not resumed else (self.session.state.goal or input)
+            self.session.state.status = "running"
+            self.session.save()
+
+        executor = self._executor()
         try:
             result = await executor.run(input, state=self.state)
         except Exception as exc:
@@ -83,19 +124,85 @@ class Agent:
         if result.output:
             await self.memory.add(Message.text("assistant", result.output))
         if self.session is not None:
+            self.session.persist_messages(self.state.messages)
             for step in result.steps:
-                self.session.append_step(step)
+                # Avoid duplicating steps already in session on resume
+                if not any(s.get("index") == step.index for s in self.session.state.steps):
+                    self.session.append_step(step)
             self.session.complete(result)
         return result
+
+    async def pause(self) -> None:
+        """Save current messages to the session and mark it paused."""
+        if self.session is None:
+            return
+        self.session.persist_messages(self.state.messages)
+        if self.state.steps:
+            # Keep steps in sync
+            existing = {s.get("index") for s in self.session.state.steps}
+            for step in self.state.steps:
+                if step.index not in existing:
+                    self.session.state.steps.append(step.model_dump(mode="json"))
+        self.session.pause()
 
     async def ask(self, input: str) -> str:
         """Convenience: run and return just the final text."""
         return (await self.run(input)).output
 
-    def run_sync(self, input: str) -> AgentResult:
+    async def run_stream(self, input: str) -> AsyncIterator[AgentEvent]:
+        """Stream each agent step as an :class:`~aire.agents.streaming.AgentEvent`."""
+        from aire.agents.streaming import run_stream
+
+        self.state = AgentState(input=input)
+        self._session_start(input)
+        executor = self._executor()
+        final: AgentResult | None = None
+        try:
+            async for event in run_stream(executor, input, state=self.state):
+                if event.type == "done":
+                    final = self._result_from_done(event)
+                yield event
+        except Exception as exc:
+            if self.session is not None:
+                self.session.fail(str(exc))
+            raise
+        await self._persist_turn(input, final)
+
+    def _session_start(self, input: str) -> None:
+        if self.session is None:
+            return
+        self.session.state.goal = input
+        self.session.state.status = "running"
+        self.session.save()
+
+    def _result_from_done(self, event: AgentEvent) -> AgentResult:
+        return AgentResult(
+            output=event.output or "",
+            status=AgentStatus(event.status) if event.status else self.state.status,
+            steps=list(self.state.steps),
+            usage=self.state.usage,
+            run_id=event.run_id or self.state.id,
+            error=event.error,
+        )
+
+    async def _persist_turn(self, input: str, final: AgentResult | None) -> None:
+        await self.memory.add(Message.text("user", input))
+        for message in self.state.messages:
+            if message.role == "tool":
+                await self.memory.add(message)
+        if final and final.output:
+            await self.memory.add(Message.text("assistant", final.output))
+        if self.session is not None and final is not None:
+            self.session.persist_messages(self.state.messages)
+            for step in final.steps:
+                if not any(s.get("index") == step.index for s in self.session.state.steps):
+                    self.session.append_step(step)
+            self.session.complete(final)
+
+    def run_sync(self, input: str, *, use_planning: bool | None = None) -> AgentResult:
         from aire.models.base import run_sync
 
-        return run_sync(self.run(input))
+        return run_sync(self.run(input, use_planning=use_planning))
 
     def reset(self) -> None:
         """Start a fresh conversation (keeps tools and config, clears memory)."""
@@ -116,9 +223,11 @@ class Agent:
         model: Model,
         **kwargs: Any,
     ) -> Agent:
-        """Rebuild an agent bound to an existing session file."""
+        """Rebuild an agent bound to an existing session file; hydrate state."""
         session = DurableSession(path)
-        return cls(model, session=session, **kwargs)
+        agent = cls(model, session=session, **kwargs)
+        agent.state = session.to_agent_state()
+        return agent
 
     # -- composition ------------------------------------------------------------------
 
@@ -163,4 +272,5 @@ class Agent:
             "config": self.config.model_dump(mode="json"),
             "skills": list(self._skills),
             "session": self.session.describe() if self.session else None,
+            "policy": self.policy.describe() if self.policy is not None else None,
         }

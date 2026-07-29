@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+import time
+
+from pydantic import BaseModel, Field
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 class CostPolicy(BaseModel):
@@ -10,7 +16,7 @@ class CostPolicy(BaseModel):
 
     Policies are inspectable by agents (``policy.model_dump()``) and compose
     with routing objectives — they filter/penalize candidates rather than
-    replacing ``objective=``.
+    replacing ``objective=``. Daily counters auto-reset when the UTC date changes.
     """
 
     # Hard caps (None = unlimited)
@@ -24,13 +30,21 @@ class CostPolicy(BaseModel):
     # Runtime accounting (mutated via record_spend)
     spent_today_usd: float = 0.0
     requests_today: int = 0
+    spend_day: str = Field(default_factory=_today)
+
+    def _ensure_day(self) -> None:
+        today = _today()
+        if self.spend_day != today:
+            self.reset_daily()
 
     def remaining_budget(self) -> float | None:
+        self._ensure_day()
         if self.daily_budget_usd is None:
             return None
         return max(0.0, self.daily_budget_usd - self.spent_today_usd)
 
     def allows_estimated_cost(self, estimated_usd: float) -> bool:
+        self._ensure_day()
         max_per = self.max_cost_per_request_usd
         if max_per is not None and estimated_usd > max_per:
             return False
@@ -38,12 +52,14 @@ class CostPolicy(BaseModel):
         return not (remaining is not None and estimated_usd > remaining)
 
     def record_spend(self, cost_usd: float) -> None:
+        self._ensure_day()
         self.spent_today_usd += max(0.0, cost_usd)
         self.requests_today += 1
 
     def reset_daily(self) -> None:
         self.spent_today_usd = 0.0
         self.requests_today = 0
+        self.spend_day = _today()
 
 
 class CostPolicyState(BaseModel):
@@ -57,6 +73,7 @@ class CostPolicyState(BaseModel):
 
     @classmethod
     def from_policy(cls, policy: CostPolicy) -> CostPolicyState:
+        policy._ensure_day()
         return cls(
             spent_today_usd=policy.spent_today_usd,
             requests_today=policy.requests_today,

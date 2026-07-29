@@ -105,8 +105,14 @@ class PgVectorStore(VectorStore):
 
     async def upsert(self, chunks: list[Chunk]) -> int:
         if self._pgvector and self.dim is None and chunks and chunks[0].embedding:
-            # Late dim discovery: recreate is too risky; store as JSONB path next time.
-            pass
+            # Late dim discovery cannot ALTER a vector(N) column safely in-place.
+            raise ConfigurationError(
+                "pgvector store was created without dim=; pass dim=<embedding size> "
+                "at construction (recreating the table is required to switch to ANN). "
+                "Use use_pgvector=False for JSONB + Python cosine fallback.",
+                code="rag.pgvector_late_dim",
+                context={"table": self.table, "embedding_len": len(chunks[0].embedding or [])},
+            )
         with self._connect() as conn, conn.cursor() as cur:
             for chunk in chunks:
                 emb = chunk.embedding or []
