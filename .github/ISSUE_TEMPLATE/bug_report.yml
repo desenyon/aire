@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a bug or unexpected behavior in aire
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in as much as you can —
+        reproducible reports with a minimal offline example (`mock:echo`) are ideal.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear, short description of the problem.
+      placeholder: When I call AI.agents.create(...), ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or a short script (prefer `mock:echo` / offline).
+      placeholder: |
+        ```python
+        from aire import AI
+        ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead (include traceback if relevant).
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: aire version
+      description: Output of `python -c "import aire; print(aire.__version__)"` or the installed package version.
+      placeholder: 0.3.5
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.11.9
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Additional context
+      description: Provider used, optional extras installed, related issues, etc.

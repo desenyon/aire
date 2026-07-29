@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a new feature or improvement for aire
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        aire is agent-first and offline-capable. Feature ideas that fit that design
+        (discoverable APIs, provider independence, honest stubs) are especially welcome.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve? Who benefits?
+      placeholder: As a developer building X, I need Y because Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should aire address this? Sketch API shape if you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, existing workarounds, or related libraries.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Agents / tools
+        - Models / providers
+        - RAG / retrieval
+        - Workflows
+        - Evaluation
+        - Deployment / gateway
+        - Observability / safety
+        - CLI / docs / DX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Additional context
+      description: Links, mocks, or examples that would help.

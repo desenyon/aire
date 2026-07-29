@@ -1,0 +1,66 @@
+site_name: aire
+site_description: Agent-first AI creation library
+site_url: https://desenyon.github.io/aire/
+repo_url: https://github.com/desenyon/aire
+repo_name: desenyon/aire
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Product: product.md
+  - Architecture: architecture.md
+  - Public API: public_api.md
+  - API freeze: api_freeze.md
+  - Compatibility: compatibility.md
+  - Migration: migration.md
+  - API reference: api.md
+  - Agents: agents.md
+  - RAG: rag.md
+  - Gateway: gateway.md
+  - CLI: cli.md
+  - MCP: mcp.md
+  - Security: security.md
+  - Honesty: honesty.md
+  - Examples guide: GUIDE.md
+  - Contributing: contributing.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            members_order: source

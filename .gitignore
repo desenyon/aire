@@ -22,6 +22,13 @@ htmlcov/
 .env.*
 !.env.template
 
+# Generated docs site
+site/
+
+# Graphify local outputs
+graphify-out/
+**/graphify-out/
+
 # OS / editor
 .DS_Store
 .idea/
