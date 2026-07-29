@@ -35,6 +35,66 @@ from aire.deployment import create_app
 app = create_app(build_target())
 """
 
+_APP_SCAFFOLD = """\
+\"\"\"User application entry — edit build_target() then redeploy.
+
+entrypoint.py imports build_target and wraps it with aire.deployment.create_app.
+
+When scale-pack sidecars are enabled, compose/k8s set:
+  AIRE_REDIS_URL=redis://redis:6379/0
+  AIRE_DATABASE_URL=postgresql://aire:aire@postgres:5432/aire
+\"\"\"
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+_log = logging.getLogger("aire.app")
+
+
+def build_target() -> Any:
+    \"\"\"Return an Agent, Knowledge, Model, or Team for create_app().\"\"\"
+    from aire import AI
+
+    # Prefer Knowledge + pgvector when AIRE_DATABASE_URL is set (scale pack).
+    database_url = os.environ.get("AIRE_DATABASE_URL")
+    if database_url:
+        try:
+            from aire.rag.pgvector import PgVectorStore
+
+            store = PgVectorStore(database_url)
+            knowledge = AI.rag.create(store=store)
+            _log.info("Knowledge wired to PgVectorStore via AIRE_DATABASE_URL")
+            return knowledge
+        except Exception as exc:  # pragma: no cover - depends on aire[pgvector]
+            _log.warning(
+                "AIRE_DATABASE_URL set but PgVectorStore unavailable: %s",
+                exc,
+            )
+
+    # Minimal offline target; replace with your agent / knowledge / model.
+    model = AI.models.use_sync("mock:echo")
+
+    redis_url = os.environ.get("AIRE_REDIS_URL")
+    if redis_url:
+        try:
+            model = AI.models.cache(model, backend="redis", url=redis_url)
+            _log.info("model cache wired to AIRE_REDIS_URL")
+        except Exception as exc:  # pragma: no cover - depends on aire[redis]
+            _log.warning("AIRE_REDIS_URL set but redis cache unavailable: %s", exc)
+
+    return model
+
+
+# Optional: build FastAPI app directly for local `uvicorn app:app`
+def create_app_local() -> Any:
+    from aire.deployment import create_app
+
+    return create_app(build_target())
+"""
+
 _ENV_TEMPLATE = """\
 # Provider credentials (never commit real values)
 OPENAI_API_KEY=
@@ -45,6 +105,10 @@ OLLAMA_HOST=http://localhost:11434
 # aire configuration overrides (AIRE_<section>__<key>)
 AIRE_PROJECT={project}
 AIRE_MODEL__REF=mock:echo
+
+# Optional scale-pack sidecars (set by generate_scale_pack when with_redis/with_postgres)
+# AIRE_REDIS_URL=redis://redis:6379/0
+# AIRE_DATABASE_URL=postgresql://aire:aire@postgres:5432/aire
 """
 
 
@@ -61,7 +125,7 @@ def generate_artifacts(
     project: str = "aire-app",
     extra_requirements: list[str] | None = None,
 ) -> DeployArtifacts:
-    """Write Dockerfile, entrypoint, env template and lock file to ``directory``."""
+    """Write Dockerfile, entrypoint, app scaffold, env template and lock file."""
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
     requirements = ["aire[serve]>=0.1.0", *(extra_requirements or [])]
@@ -69,10 +133,15 @@ def generate_artifacts(
     for name, content in {
         "Dockerfile": _DOCKERFILE,
         "entrypoint.py": _ENTRYPOINT,
+        "app.py": _APP_SCAFFOLD,
         ".env.template": _ENV_TEMPLATE.format(project=project),
         "requirements.lock": "\n".join(requirements) + "\n",
     }.items():
         path = target / name
+        # Do not clobber an existing user app.py
+        if name == "app.py" and path.exists():
+            files.append(str(path))
+            continue
         path.write_text(content)
         files.append(str(path))
     return DeployArtifacts(directory=str(target), files=files)
@@ -81,6 +150,13 @@ def generate_artifacts(
 def describe() -> dict[str, Any]:
     return {
         "kind": "deployment",
-        "artifacts": ["Dockerfile", "entrypoint.py", ".env.template", "requirements.lock"],
+        "artifacts": [
+            "Dockerfile",
+            "entrypoint.py",
+            "app.py",
+            ".env.template",
+            "requirements.lock",
+        ],
         "endpoints": ["/health", "/ready", "/manifest", "/metrics"],
+        "scale_env": ["AIRE_REDIS_URL", "AIRE_DATABASE_URL"],
     }

@@ -1,6 +1,7 @@
 """MCP server: expose aire tools to any MCP-speaking host (Claude Code, IDEs).
 
-Zero dependencies — newline-delimited JSON-RPC 2.0 over stdio::
+Implements a **subset of MCP**: tools, resources, and prompts over stdio
+(newline-delimited JSON-RPC 2.0). Zero dependencies::
 
     aire mcp-serve                      # builtin + registered tools
     python -m aire.mcp                  # same, from anywhere
@@ -24,11 +25,13 @@ from aire.mcp.protocol import PROTOCOL_VERSION, MCPError, make_error, parse_mess
 from aire.tools.tool import Tool
 
 _METHOD_NOT_FOUND = -32601
+_INVALID_PARAMS = -32602
 _INTERNAL_ERROR = -32603
+_APPLICATION_ERROR = -32000
 
 
 class MCPServer:
-    """Expose aire tools over the Model Context Protocol."""
+    """Expose aire tools over a subset of MCP (tools, resources, prompts / stdio)."""
 
     def __init__(
         self,
@@ -37,11 +40,13 @@ class MCPServer:
         name: str = "aire",
         version: str = __version__,
         knowledge: bool = True,
+        progress_writer: Any | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {t.name: t for t in tools or []}
         self.name = name
         self.version = version
         self.knowledge = knowledge
+        self._progress_writer = progress_writer
 
     def add_tool(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -58,10 +63,13 @@ class MCPServer:
         try:
             result = await self._dispatch(method, message.get("params") or {})
         except MCPError as exc:
+            code = _METHOD_NOT_FOUND if "unknown method" in exc.message else _APPLICATION_ERROR
+            if "unknown tool" in exc.message or "disabled" in exc.message:
+                code = _INVALID_PARAMS
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": _METHOD_NOT_FOUND, "message": exc.message},
+                "error": {"code": code, "message": exc.message},
             }
         except Exception as exc:
             return {
@@ -157,11 +165,24 @@ class MCPServer:
         }
 
     async def _call_tool(self, params: dict[str, Any]) -> dict[str, Any]:
+        from aire.mcp.protocol import make_progress_notification
+
         name = params.get("name", "")
         tool = self._tools.get(name)
         if tool is None:
             raise MCPError(f"unknown tool: {name!r}", context={"tool": name})
+        meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+        assert isinstance(meta, dict)
+        token = meta.get("progressToken")
+        if token is not None and self._progress_writer is not None:
+            self._progress_writer(
+                make_progress_notification(token, 0.0, total=1.0, message=f"start {name}")
+            )
         result = await tool.execute(params.get("arguments") or {})
+        if token is not None and self._progress_writer is not None:
+            self._progress_writer(
+                make_progress_notification(token, 1.0, total=1.0, message=f"done {name}")
+            )
         if result.ok:
             text = result.output if isinstance(result.output, str) else _as_json(result.output)
             return {"content": [{"type": "text", "text": text}], "isError": False}
@@ -196,11 +217,13 @@ class MCPServer:
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "mcp_server",
+            "subset": "tools, resources, prompts over stdio (+ progress notifications)",
             "name": self.name,
             "version": self.version,
             "protocol": PROTOCOL_VERSION,
             "tools": sorted(self._tools),
             "knowledge": self.knowledge,
+            "progress": self._progress_writer is not None,
             "resources": [r.uri for r in self._resources()],
             "prompts": [p.name for p in self._prompts()],
         }

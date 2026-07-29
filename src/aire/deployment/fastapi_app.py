@@ -7,6 +7,7 @@ rate limiting, and a task-specific invocation endpoint:
 - ``Agent``    → POST /v1/run       {"input": "..."}
 - ``Knowledge``→ POST /v1/ask       {"question": "..."}
 - ``Model``    → POST /v1/generate  {"prompt": "..."}
+- ``Team``     → POST /v1/team/run  {"task": "..."}
 """
 
 from __future__ import annotations
@@ -30,12 +31,13 @@ else:
 
 if TYPE_CHECKING:
     from aire.agents.agent import Agent
+    from aire.agents.team import Team
     from aire.observability.metrics import Metrics
     from aire.rag.pipeline import Knowledge
 
 
 def create_app(
-    target: Agent | Knowledge | Model,
+    target: Agent | Knowledge | Model | Team,
     *,
     title: str = "aire service",
     auth_token: str | None = None,
@@ -57,7 +59,9 @@ def create_app(
         return JSONResponse(status_code=422, content=exc.to_dict())
 
     _register_meta_routes(app, target, metrics)
-    if isinstance(target, Model):
+    if _is_team(target):
+        _register_team_routes(app, target, guard, metrics)
+    elif isinstance(target, Model):
         _register_model_routes(app, target, guard, metrics)
     elif _is_knowledge(target):
         _register_knowledge_routes(app, target, guard, metrics)
@@ -93,7 +97,16 @@ def _register_meta_routes(app: Any, target: Any, metrics: Metrics | None) -> Non
 
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
-        return {"status": "ready", "target": _target_name(target)}
+        runtime_ok = _runtime_present(target)
+        status = "ready" if runtime_ok else "degraded"
+        payload: dict[str, Any] = {
+            "status": status,
+            "target": _target_name(target),
+            "runtime_present": runtime_ok,
+        }
+        if not runtime_ok:
+            payload["warning"] = "target has no attached runtime"
+        return payload
 
     @app.get("/manifest")
     async def manifest() -> dict[str, Any]:
@@ -173,13 +186,52 @@ def _register_agent_routes(app: Any, target: Any, guard: Any, metrics: Metrics |
         }
 
 
+def _register_team_routes(app: Any, target: Any, guard: Any, metrics: Metrics | None) -> None:
+    @app.post("/v1/team/run", dependencies=[Depends(guard)])
+    async def team_run(body: dict[str, Any]) -> dict[str, Any]:
+        task = body.get("task") or body.get("input")
+        if not isinstance(task, str) or not task:
+            raise HTTPException(status_code=400, detail="'task' (string) is required")
+        started = time.perf_counter()
+        result = await target.run(task)
+        if metrics is not None:
+            metrics.observe_latency("team.run", (time.perf_counter() - started) * 1000.0)
+            metrics.record_cost(result.usage.cost_usd, model=_target_name(target))
+        return {
+            "answer": result.answer,
+            "rounds": result.rounds,
+            "delegations": [d.model_dump(mode="json") for d in result.delegations],
+            "usage": result.usage.model_dump(),
+        }
+
+
 def _is_knowledge(target: Any) -> bool:
     from aire.rag.pipeline import Knowledge
 
     return isinstance(target, Knowledge)
 
 
+def _is_team(target: Any) -> bool:
+    from aire.agents.team import Team
+
+    return isinstance(target, Team)
+
+
+def _runtime_present(target: Any) -> bool:
+    """True when the target (or nested agent/knowledge) exposes a runtime."""
+    if getattr(target, "runtime", None) is not None:
+        return True
+    if isinstance(target, Model):
+        return True  # models are usable without a shared Runtime
+    if _is_team(target):
+        members = getattr(target, "members", {}) or {}
+        return any(getattr(m, "runtime", None) is not None for m in members.values())
+    return False
+
+
 def _target_name(target: Any) -> str:
     if isinstance(target, Model):
         return target.info.ref
+    if _is_team(target):
+        return getattr(target, "name", None) or "team"
     return getattr(target, "name", type(target).__name__)

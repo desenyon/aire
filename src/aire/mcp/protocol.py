@@ -1,7 +1,7 @@
 """Model Context Protocol wire format: JSON-RPC 2.0, newline-delimited.
 
-Only the tool surface is implemented (initialize, ping, tools/list,
-tools/call) — the subset agents need. No external dependencies.
+aire implements a **subset of MCP**: tools, resources, prompts, plus client-side
+roots/sampling handlers and progress notifications. No external dependencies.
 """
 
 from __future__ import annotations
@@ -34,6 +34,22 @@ def make_notification(method: str, params: dict[str, Any] | None = None) -> str:
     return json.dumps(message)
 
 
+def make_progress_notification(
+    progress_token: str | int,
+    progress: float,
+    *,
+    total: float | None = None,
+    message: str | None = None,
+) -> str:
+    """Build a ``notifications/progress`` JSON-RPC notification."""
+    params: dict[str, Any] = {"progressToken": progress_token, "progress": progress}
+    if total is not None:
+        params["total"] = total
+    if message is not None:
+        params["message"] = message
+    return make_notification("notifications/progress", params)
+
+
 def make_response(request_id: Any, result: Any) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result})
 
@@ -53,3 +69,17 @@ def parse_message(line: str) -> dict[str, Any]:
     if not isinstance(data, dict) or data.get("jsonrpc") != "2.0":
         raise MCPError("not a JSON-RPC 2.0 message", context={"frame": line[:200]})
     return data
+
+
+def client_capabilities(
+    *,
+    roots: bool = True,
+    sampling: bool = True,
+) -> dict[str, Any]:
+    """Default client capability advertisement for initialize."""
+    caps: dict[str, Any] = {}
+    if roots:
+        caps["roots"] = {"listChanged": False}
+    if sampling:
+        caps["sampling"] = {}
+    return caps

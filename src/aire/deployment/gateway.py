@@ -20,6 +20,7 @@ The request ``model`` field accepts an exposed alias, an exposed ref, or (when
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -37,6 +38,7 @@ from aire.core.errors import (
     PermissionDeniedError,
     ProviderError,
     RateLimitError,
+    SafetyError,
 )
 from aire.core.runtime import Runtime
 from aire.deployment.fastapi_app import _make_guard
@@ -53,17 +55,18 @@ from aire.models.types import (
 
 if TYPE_CHECKING:
     from fastapi import Depends, FastAPI, Request
-    from fastapi.responses import JSONResponse, StreamingResponse
+    from fastapi.responses import JSONResponse, Response, StreamingResponse
 else:
     try:  # optional dependency: aire[serve]
         from fastapi import Depends, FastAPI, Request
-        from fastapi.responses import JSONResponse, StreamingResponse
+        from fastapi.responses import JSONResponse, Response, StreamingResponse
     except ImportError:  # pragma: no cover - exercised only without the extra
-        Depends = FastAPI = Request = JSONResponse = StreamingResponse = None
+        Depends = FastAPI = Request = JSONResponse = Response = StreamingResponse = None
 
 if TYPE_CHECKING:
     from aire.observability.metrics import Metrics
     from aire.optimization.router import Objective
+    from aire.safety.guardrails import Guardrail, GuardrailChain
 
 RoutingMode = Literal["first", "round_robin"]
 
@@ -93,6 +96,7 @@ class Gateway:
         semantic_cache: bool = False,
         semantic_threshold: float = 0.95,
         semantic_embedder: str | EmbeddingModel | None = None,
+        semantic_cache_redis_url: str | None = None,
     ) -> None:
         if routing not in ("first", "round_robin"):
             raise ConfigurationError(
@@ -119,6 +123,8 @@ class Gateway:
             semantic_embedder if isinstance(semantic_embedder, EmbeddingModel) else None
         )
         self._semantic_entries: list[tuple[str, list[float], str, GenerationResult]] = []
+        self._semantic_redis_url = semantic_cache_redis_url
+        self._semantic_redis_backend: Any = None
         self.semantic_hits = 0
         self.semantic_misses = 0
         self._round_robin: dict[str, int] = defaultdict(int)
@@ -268,6 +274,18 @@ class Gateway:
             self._semantic_embedder = await self._models.embedder(spec)
         return self._semantic_embedder
 
+    async def _get_semantic_redis(self) -> Any | None:
+        if not self._semantic_redis_url:
+            return None
+        if self._semantic_redis_backend is not None:
+            return self._semantic_redis_backend
+        from aire.optimization.redis_cache import RedisCacheBackend
+
+        self._semantic_redis_backend = RedisCacheBackend(
+            self._semantic_redis_url, prefix="aire:gateway:sem:"
+        )
+        return self._semantic_redis_backend
+
     async def _semantic_lookup(
         self, public: str, request: GenerationRequest
     ) -> tuple[str, GenerationResult] | None:
@@ -280,6 +298,24 @@ class Gateway:
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = f"{public}|{_params_signature(request)}"
         vector = await embedder.embed_one(prompt)
+
+        redis = await self._get_semantic_redis()
+        if redis is not None:
+            import json
+
+            raw = await redis.aget(signature)
+            if raw:
+                try:
+                    payload = json.loads(raw)
+                    for item in payload:
+                        if cosine_similarity(vector, item["vector"]) >= self.semantic_threshold:
+                            self.semantic_hits += 1
+                            return item["ref"], GenerationResult.model_validate(item["result"])
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    pass
+            self.semantic_misses += 1
+            return None
+
         for cached_sig, cached_vec, cached_ref, result in self._semantic_entries:
             if cached_sig != signature:
                 continue
@@ -300,6 +336,27 @@ class Gateway:
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = f"{public}|{_params_signature(request)}"
         vector = await embedder.embed_one(prompt)
+
+        redis = await self._get_semantic_redis()
+        if redis is not None:
+            import json
+
+            existing: list[dict[str, Any]] = []
+            raw = await redis.aget(signature)
+            if raw:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    existing = list(json.loads(raw))
+            existing.append(
+                {
+                    "vector": vector,
+                    "ref": public,
+                    "result": result.model_dump(mode="json"),
+                }
+            )
+            existing = existing[-32:]
+            await redis.aset(signature, json.dumps(existing), ttl_seconds=3600)
+            return
+
         if len(self._semantic_entries) >= 1024:
             self._semantic_entries.pop(0)
         self._semantic_entries.append((signature, vector, public, result.model_copy(deep=True)))
@@ -311,7 +368,9 @@ class Gateway:
         cached = await self._semantic_lookup(public, request)
         if cached is not None:
             ref, result = cached
-            yield ref, GenerationChunk(text=result.text, finish_reason="stop")
+            yield ref, GenerationChunk(
+                text=result.text, finish_reason="stop", usage=result.usage
+            )
             return
 
         chain = await self._chat_chain(public)
@@ -319,11 +378,14 @@ class Gateway:
         for ref, model in chain if self.fallback else chain[:1]:
             started = False
             pieces: list[str] = []
+            cost_usd = 0.0
             try:
                 async for chunk in model.stream(request):
                     started = True
                     if chunk.text:
                         pieces.append(chunk.text)
+                    if chunk.usage is not None:
+                        cost_usd += float(chunk.usage.cost_usd or 0.0)
                     yield ref, chunk
             except Exception as exc:
                 self._record_failure(ref)
@@ -331,7 +393,7 @@ class Gateway:
                 if started:
                     raise
                 continue
-            self._record_success(public, ref, 0.0)
+            self._record_success(public, ref, cost_usd)
             if pieces and self.semantic_cache:
                 await self._semantic_store(
                     public,
@@ -383,6 +445,7 @@ class Gateway:
                 "hits": self.semantic_hits,
                 "misses": self.semantic_misses,
                 "entries": len(self._semantic_entries),
+                "redis": bool(self._semantic_redis_url),
             },
             "endpoints": [
                 "/health",
@@ -390,7 +453,10 @@ class Gateway:
                 "/v1/chat/completions",
                 "/v1/messages",
                 "/v1/embeddings",
+                "/v1/images/generations",
                 "/v1/models",
+                "/v1/providers",
+                "/v1/metrics",
                 "/v1/gateway/manifest",
                 "/v1/gateway/spend",
             ],
@@ -419,6 +485,8 @@ def create_gateway(
     semantic_cache: bool = False,
     semantic_threshold: float = 0.95,
     semantic_embedder: str | EmbeddingModel | None = None,
+    semantic_cache_redis_url: str | None = None,
+    guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
 ) -> Any:
     """Build an OpenAI-compatible gateway app. Requires ``pip install aire[serve]``."""
     if FastAPI is None:
@@ -431,6 +499,12 @@ def create_gateway(
 
         runtime = default_runtime()
 
+    import os
+
+    from aire.safety.guardrails import resolve_guardrails
+
+    redis_url = semantic_cache_redis_url or os.environ.get("AIRE_REDIS_URL")
+    safety_chain = resolve_guardrails(guardrails, safety=runtime.settings.safety)
     chat_routes = _normalize_routes(models=models, aliases=aliases)
     gateway = Gateway(
         runtime,
@@ -447,6 +521,7 @@ def create_gateway(
         semantic_cache=semantic_cache,
         semantic_threshold=semantic_threshold,
         semantic_embedder=semantic_embedder,
+        semantic_cache_redis_url=redis_url if semantic_cache else None,
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
     log = _make_request_logger(request_log)
@@ -457,9 +532,13 @@ def create_gateway(
         return JSONResponse(status_code=_error_status(exc), content=_error_body(exc))
 
     _register_meta_routes(app, gateway, guard)
-    _register_chat_route(app, gateway, guard, runtime, metrics, log)
-    _register_anthropic_route(app, gateway, guard, runtime, metrics, log)
+    _register_chat_route(app, gateway, guard, runtime, metrics, log, safety_chain)
+    _register_anthropic_route(app, gateway, guard, runtime, metrics, log, safety_chain)
     _register_embeddings_route(app, gateway, guard, runtime, metrics, log)
+    _register_images_route(app, gateway, guard, runtime, metrics, log)
+    _register_providers_route(app, gateway, guard)
+    if metrics is not None:
+        _register_metrics_route(app, metrics, guard)
     return app
 
 
@@ -526,11 +605,14 @@ def _register_chat_route(
     runtime: Runtime,
     metrics: Metrics | None,
     log: Any,
+    safety_chain: Any | None = None,
 ) -> None:
     @app.post("/v1/chat/completions", dependencies=[Depends(guard)])
     async def chat_completions(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = _build_generation_request(body)
+        request = await _guard_generation_request(
+            _build_generation_request(body), safety_chain
+        )
         if body.get("stream"):
             return StreamingResponse(
                 _sse_stream(gateway, public, request, metrics),
@@ -540,6 +622,7 @@ def _register_chat_route(
         started = time.perf_counter()
         with _maybe_span(runtime, "gateway.chat", {"model": public}):
             resolved, result = await gateway.generate(public, request)
+        result = await _guard_generation_result(result, safety_chain)
         _record_chat_metrics(metrics, started, result, public=public)
         _log_request(log, "chat.completions", public, resolved, result, started)
         return JSONResponse(
@@ -555,14 +638,28 @@ def _register_anthropic_route(
     runtime: Runtime,
     metrics: Metrics | None,
     log: Any,
+    safety_chain: Any | None = None,
 ) -> None:
     @app.post("/v1/messages", dependencies=[Depends(guard)])
     async def anthropic_messages(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = _build_anthropic_request(body)
+        request = await _guard_generation_request(
+            _build_anthropic_request(body), safety_chain
+        )
+        if body.get("stream"):
+            return StreamingResponse(
+                _anthropic_sse_stream(gateway, public, request, metrics),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Aire-Streaming": "anthropic-sse",
+                },
+            )
         started = time.perf_counter()
         with _maybe_span(runtime, "gateway.messages", {"model": public}):
             resolved, result = await gateway.generate(public, request)
+        result = await _guard_generation_result(result, safety_chain)
         _record_chat_metrics(metrics, started, result, public=public)
         _log_request(log, "messages", public, resolved, result, started)
         return JSONResponse(
@@ -603,6 +700,106 @@ def _register_embeddings_route(
             },
             "aire": {"resolved_model": resolved},
         }
+
+
+def _register_images_route(
+    app: Any,
+    gateway: Gateway,
+    guard: Any,
+    runtime: Runtime,
+    metrics: Metrics | None,
+    log: Any,
+) -> None:
+    @app.post("/v1/images/generations", dependencies=[Depends(guard)])
+    async def create_image(body: dict[str, Any]) -> Any:
+        from aire.core.types import Capability
+        from aire.vision.pipelines import ImageGenerationPipeline
+
+        public = _require_model_name(body)
+        prompt = body.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ConfigurationError(
+                "'prompt' (string) is required",
+                code="gateway.bad_request",
+            )
+        size = str(body.get("size") or "1024x1024")
+        n = int(body.get("n") or 1)
+        # Resolve the first candidate to inspect image-generation capability.
+        chain = await gateway._chat_chain(public)
+        resolved, model = chain[0]
+        if not model.info.supports(Capability.IMAGE_GENERATION):
+            return JSONResponse(
+                status_code=501,
+                content={
+                    "error": {
+                        "message": (
+                            "aire does not synthesize images via chat scrape. "
+                            f"Model {resolved!r} lacks the image-generation capability. "
+                            "Use a provider/model that advertises Capability.IMAGE_GENERATION."
+                        ),
+                        "type": "not_implemented_error",
+                        "code": "gateway.images_not_supported",
+                    }
+                },
+            )
+        started = time.perf_counter()
+        images = []
+        pipeline = ImageGenerationPipeline(model)
+        with _maybe_span(runtime, "gateway.images", {"model": public}):
+            for _ in range(max(1, min(n, 4))):
+                img = await pipeline.generate(prompt, size=size)
+                if img.stub or (not img.uri and not img.b64):
+                    return JSONResponse(
+                        status_code=501,
+                        content={
+                            "error": {
+                                "message": (
+                                    "ImageGenerationPipeline returned a stub result "
+                                    "(no real image URI/bytes). aire will not pretend "
+                                    "chat text is an image."
+                                ),
+                                "type": "not_implemented_error",
+                                "code": "gateway.images_stub",
+                            }
+                        },
+                    )
+                images.append(
+                    {
+                        "url": img.uri,
+                        "b64_json": img.b64,
+                        "revised_prompt": prompt,
+                    }
+                )
+                if metrics is not None:
+                    metrics.record_tokens(0, 0, model=resolved)
+        if metrics is not None:
+            metrics.observe_latency("gateway.images", (time.perf_counter() - started) * 1000.0)
+        return {
+            "created": int(time.time()),
+            "data": images,
+            "aire": {"resolved_model": resolved, "size": size},
+        }
+
+
+def _register_providers_route(app: Any, gateway: Gateway, guard: Any) -> None:
+    @app.get("/v1/providers", dependencies=[Depends(guard)])
+    async def list_providers() -> dict[str, Any]:
+        from aire.integrations.openai_compat import describe_endpoints
+
+        return {
+            "object": "list",
+            "gateway": gateway.describe(),
+            "openai_compatible": describe_endpoints(),
+        }
+
+
+def _register_metrics_route(app: Any, metrics: Metrics, guard: Any) -> None:
+    @app.get("/v1/metrics", dependencies=[Depends(guard)])
+    async def prometheus_metrics() -> Any:
+        from aire.observability.analytics import Analytics
+
+        body = Analytics(metrics).prometheus()
+        return Response(content=body, media_type="text/plain; version=0.0.4")
 
 
 def _embedding_inputs(raw_input: Any) -> list[str]:
@@ -776,7 +973,7 @@ async def _sse_stream(
     started = time.perf_counter()
     emitted_role = False
     try:
-        async for resolved, chunk in gateway.stream(public, request):
+        async for _resolved, chunk in gateway.stream(public, request):
             if not emitted_role:
                 yield _sse(_chunk({"role": "assistant"}))
                 yield _sse({"aire": {"resolved_model": resolved}})
@@ -817,11 +1014,51 @@ def _error_status(exc: AireError) -> int:
         return 502
     if isinstance(exc, PermissionDeniedError):
         return 403
+    if isinstance(exc, SafetyError):
+        return 400
     if isinstance(exc, (ConfigurationError, ContextLengthError)):
         return 400
     if isinstance(exc, ProviderError):
         return exc.status or 502
     return 500
+
+
+async def _guard_generation_request(
+    request: GenerationRequest, chain: Any | None
+) -> GenerationRequest:
+    if chain is None:
+        return request
+    from aire.core.content import Message, TextContent
+
+    messages: list[Message] = []
+    for message in request.messages:
+        text = message.text_content
+        scrubbed, _ = await chain.aapply(text, stage="input")
+        if scrubbed == text:
+            messages.append(message)
+            continue
+        messages.append(
+            Message(
+                role=message.role,
+                content=[TextContent(text=scrubbed)],
+                name=message.name,
+                tool_call_id=message.tool_call_id,
+            )
+        )
+    return request.with_messages(messages)
+
+
+async def _guard_generation_result(
+    result: GenerationResult, chain: Any | None
+) -> GenerationResult:
+    if chain is None:
+        return result
+    from aire.core.content import TextContent
+
+    scrubbed, _ = await chain.aapply(result.text, stage="output")
+    if scrubbed == result.text:
+        return result
+    return result.model_copy(update={"content": [TextContent(text=scrubbed)]})
 
 
 def _error_body(exc: AireError) -> dict[str, Any]:
@@ -882,9 +1119,13 @@ def _maybe_span(runtime: Runtime, name: str, attributes: dict[str, Any]) -> Any:
 # -- anthropic-compatible endpoint --------------------------------------------------------
 
 
-def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:
-    """Translate an Anthropic /v1/messages body into a GenerationRequest."""
-    from aire.core.content import Message, TextContent
+def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa: C901
+    """Translate an Anthropic /v1/messages body into a GenerationRequest.
+
+    Supports text and image content blocks (base64 / url), tools, tool_choice,
+    and multi-turn tool_use / tool_result messages.
+    """
+    from aire.core.content import Message, StructuredContent, TextContent
 
     messages: list[Message] = []
     system = _content_text(body.get("system"))
@@ -894,18 +1135,226 @@ def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:
         if not isinstance(raw, dict):
             continue
         role = raw.get("role", "user")
+        content = raw.get("content")
+        # Expand Anthropic tool_result user turns into aire tool messages.
+        if isinstance(content, list) and any(
+            isinstance(p, dict) and p.get("type") == "tool_result" for p in content
+        ):
+            for part in content:
+                if not isinstance(part, dict) or part.get("type") != "tool_result":
+                    continue
+                tool_use_id = str(part.get("tool_use_id") or "")
+                messages.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tool_use_id or None,
+                        content=[TextContent(text=_content_text(part.get("content")))],
+                    )
+                )
+            continue
         if role not in ("user", "assistant"):
             role = "user"
-        messages.append(
-            Message(role=role, content=[TextContent(text=_content_text(raw.get("content")))])
+        blocks = _anthropic_content_blocks(content)
+        if not blocks:
+            blocks = [TextContent(text=_content_text(content))]
+        # Keep tool_use as structured blocks on assistant turns.
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    blocks.append(
+                        StructuredContent(
+                            data={
+                                "type": "tool_use",
+                                "id": part.get("id"),
+                                "name": part.get("name"),
+                                "input": part.get("input") or {},
+                            }
+                        )
+                    )
+        messages.append(Message(role=role, content=blocks))
+    tools: list[ToolDefinition] = []
+    for raw_tool in body.get("tools") or []:
+        if not isinstance(raw_tool, dict):
+            continue
+        name = raw_tool.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        tools.append(
+            ToolDefinition(
+                name=name,
+                description=str(raw_tool.get("description") or ""),
+                parameters=raw_tool.get("input_schema")
+                or raw_tool.get("parameters")
+                or {"type": "object", "properties": {}},
+            )
         )
+    tool_choice_str = _map_anthropic_tool_choice(body.get("tool_choice"))
     stop_raw = body.get("stop_sequences")
     return GenerationRequest(
         messages=messages,
         temperature=body.get("temperature"),
         max_tokens=body.get("max_tokens") or 1024,
         stop=stop_raw if isinstance(stop_raw, list) else None,
+        tools=tools or None,
+        tool_choice=tool_choice_str,
     )
+
+
+def _map_anthropic_tool_choice(tool_choice: Any) -> str | None:
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if not isinstance(tool_choice, dict):
+        return None
+    kind = tool_choice.get("type")
+    if kind == "auto":
+        return "auto"
+    if kind == "any":
+        return "required"
+    if kind == "none":
+        return "none"
+    if kind == "tool":
+        name = tool_choice.get("name")
+        return str(name) if name else "required"
+    return str(kind) if kind else None
+
+
+def _anthropic_content_blocks(content: Any) -> list[Any]:  # noqa: C901
+    """Parse Anthropic content blocks into aire TextContent / ImageContent."""
+    import base64
+    import binascii
+
+    from aire.core.content import ImageContent, TextContent
+
+    if isinstance(content, str):
+        return [TextContent(text=content)] if content else []
+    if not isinstance(content, list):
+        return []
+    blocks: list[Any] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind == "text":
+            text = str(part.get("text") or "")
+            if text:
+                blocks.append(TextContent(text=text))
+        elif kind == "image":
+            source = part.get("source") or {}
+            if not isinstance(source, dict):
+                continue
+            src_type = source.get("type")
+            if src_type == "base64":
+                data = source.get("data")
+                media = str(source.get("media_type") or "image/png")
+                if isinstance(data, str) and data:
+                    try:
+                        raw = base64.b64decode(data, validate=True)
+                    except (binascii.Error, ValueError):
+                        continue
+                    blocks.append(ImageContent(data=raw, media_type=media))
+            elif src_type == "url":
+                url = source.get("url")
+                if isinstance(url, str) and url:
+                    blocks.append(ImageContent.from_uri(url))
+        elif kind == "tool_use":
+            # Handled by _build_anthropic_request via StructuredContent.
+            continue
+        elif kind == "tool_result":
+            # Handled by _build_anthropic_request as role=tool messages.
+            continue
+    return blocks
+
+
+async def _anthropic_sse_stream(
+    gateway: Gateway, public: str, request: GenerationRequest, metrics: Metrics | None
+) -> AsyncIterator[str]:
+    """Anthropic-compatible SSE stream for ``/v1/messages?stream``."""
+    msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+    started = time.perf_counter()
+    resolved = "unknown"
+    output_tokens = 0
+    block_index = 0
+    stop_reason = "end_turn"
+    try:
+        yield _sse(
+            {
+                "type": "message_start",
+                "message": {
+                    "id": msg_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "model": public,
+                },
+            }
+        )
+        yield _sse(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            }
+        )
+        async for resolved_ref, chunk in gateway.stream(public, request):
+            resolved = resolved_ref
+            if chunk.usage is not None:
+                output_tokens = max(output_tokens, chunk.usage.output_tokens)
+            if chunk.text:
+                yield _sse(
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": chunk.text},
+                    }
+                )
+            for tc in chunk.tool_calls:
+                stop_reason = "tool_use"
+                block_index += 1
+                yield _sse(
+                    {
+                        "type": "content_block_start",
+                        "index": block_index,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": tc.id,
+                            "name": tc.name,
+                            "input": {},
+                        },
+                    }
+                )
+                yield _sse(
+                    {
+                        "type": "content_block_delta",
+                        "index": block_index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": json.dumps(tc.arguments),
+                        },
+                    }
+                )
+                yield _sse({"type": "content_block_stop", "index": block_index})
+            if chunk.finish_reason == "tool_calls":
+                stop_reason = "tool_use"
+            elif chunk.finish_reason == "length":
+                stop_reason = "max_tokens"
+        yield _sse({"type": "content_block_stop", "index": 0})
+        yield _sse(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": stop_reason},
+                "usage": {"output_tokens": output_tokens},
+            }
+        )
+        yield _sse({"type": "message_stop"})
+        yield _sse({"aire": {"resolved_model": resolved}})
+    except Exception as exc:
+        error = exc if isinstance(exc, AireError) else ProviderError("gateway", str(exc))
+        yield _sse({"type": "error", "error": _error_body(error)["error"]})
+    finally:
+        if metrics is not None:
+            metrics.observe_latency(
+                "gateway.messages.stream", (time.perf_counter() - started) * 1000.0
+            )
 
 
 _ANTHROPIC_STOP = {
@@ -918,11 +1367,25 @@ _ANTHROPIC_STOP = {
 
 
 def _anthropic_body(public: str, resolved: str, result: GenerationResult) -> dict[str, Any]:
+    content: list[dict[str, Any]] = []
+    if result.text:
+        content.append({"type": "text", "text": result.text})
+    for tc in result.tool_calls:
+        content.append(
+            {
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "input": tc.arguments,
+            }
+        )
+    if not content:
+        content.append({"type": "text", "text": ""})
     return {
         "id": f"msg_{uuid.uuid4().hex[:24]}",
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": result.text}],
+        "content": content,
         "model": public,
         "stop_reason": _ANTHROPIC_STOP.get(result.finish_reason, "end_turn"),
         "usage": {

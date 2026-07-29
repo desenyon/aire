@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from aire.core.content import TextContent
 from aire.core.errors import AuthenticationError
+from aire.core.plugins import PluginInfo
 from aire.core.types import Capability, HealthStatus, Usage
 from aire.integrations.http import ProviderHttpClient
 from aire.models.base import Model
@@ -60,14 +61,31 @@ class AnthropicModel(Model):
 
     def _payload(self, request: GenerationRequest, *, stream: bool) -> dict[str, Any]:
         system = "\n".join(m.text_content for m in request.messages if m.role == "system")
-        messages = [
-            {
-                "role": m.role if m.role in {"user", "assistant"} else "user",
-                "content": m.text_content,
-            }
-            for m in request.messages
-            if m.role != "system"
-        ]
+        messages: list[dict[str, Any]] = []
+        for m in request.messages:
+            if m.role == "system":
+                continue
+            if m.role == "tool":
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": m.tool_call_id or "",
+                                "content": m.text_content,
+                            }
+                        ],
+                    }
+                )
+                continue
+            content = self._anthropic_content(m)
+            messages.append(
+                {
+                    "role": m.role if m.role in {"user", "assistant"} else "user",
+                    "content": content,
+                }
+            )
         payload: dict[str, Any] = {
             "model": self._name,
             "messages": messages,
@@ -88,9 +106,63 @@ class AnthropicModel(Model):
                 }
                 for t in request.tools
             ]
+        if request.tool_choice is not None:
+            payload["tool_choice"] = self._tool_choice(request.tool_choice)
         if stream:
             payload["stream"] = True
         return payload
+
+    @staticmethod
+    def _tool_choice(choice: str) -> dict[str, Any]:
+        if choice == "auto":
+            return {"type": "auto"}
+        if choice == "required":
+            return {"type": "any"}
+        if choice == "none":
+            return {"type": "none"}
+        return {"type": "tool", "name": choice}
+
+    @staticmethod
+    def _anthropic_content(message: Any) -> Any:
+        from aire.core.content import ImageContent, StructuredContent, TextContent
+
+        blocks: list[dict[str, Any]] = []
+        for part in message.content:
+            if isinstance(part, TextContent) and part.text:
+                blocks.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImageContent):
+                if part.data is not None:
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": part.media_type or "image/png",
+                                "data": part.as_base64(),
+                            },
+                        }
+                    )
+                elif part.uri:
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": part.uri},
+                        }
+                    )
+            elif (
+                isinstance(part, StructuredContent)
+                and isinstance(part.data, dict)
+                and part.data.get("type") == "tool_use"
+            ):
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": part.data.get("id") or "",
+                        "name": part.data.get("name") or "",
+                        "input": part.data.get("input") or {},
+                    }
+                )
+        return blocks if blocks else message.text_content
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         payload = self._payload(request, stream=False)
@@ -146,7 +218,7 @@ class AnthropicModel(Model):
         return HealthStatus.healthy()
 
 
-def register(runtime: Runtime) -> None:
+def register(runtime: Runtime) -> PluginInfo:
     def _factory(name: str, *, runtime: Runtime, **options: Any) -> Model:
         cred = runtime.settings.credential("anthropic")
         api_key = options.get("api_key") or cred.resolve_key("ANTHROPIC_API_KEY")
@@ -169,3 +241,12 @@ def register(runtime: Runtime) -> None:
         return AnthropicModel(name, client)
 
     runtime.model_providers.register("anthropic", _factory, replace=True)
+    return PluginInfo(name="anthropic", version="0.1.0", provides=["model:anthropic"])
+
+
+class AnthropicProvider:
+    """Entry-point target for the ``anthropic`` provider."""
+
+    @staticmethod
+    def register(runtime: Runtime) -> PluginInfo:
+        return register(runtime)
