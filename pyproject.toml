@@ -52,7 +52,7 @@ datasets = ["datasets>=2.18"]
 ml = ["scikit-learn>=1.4", "pandas>=2.0"]
 torch = ["torch>=2.2"]
 keras = ["keras>=3.0"]
-xgboost = ["xgboost>=2.0"]
+xgboost = ["xgboost>=3.2.0"]
 lightgbm = ["lightgbm>=4.0"]
 catboost = ["catboost>=1.2"]
 polars = ["polars>=0.20"]
@@ -77,7 +77,7 @@ all = [
     "pillow>=10.0",
     "torch>=2.2",
     "keras>=3.0",
-    "xgboost>=2.0",
+    "xgboost>=3.2.0",
     "lightgbm>=4.0",
     "catboost>=1.2",
     "polars>=0.20",
