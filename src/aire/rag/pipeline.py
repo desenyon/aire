@@ -22,6 +22,7 @@ from aire.rag.types import Answer, Chunk, Citation, Document, IndexReport, Score
 
 if TYPE_CHECKING:
     from aire.core.runtime import Runtime
+    from aire.safety.guardrails import Guardrail, GuardrailChain
 
 DEFAULT_PROMPT = (
     "Answer the question using only the context below. "
@@ -48,6 +49,7 @@ class Knowledge:
         compressor: str | Any | None = "truncate",
         max_context_chars: int = 4000,
         default_acl: dict[str, Any] | None = None,
+        guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
     ) -> None:
         self.runtime = runtime
         self.store = store or LocalVectorStore()
@@ -63,7 +65,11 @@ class Knowledge:
         self._retriever: Retriever | None = None
         self._rewriter: Any | None = None
         self._compressor: Any | None = None
+        from aire.safety.guardrails import resolve_guardrails
 
+        self.guardrails = resolve_guardrails(
+            guardrails, safety=runtime.settings.safety
+        )
     # -- ingestion -----------------------------------------------------------------
 
     async def _embedder(self) -> EmbeddingModel:
@@ -235,31 +241,41 @@ class Knowledge:
         filter: dict[str, Any] | None = None,
         template: str | None = None,
         compress: bool = True,
+        rewrite: bool = True,
         **generate_kwargs: Any,
     ) -> Answer:
         """Retrieve context and generate a grounded answer with citations."""
-        hits = await self.retrieve(question, k=k, filter=filter)
+        question_text = question
+        if self.guardrails is not None:
+            question_text, _ = await self.guardrails.aapply(question, stage="input")
+        hits = await self.retrieve(question_text, k=k, filter=filter, rewrite=rewrite)
         resolved = await self._resolve_model(model)
         if compress:
             compressor = await self._get_compressor(resolved)
             context = await compressor.compress(
-                question, hits, max_chars=self.max_context_chars
+                question_text, hits, max_chars=self.max_context_chars
             )
         else:
             context = "\n\n".join(f"[{i + 1}] {hit.chunk.text}" for i, hit in enumerate(hits))
-        prompt = (template or self.prompt_template).format(context=context, question=question)
+        prompt = (template or self.prompt_template).format(
+            context=context, question=question_text
+        )
         from aire.models.types import GenerationRequest
 
         request = GenerationRequest.of(prompt, **generate_kwargs)
         tracer = self.runtime.tracer
         if tracer is not None:
-            async with tracer.aspan("rag.ask", attributes={"question": question, "k": k}):
+            async with tracer.aspan("rag.ask", attributes={"question": question_text, "k": k}):
                 gen = await resolved.generate(request)
         else:
             gen = await resolved.generate(request)
 
+        answer_text = gen.text
+        if self.guardrails is not None:
+            answer_text, _ = await self.guardrails.aapply(answer_text, stage="output")
+
         answer = Answer(
-            text=gen.text,
+            text=answer_text,
             model=resolved.info.ref,
             retrieved=len(hits),
             usage=gen.usage,
@@ -277,7 +293,7 @@ class Knowledge:
             ]
         self.runtime.events.emit(
             "rag.answered",
-            {"question": question, "retrieved": len(hits), "model": resolved.info.ref},
+            {"question": question_text, "retrieved": len(hits), "model": resolved.info.ref},
             source="rag",
         )
         return answer
@@ -301,4 +317,5 @@ class Knowledge:
             "compressor": self.compressor_spec,
             "max_context_chars": self.max_context_chars,
             "default_acl": self.default_acl,
+            "guardrails": None if self.guardrails is None else self.guardrails.describe(),
         }

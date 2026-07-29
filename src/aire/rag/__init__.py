@@ -1,8 +1,11 @@
 """Retrieval-augmented generation: stores, retrievers, rerankers, pipeline."""
 
+from aire.rag.incremental import IncrementalIndex
+from aire.rag.incremental import wrap as wrap_incremental
 from aire.rag.pipeline import Knowledge
 from aire.rag.rerank import (
     EmbeddingReranker,
+    HFCrossEncoderReranker,
     IdentityReranker,
     LexicalOverlapReranker,
     ModelReranker,
@@ -20,7 +23,9 @@ __all__ = [
     "Citation",
     "Document",
     "EmbeddingReranker",
+    "HFCrossEncoderReranker",
     "IdentityReranker",
+    "IncrementalIndex",
     "IndexReport",
     "Knowledge",
     "LexicalOverlapReranker",
@@ -34,4 +39,5 @@ __all__ = [
     "get_reranker",
     "register",
     "register_reranker",
+    "wrap_incremental",
 ]

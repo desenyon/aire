@@ -69,10 +69,11 @@ _SCORE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
 
 class ModelReranker:
-    """Cross-encoder-style rerank: ask a model to score each (query, passage) pair.
+    """LLM prompt scorer for (query, passage) pairs — not a HuggingFace CrossEncoder.
 
-    Offline-friendly: when the model echoes the prompt, falls back to lexical
-    overlap so tests and CI stay deterministic without a real judge model.
+    Prefer :class:`HFCrossEncoderReranker` (``reranker="hf_cross_encoder"``) for a
+    real cross-encoder. Offline-friendly: when the model echoes the prompt, falls
+    back to lexical overlap so tests stay deterministic without a judge model.
     """
 
     def __init__(self, model: Model, *, weight: float = 1.0) -> None:
@@ -106,13 +107,69 @@ class ModelReranker:
         return rescored[:k]
 
 
+class HFCrossEncoderReranker:
+    """Real HuggingFace CrossEncoder reranker via ``sentence-transformers``.
+
+    Requires ``pip install 'aire[eval]'``. Default model:
+    ``cross-encoder/ms-marco-MiniLM-L-6-v2``.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        *,
+        weight: float = 1.0,
+    ) -> None:
+        self.model_name = model_name
+        self.weight = weight
+        self._encoder: Any = None
+
+    def _load(self) -> Any:
+        if self._encoder is not None:
+            return self._encoder
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError as exc:
+            from aire.core.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "HFCrossEncoderReranker requires sentence-transformers: "
+                "pip install 'aire[eval]'",
+                code="rag.cross_encoder_missing",
+            ) from exc
+        self._encoder = CrossEncoder(self.model_name)
+        return self._encoder
+
+    async def rerank(self, query: str, hits: list[ScoredChunk], *, k: int) -> list[ScoredChunk]:
+        if not hits:
+            return []
+        import asyncio
+
+        encoder = self._load()
+        pairs = [(query, hit.chunk.text) for hit in hits]
+
+        def _predict() -> list[float]:
+            scores = encoder.predict(pairs)
+            return [float(s) for s in scores]
+
+        scores = await asyncio.to_thread(_predict)
+        rescored = [
+            ScoredChunk(chunk=hit.chunk, score=hit.score + self.weight * score)
+            for hit, score in zip(hits, scores, strict=True)
+        ]
+        rescored.sort(key=lambda h: h.score, reverse=True)
+        return rescored[:k]
+
+
 _RERANKERS: dict[str, type] = {
     "none": IdentityReranker,
     "identity": IdentityReranker,
     "lexical": LexicalOverlapReranker,
     "embedding": EmbeddingReranker,
     "model": ModelReranker,
-    "cross_encoder": ModelReranker,
+    "hf_cross_encoder": HFCrossEncoderReranker,
+    # Honest alias: real CE when no LLM model is passed.
+    "cross_encoder": HFCrossEncoderReranker,
 }
 
 
@@ -123,6 +180,11 @@ def get_reranker(name: str = "none", **options: Any) -> Reranker:
         from aire.core.errors import NotFoundError
 
         raise NotFoundError("reranker", name, context={"available": sorted(_RERANKERS)}) from None
+    # Allow callers who still pass model= for the old LLM scorer.
+    if name == "cross_encoder" and "model" in options and "model_name" not in options:
+        model = options.pop("model")
+        if not isinstance(model, str):
+            return ModelReranker(model, **options)
     instance = cls(**options)
     assert isinstance(instance, Reranker)
     return instance

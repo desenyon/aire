@@ -113,7 +113,8 @@ class _ModelsNamespace(_Namespace):
         if backend == "redis":
             from aire.optimization.redis_cache import RedisCachedModel
 
-            return RedisCachedModel(model, **kwargs)
+            url = kwargs.pop("url", None)
+            return RedisCachedModel(model, backend=url, **kwargs)
         if kwargs.get("embedder") is not None or kwargs.pop("semantic", False):
             from aire.optimization.cache import SemanticCachedModel
 
@@ -184,7 +185,18 @@ class _RagNamespace(_Namespace):
         return cast("VectorStore", store)
 
     def describe(self) -> dict[str, Any]:
-        return {"stores": self._rt().vector_stores.names()}
+        return {
+            "stores": self._rt().vector_stores.names(),
+            "incremental": "AI.rag.incremental(knowledge)",
+        }
+
+    def incremental(self, knowledge: Knowledge | None = None, **options: Any) -> Any:
+        """Wrap a Knowledge pipeline with document-level incremental helpers."""
+        from aire.rag.incremental import IncrementalIndex
+        from aire.rag.pipeline import Knowledge as KnowledgeCls
+
+        pipe = knowledge if knowledge is not None else KnowledgeCls(self._rt(), **options)
+        return IncrementalIndex(pipe)
 
 
 class _AgentsNamespace(_Namespace):
@@ -275,6 +287,28 @@ class _AgentsNamespace(_Namespace):
 
         return topologies
 
+    def builder(self, name: str = "agent") -> Any:
+        """Fluent :class:`~aire.agents.builder.AgentBuilder` for complex agents."""
+        from aire.agents.builder import AgentBuilder
+
+        return AgentBuilder(name, runtime=self._rt())
+
+    def pattern(self, name: str, agent_name: str | None = None) -> Any:
+        """Start a builder preloaded with a named pattern (research/coder/...)."""
+        from aire.agents.patterns import pattern_builder
+
+        return pattern_builder(name, agent_name=agent_name, runtime=self._rt())
+
+    def toolkit(self, name: str, **options: Any) -> list[Tool]:
+        from aire.agents.toolkits import toolkit
+
+        return toolkit(name, **options)
+
+    async def run_stream(self, agent: Agent, input: str) -> Any:
+        """Stream :class:`~aire.agents.streaming.AgentEvent` from an agent run."""
+        async for event in agent.run_stream(input):
+            yield event
+
     def approver(self, kind: str = "rule", **options: Any) -> Any:
         """Build an approval policy: "rule" (side-effect thresholds) or
         "interactive" (human-in-the-loop stdin prompts)."""
@@ -298,9 +332,18 @@ class _AgentsNamespace(_Namespace):
         return {
             "kind": "agents",
             "memory": ["buffer", "jsonl:<path>", "long-term (AI.memory)"],
-            "composition": ["agent.as_tool()", "AI.agents.team(...)", "topologies"],
+            "composition": [
+                "agent.as_tool()",
+                "AI.agents.team(...)",
+                "AI.agents.builder(...)",
+                "AI.agents.pattern(...)",
+                "topologies",
+            ],
             "approvers": ["rule", "interactive", "workflow"],
             "topologies": ["swarm", "debate", "auction", "blackboard"],
+            "patterns": ["research", "coder", "critic", "planner", "rag"],
+            "toolkits": ["web", "code", "data", "filesystem"],
+            "streaming": ["run_stream", "Agent.run_stream"],
         }
 
 
@@ -364,6 +407,12 @@ class _ObserveNamespace(_Namespace):
                 by_model[model] = by_model.get(model, 0.0) + float(value)
         return {"total_usd": total, "by_model": by_model, "snapshot": snap}
 
+    def analytics(self, metrics: Metrics | None = None) -> Any:
+        """Build an :class:`~aire.observability.analytics.Analytics` reporter."""
+        from aire.observability.analytics import create_analytics
+
+        return create_analytics(metrics if metrics is not None else self.metrics)
+
     def events(self, pattern: str | None = None) -> list[dict[str, Any]]:
         events = self._rt().events.history
         if pattern:
@@ -377,6 +426,7 @@ class _ObserveNamespace(_Namespace):
             "events": len(runtime.events.history),
             "otlp": "aire.observability.otlp.OTLPExporter",
             "otel_sdk": "aire.observability.otel_sdk.SdkBridgeExporter",
+            "analytics": "AI.observe.analytics()",
         }
 
     def otel_exporter(self, endpoint: str | None = None, **options: Any) -> Any:
@@ -397,10 +447,21 @@ class _DeployNamespace(_Namespace):
 
         return generate_artifacts(directory, **options)
 
-    def describe(self) -> dict[str, Any]:
-        from aire.deployment.artifacts import describe
+    def scale(self, directory: str | Path, **options: Any) -> Any:
+        """Generate Docker Compose + Kubernetes scale pack (HPA, deploy script)."""
+        from aire.deployment.scale import ScaleConfig, generate_scale_pack
 
-        return describe()
+        config = options.pop("config", None)
+        if config is None and options:
+            config = ScaleConfig(**options)
+            options = {}
+        return generate_scale_pack(directory, config=config, **options)
+
+    def describe(self) -> dict[str, Any]:
+        from aire.deployment.artifacts import describe as artifacts_describe
+        from aire.deployment.scale import describe as scale_describe
+
+        return {**artifacts_describe(), "scale": scale_describe()}
 
 
 class _WorkflowNamespace(_Namespace):
@@ -552,6 +613,7 @@ class _MemoryNamespace(_Namespace):
         return {
             "kind": "memory",
             "types": ["episodic", "semantic", "procedural"],
+            "procedural": "AI.memory.create(...).add_procedural / recall_procedural",
             "agent_usage": "AI.agents.create(memory=AI.memory.create(...))",
         }
 
@@ -574,6 +636,15 @@ class _McpNamespace(_Namespace):
     def connect_sync(self, command: list[str], **options: Any) -> Any:
         return run_sync(self.connect(command, **options))
 
+    async def connect_http(self, url: str, **options: Any) -> Any:
+        """Connect to an MCP server over streamable HTTP; returns MCPHttpClient."""
+        from aire.mcp.http_client import MCPHttpClient
+
+        return await MCPHttpClient(url, **options).connect()
+
+    def connect_http_sync(self, url: str, **options: Any) -> Any:
+        return run_sync(self.connect_http(url, **options))
+
     def describe(self) -> dict[str, Any]:
         from aire.mcp.knowledge import builtin_prompts, builtin_resources
         from aire.mcp.protocol import PROTOCOL_VERSION
@@ -582,6 +653,7 @@ class _McpNamespace(_Namespace):
             "kind": "mcp",
             "protocol": PROTOCOL_VERSION,
             "transport": "stdio (newline-delimited JSON-RPC 2.0)",
+            "http": "streamable HTTP transport subset (AI.mcp.connect_http)",
             "cli": "aire mcp-serve",
             "resources": [r.uri for r in builtin_resources()],
             "prompts": [p.name for p in builtin_prompts()],
@@ -1046,6 +1118,17 @@ class _TrainingNamespace(_Namespace):
 
         return DistillTrainer(**options)
 
+    def hf_distill(
+        self,
+        student: str = "sshleifer/tiny-gpt2",
+        teacher: str = "sshleifer/tiny-gpt2",
+        **options: Any,
+    ) -> Any:
+        """End-to-end HF teacher→student distillation (requires transformers+torch)."""
+        from aire.training.distill import create_hf_distiller
+
+        return create_hf_distiller(student, teacher, **options)
+
     async def hpo(
         self,
         objective: Any,
@@ -1059,19 +1142,49 @@ class _TrainingNamespace(_Namespace):
     def hpo_sync(self, objective: Any, space: Any, **options: Any) -> Any:
         return run_sync(self.hpo(objective, space, **options))
 
+    def foundation(self, family: str = "gpt2", **options: Any) -> Any:
+        """Build a *toy* foundational architecture (compose blocks).
+
+        This does **not** load pretrained GPT/LLaMA weights — it builds a small
+        ``AI.ml.arch`` stack named after a family preset. See
+        ``FoundationModel.describe()`` (``kind=foundation_toy_architecture``).
+        For real weights use :meth:`foundation_pretrained`.
+        """
+        from aire.training.foundation import create_foundation
+
+        return create_foundation(family, **options)
+
+    def foundation_pretrained(self, model_id: str = "gpt2", **options: Any) -> Any:
+        """Load a Hugging Face pretrained causal LM (requires transformers)."""
+        from aire.training.foundation import FoundationModel
+
+        return FoundationModel.from_pretrained(model_id, **options)
+
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "training",
-            "trainers": ["function", "lora", "lm", "quantize", "distill"],
+            "trainers": [
+                "function",
+                "lora",
+                "lm",
+                "quantize",
+                "distill",
+                "hf_distill",
+                "foundation",
+                "foundation_pretrained",
+            ],
             "hpo": ["random", "optuna (optional)"],
+            "foundation_families": ["gpt2", "llama", "mistral", "moe", "custom"],
+            "honesty": "foundation=toy; foundation_pretrained=HF weights",
         }
 
 
 class _SafetyNamespace(_Namespace):
-    def guardrails(self, *names: str) -> Any:
+    def guardrails(self, *names: str, model: Model | str | None = None, **options: Any) -> Any:
         from aire.safety.guardrails import (
             GuardrailChain,
             InjectionGuardrail,
+            ModelClassifierGuardrail,
             PIIGuardrail,
             SecretGuardrail,
         )
@@ -1081,7 +1194,38 @@ class _SafetyNamespace(_Namespace):
             "injection": InjectionGuardrail,
             "secret": SecretGuardrail,
         }
-        rails = [mapping[n]() for n in names] if names else None
+        if not names:
+            return GuardrailChain()
+        rails: list[Guardrail] = []
+        for name in names:
+            if name in ("model_injection", "model_toxicity"):
+                kind = "injection" if name == "model_injection" else "toxicity"
+                resolved = model
+                if resolved is None:
+                    from aire.core.errors import ConfigurationError
+
+                    raise ConfigurationError(
+                        f"{name} requires model= (Model or ref string)",
+                        code="safety.model_required",
+                    )
+                if isinstance(resolved, str):
+                    from aire.models.base import run_sync
+                    from aire.models.registry import ModelRegistry
+
+                    resolved = run_sync(ModelRegistry(self._rt()).use(resolved))
+                rails.append(ModelClassifierGuardrail(resolved, kind=kind, **options))
+            elif name in mapping:
+                rails.append(mapping[name](**{k: v for k, v in options.items() if k == "action"}))
+            else:
+                from aire.core.errors import NotFoundError
+
+                raise NotFoundError(
+                    "guardrail",
+                    name,
+                    context={
+                        "available": sorted([*mapping, "model_injection", "model_toxicity"]),
+                    },
+                )
         return GuardrailChain(rails)
 
     def redact(self, text: str, **options: Any) -> str:
@@ -1102,8 +1246,15 @@ class _SafetyNamespace(_Namespace):
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "safety",
-            "guardrails": ["pii", "injection", "secret"],
+            "guardrails": [
+                "pii",
+                "injection",
+                "secret",
+                "model_injection",
+                "model_toxicity",
+            ],
             "policy": ["ApprovalPolicy", "PolicyEngine"],
+            "auto_wire": ["Knowledge.ask", "create_gateway"],
         }
 
 
@@ -1151,7 +1302,11 @@ class _WorkersNamespace(_Namespace):
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "workers",
-            "backends": ["in_process", "file"],
+            "backends": ["in_process", "file", "redis", "sqs"],
+            "notes": [
+                "redis requires aire[redis]",
+                "sqs is not bundled (ConfigurationError with install hint)",
+            ],
         }
 
 
@@ -1425,6 +1580,17 @@ class AI:
             registry.register(runtime.tools.create(tool_name))
         return registry
 
+    @classmethod
+    def openapi_tools(
+        cls,
+        source: str | Path | dict[str, Any],
+        **options: Any,
+    ) -> list[Tool]:
+        """Import an OpenAPI 3.x spec as aire Tools."""
+        from aire.tools.openapi import openapi_to_tools
+
+        return openapi_to_tools(source, **options)
+
     # -- evaluation ----------------------------------------------------------------------
 
     @classmethod
@@ -1441,10 +1607,23 @@ class AI:
         *,
         metrics: list[str] | None = None,
         judge: Model | None = None,
+        gates: list[Any] | None = None,
         **kwargs: Any,
     ) -> EvalReport:
         """Evaluate any target (agent, knowledge, model, callable) synchronously."""
-        return cls.evaluator(judge=judge).run_sync(target, dataset, metrics=metrics, **kwargs)
+        report = cls.evaluator(judge=judge).run_sync(target, dataset, metrics=metrics, **kwargs)
+        if gates:
+            from aire.evaluation.gates import check_gates
+
+            check_gates(report, gates).raise_if_failed()
+        return report
+
+    @classmethod
+    def eval_gates(cls, report: Any, gates: list[Any]) -> Any:
+        """Check an evaluation report against metric thresholds."""
+        from aire.evaluation.gates import check_gates
+
+        return check_gates(report, gates)
 
     # -- synthetic -----------------------------------------------------------------------
 
