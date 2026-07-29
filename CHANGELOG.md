@@ -2,10 +2,46 @@
 
 All notable changes to aire are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/): breaking changes bump the major
-version (post-1.0), new subsystems and features bump the minor version, and
-fixes/docs bump the patch version. **This file and the README are updated with
-every major/minor release.**
+[Semantic Versioning](https://semver.org/).
+
+## [0.3.5] — 2026-07-29
+
+Honesty + depth release after 0.3.4: close P0 false-advertising bugs, wire dead
+paths, rebuild docs/tests/examples, and deepen multimodal, training, platform,
+eval/safety, and MCP/Anthropic surfaces.
+
+### Fixed
+- **Tools**: real ``web_search`` + ``http_post``; sandboxed ``list_files``; OpenAPI URL fetch.
+- **Agents**: ``planning`` → PlanActVerify; DurableSession hydrate/resume/pause;
+  PolicyEngine on tool calls; safer approval defaults; patterns/skills match tools.
+- **RAG stores**: filter + ``__acl__``; ``delete_by_document``; pgvector late-dim errors.
+- **Safety / eval**: guardrail ``redact``; no silent 0.0 for missing embedder/judge;
+  lexical metrics labeled honestly.
+- **Gateway**: images **501** without capability; Anthropic tools + SSE + tool_use
+  response blocks; stream cost accumulation; Redis semantic cache option.
+- **MCP**: pending-id mux; stderr logging; HTTP transport; roots/sampling/progress.
+- **Workers / memory / cache**: Redis queue worker; atomic file-queue claim;
+  LTM consolidate + procedural helpers; stream-then-cache; daily cost reset.
+
+### Changed
+- Foundation describe → ``foundation_toy_architecture`` (not pretrained weights).
+- ``bleu`` is BLEU-4+BP; legacy F1 is ``bleu_approx``.
+- ``cross_encoder`` prefers HF CrossEncoder (``aire[eval]``); LLM scorer via ``model``.
+- Guardrails auto-wire on ``Knowledge.ask`` / ``create_gateway`` (``guardrails=False`` to opt out).
+- Scale-pack ``app.py`` wires ``PgVectorStore`` when ``AIRE_DATABASE_URL`` is set.
+
+### Added
+- Repo boilerplate: CI (3.11–3.13), Pages, CodeQL, pip-audit, Dependabot, CONTRIBUTING,
+  CoC, SECURITY, pre-commit, Makefile, EditorConfig, CITATION.cff, ``py.typed``.
+- Multimodal OpenAI media adapters (TTS/ASR/image); PDF OCR via ``aire[ocr]``.
+- Training: HF ``from_pretrained``, ``HFDistillTrainer``, LoRA resume, LM trainer batching.
+- Eval depth: ``nli_faithfulness``, ``sacrebleu``, ``ModelClassifierGuardrail``, HF CE rerank.
+- Agent builder / patterns / toolkits / streaming; scale pack; OpenAPI tools; eval gates;
+  analytics; incremental RAG (capability expansion bundled in this release).
+- Docs (MkDocs + mkdocstrings), live store probes, microbenchmarks, API freeze test,
+  migration/compatibility guides, ``GAPS.md``.
+- Examples: HITL, memory, MCP round-trip, GraphRAG communities, graph store,
+  multimodal probes, LoRA dry-run, plus rebuilt offline quickstarts.
 
 ## [0.3.4] — 2026-07-28
 

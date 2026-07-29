@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aire"
-version = "0.3.4"
+version = "0.3.5"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -18,6 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -26,6 +27,13 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
 ]
+
+[project.urls]
+Homepage = "https://github.com/desenyon/aire"
+Documentation = "https://github.com/desenyon/aire/tree/main/docs"
+Repository = "https://github.com/desenyon/aire"
+Changelog = "https://github.com/desenyon/aire/blob/main/CHANGELOG.md"
+Issues = "https://github.com/desenyon/aire/issues"
 
 [project.optional-dependencies]
 # Provider integrations (all reached through httpx; kept as named extras for clarity)
@@ -57,6 +65,8 @@ redis = ["redis>=5.0"]
 peft = ["peft>=0.10", "transformers>=4.38"]
 optuna = ["optuna>=3.5"]
 pypdf = ["pypdf>=4.0"]
+ocr = ["pypdf>=4.0", "pillow>=10.0", "pytesseract>=0.3.10", "pypdfium2>=4.0"]
+eval = ["sacrebleu>=2.4", "sentence-transformers>=2.7"]
 all = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
@@ -78,6 +88,10 @@ all = [
     "transformers>=4.38",
     "optuna>=3.5",
     "pypdf>=4.0",
+    "pytesseract>=0.3.10",
+    "pypdfium2>=4.0",
+    "sacrebleu>=2.4",
+    "sentence-transformers>=2.7",
 ]
 dev = [
     "ruff>=0.5",
@@ -88,11 +102,20 @@ dev = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
+]
 
 [project.scripts]
 aire = "aire.cli.main:app"
 
 [project.entry-points."aire.providers"]
+openai = "aire.integrations.openai:OpenAIProvider"
+anthropic = "aire.integrations.anthropic:AnthropicProvider"
+ollama = "aire.integrations.ollama:OllamaProvider"
+huggingface = "aire.integrations.huggingface:HuggingFaceProvider"
 mock = "aire.integrations.mock:MockProvider"
 echo = "aire.integrations.mock:EchoProvider"
 
@@ -177,6 +200,10 @@ module = [
     "aire.docs.pdf",
 ]
 disable_error_code = ["name-defined", "misc", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["sacrebleu", "sacrebleu.*", "sentence_transformers", "sentence_transformers.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
