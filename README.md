@@ -33,12 +33,18 @@ no network. Swap providers with a one-string change.
 ## Install
 
 ```bash
-pip install aire
+pip install aire-ai
+# import name stays `aire`:
+#   from aire import AI
+#
 # or from source
 pip install -e ".[dev]"
 ```
 
-Optional extras: `serve`, `ml`, `vision`, `training`, provider-named extras, and
+> **Note:** The PyPI distribution is named **`aire-ai`** because the name `aire`
+> is already taken by an unrelated package. The Python import remains `aire`.
+
+Optional extras: `serve`, `ml`, `vision`, `training`, `eval`, `docs`, provider-named extras, and
 `all`. See `pyproject.toml`.
 
 Requires **Python 3.11+**.

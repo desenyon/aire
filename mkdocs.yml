@@ -43,6 +43,7 @@ nav:
   - API freeze: api_freeze.md
   - Compatibility: compatibility.md
   - Migration: migration.md
+  - Publishing: publishing.md
   - API reference: api.md
   - Agents: agents.md
   - RAG: rag.md

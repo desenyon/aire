@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "aire"
+name = "aire-ai"
 version = "0.3.5"
 description = "Agent-first AI creation library: one consistent interface from idea to deployed AI system."
 readme = "README.md"
@@ -30,7 +30,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/desenyon/aire"
-Documentation = "https://github.com/desenyon/aire/tree/main/docs"
+Documentation = "https://desenyon.github.io/aire/"
 Repository = "https://github.com/desenyon/aire"
 Changelog = "https://github.com/desenyon/aire/blob/main/CHANGELOG.md"
 Issues = "https://github.com/desenyon/aire/issues"

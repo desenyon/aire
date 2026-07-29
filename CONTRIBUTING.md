@@ -17,7 +17,15 @@ make install               # pip install -e ".[dev]"
 pre-commit install         # optional but recommended
 ```
 
-## Workflow
+## Publishing (maintainers)
+
+See [docs/publishing.md](docs/publishing.md). Summary:
+
+1. Pending Trusted Publisher on PyPI for project **`aire-ai`**
+2. GitHub environment **`release`** (already created)
+3. Tag `vX.Y.Z` → `.github/workflows/release.yml` publishes via OIDC
+
+Install from PyPI: `pip install aire-ai` (import remains `from aire import …`).
 
 1. Open an issue for non-trivial changes (or discuss on an existing one).
 2. Create a branch from `main`.
