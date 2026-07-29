@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from aire.core.content import Message
 from aire.core.errors import AuthenticationError
-from aire.core.types import Capability, HealthStatus, Usage
+from aire.core.plugins import PluginInfo
+from aire.core.types import HealthStatus, Usage
 from aire.integrations.http import ProviderHttpClient
 from aire.models.base import EmbeddingModel, Model
 from aire.models.retry import with_retry
@@ -64,18 +65,13 @@ class OpenAIModel(Model):
 
     @property
     def info(self) -> ModelInfo:
+        from aire.integrations.openai_media import capabilities_for_openai_model
         from aire.models.types import CostInfo
 
         return ModelInfo(
             ref=f"{self._provider}:{self._name}",
             provider=self._provider,
-            capabilities=[
-                Capability.TEXT_GENERATION,
-                Capability.STREAMING,
-                Capability.TOOL_CALLING,
-                Capability.STRUCTURED_OUTPUT,
-                Capability.VISION_INPUT,
-            ],
+            capabilities=capabilities_for_openai_model(self._name),
             context_window=self._cost.get("ctx"),
             cost=CostInfo(
                 input_per_million=self._cost.get("in"),
@@ -281,7 +277,7 @@ def _env(name: str) -> str | None:
     return os.environ.get(name)
 
 
-def register(runtime: Runtime) -> None:
+def register(runtime: Runtime) -> PluginInfo:
     """Register the OpenAI-compatible provider on a runtime."""
 
     def _model_factory(name: str, *, runtime: Runtime, **options: Any) -> Model:
@@ -295,3 +291,16 @@ def register(runtime: Runtime) -> None:
 
     runtime.model_providers.register("openai", _model_factory, replace=True)
     runtime.embedders.register("openai", _embedder_factory, replace=True)
+    return PluginInfo(
+        name="openai",
+        version="0.1.0",
+        provides=["model:openai", "embedder:openai"],
+    )
+
+
+class OpenAIProvider:
+    """Entry-point target for the ``openai`` provider."""
+
+    @staticmethod
+    def register(runtime: Runtime) -> PluginInfo:
+        return register(runtime)

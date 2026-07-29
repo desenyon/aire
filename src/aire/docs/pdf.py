@@ -1,8 +1,14 @@
-"""PDF to text/pages Document pipeline (lazy ``pypdf``)."""
+"""PDF to text/pages Document pipeline (lazy ``pypdf``).
+
+By default extracts the embedded text layer only. Pass ``ocr=True`` to attempt
+page rendering + OCR via optional ``pillow`` + ``pytesseract`` (+ ``pypdfium2``
+rasterizer) when the text layer is empty (scanned PDFs).
+"""
 
 from __future__ import annotations
 
 import importlib.util
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +23,7 @@ from aire.data.types import Record
 class PDFPage(BaseModel):
     page: int
     text: str
+    ocr: bool = False
 
 
 class PDFDocument(BaseModel):
@@ -41,13 +48,21 @@ class PDFDocument(BaseModel):
             return [
                 Record(
                     text=p.text,
-                    metadata={"page": p.page, "path": self.path, **self.metadata},
+                    metadata={
+                        "page": p.page,
+                        "path": self.path,
+                        "ocr": p.ocr,
+                        **self.metadata,
+                    },
                 )
                 for p in self.pages
                 if p.text.strip()
             ]
         return [
-            Record(text=self.text, metadata={"path": self.path, "pages": len(self.pages), **self.metadata})
+            Record(
+                text=self.text,
+                metadata={"path": self.path, "pages": len(self.pages), **self.metadata},
+            )
         ]
 
 
@@ -63,8 +78,20 @@ def _require_pypdf() -> Any:
     return pypdf
 
 
-def load_pdf(path: str | Path, *, password: str | None = None) -> PDFDocument:
-    """Extract text per page from a PDF file."""
+def load_pdf(  # noqa: C901
+    path: str | Path,
+    *,
+    password: str | None = None,
+    raise_on_empty: bool = False,
+    ocr: bool = False,
+    ocr_lang: str = "eng",
+) -> PDFDocument:
+    """Extract text per page from a PDF.
+
+    ``ocr=False`` (default): text layer only.
+    ``ocr=True``: when a page has no text, rasterize via pypdfium2 and run
+    pytesseract (requires ``pip install 'aire[ocr]'``).
+    """
     pypdf = _require_pypdf()
     pdf_path = Path(path)
     if not pdf_path.is_file():
@@ -78,25 +105,86 @@ def load_pdf(path: str | Path, *, password: str | None = None) -> PDFDocument:
     for i, page in enumerate(reader.pages):
         try:
             text = page.extract_text() or ""
-        except Exception:  # noqa: BLE001 - keep pipeline resilient
+        except Exception:
             text = ""
-        pages.append(PDFPage(page=i + 1, text=text))
-    meta: dict[str, Any] = {"page_count": len(pages)}
+        used_ocr = False
+        if ocr and not text.strip():
+            ocr_text = _ocr_page_index(pdf_path, i, lang=ocr_lang)
+            if ocr_text.strip():
+                text = ocr_text
+                used_ocr = True
+        pages.append(PDFPage(page=i + 1, text=text, ocr=used_ocr))
+    meta: dict[str, Any] = {
+        "page_count": len(pages),
+        "text_layer_only": not ocr,
+        "ocr": ocr,
+        "ocr_pages": sum(1 for p in pages if p.ocr),
+    }
     if reader.metadata:
         for key in ("title", "author", "subject"):
             value = getattr(reader.metadata, key, None)
             if value:
                 meta[key] = str(value)
-    return PDFDocument(path=str(pdf_path), pages=pages, metadata=meta)
+    doc = PDFDocument(path=str(pdf_path), pages=pages, metadata=meta)
+    if not doc.text.strip():
+        suffix = (
+            "; OCR also returned nothing)"
+            if ocr
+            else "; pass ocr=True for scanned pages)"
+        )
+        message = f"PDF text extract is empty for {pdf_path} (text layer empty{suffix}"
+        if raise_on_empty:
+            raise ConfigurationError(
+                message,
+                code="docs.pdf_empty_extract",
+                context={"path": str(pdf_path), "pages": len(pages), "ocr": ocr},
+            )
+        warnings.warn(message, UserWarning, stacklevel=2)
+    return doc
 
 
-def pdf_to_dataset(path: str | Path, *, per_page: bool = True, name: str | None = None) -> Dataset:
-    doc = load_pdf(path)
+def _ocr_page_index(pdf_path: Path, page_index: int, *, lang: str) -> str:
+    """Rasterize one PDF page and OCR it. Requires ocr extra."""
+    missing = [
+        name
+        for name, mod in (
+            ("pillow", "PIL"),
+            ("pytesseract", "pytesseract"),
+            ("pypdfium2", "pypdfium2"),
+        )
+        if importlib.util.find_spec(mod) is None
+    ]
+    if missing:
+        raise ConfigurationError(
+            "OCR requires pillow, pytesseract, and pypdfium2: pip install 'aire[ocr]'",
+            code="docs.ocr_missing",
+            context={"extra": "aire[ocr]", "missing": missing},
+        )
+    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    import pytesseract  # type: ignore[import-not-found]
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        page = doc[page_index]
+        bitmap = page.render(scale=2).to_pil()
+        return str(pytesseract.image_to_string(bitmap, lang=lang))
+    finally:
+        doc.close()
+
+
+def pdf_to_dataset(
+    path: str | Path,
+    *,
+    per_page: bool = True,
+    name: str | None = None,
+    ocr: bool = False,
+) -> Dataset:
+    doc = load_pdf(path, ocr=ocr)
     return Dataset(doc.to_records(per_page=per_page), name=name or Path(path).stem)
 
 
-def pdf_to_text_content(path: str | Path) -> TextContent:
-    return TextContent(text=load_pdf(path).text)
+def pdf_to_text_content(path: str | Path, *, ocr: bool = False) -> TextContent:
+    return TextContent(text=load_pdf(path, ocr=ocr).text)
 
 
 def describe() -> dict[str, Any]:
@@ -104,5 +192,10 @@ def describe() -> dict[str, Any]:
         "kind": "pdf",
         "available": importlib.util.find_spec("pypdf") is not None,
         "install": "pip install 'aire[pypdf]'",
+        "ocr": {
+            "extra": "aire[ocr]",
+            "packages": ["pillow", "pytesseract", "pypdfium2"],
+        },
+        "honesty": "default is text layer only; ocr=True uses pytesseract when available",
         "outputs": ["PDFDocument", "Dataset", "DocumentContent", "TextContent"],
     }

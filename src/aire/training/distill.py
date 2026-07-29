@@ -1,7 +1,10 @@
-"""Knowledge distillation adapter interfaces.
+"""Knowledge distillation adapter interfaces (experimental).
 
 Teacher → student soft-target training without forcing a framework. Callers
 supply tensors / logits; aire owns the contract, configs, and offline stub loss.
+
+This is an experimental adapter — pure-Python KL over logit lists, not a
+drop-in replacement for framework KD trainers.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from aire.core.errors import ConfigurationError
+from aire.data.dataset import Dataset
 from aire.training.trainer import TrainingConfig
 
 
@@ -106,6 +110,7 @@ class Distiller:
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "distiller",
+            "experimental": True,
             "config": self.config.model_dump(),
             "has_hard_loss": self.hard_loss_fn is not None,
         }
@@ -175,6 +180,171 @@ class DistillTrainer:
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "distill_trainer",
+            "experimental": True,
+            "mode": "logit_pairs",
             "distiller": self.distiller.describe(),
             "config": self.config.model_dump(),
         }
+
+
+class HFDistillTrainer:
+    """End-to-end Hugging Face knowledge distillation (teacher → student).
+
+    Requires ``transformers`` + ``torch``. Teacher is frozen; student is trained
+    with temperature-scaled KL on vocabulary logits plus optional LM CE loss.
+    """
+
+    def __init__(
+        self,
+        student: str = "sshleifer/tiny-gpt2",
+        teacher: str = "sshleifer/tiny-gpt2",
+        *,
+        config: DistillationConfig | None = None,
+        output_dir: str = "./distill-out",
+        dry_run: bool = False,
+    ) -> None:
+        self.student_id = student
+        self.teacher_id = teacher
+        self.config = config or DistillationConfig()
+        self.output_dir = output_dir
+        self.dry_run = dry_run
+        self._student: Any = None
+        self._teacher: Any = None
+        self._tokenizer: Any = None
+
+    def prepare(self) -> None:
+        import importlib.util
+
+        if importlib.util.find_spec("transformers") is None or importlib.util.find_spec(
+            "torch"
+        ) is None:
+            raise ConfigurationError(
+                "HFDistillTrainer requires transformers+torch: pip install 'aire[peft]'",
+                code="training.hf_distill_missing",
+            )
+        import torch
+        import transformers  # type: ignore[import-not-found]
+
+        self._tokenizer = transformers.AutoTokenizer.from_pretrained(self.teacher_id)
+        if self._tokenizer.pad_token is None:
+            self._tokenizer.pad_token = self._tokenizer.eos_token
+        self._teacher = transformers.AutoModelForCausalLM.from_pretrained(self.teacher_id)
+        self._student = transformers.AutoModelForCausalLM.from_pretrained(self.student_id)
+        self._teacher.eval()
+        for param in self._teacher.parameters():
+            param.requires_grad = False
+        self._torch = torch
+
+    def fit(
+        self,
+        texts: list[str] | Dataset,
+        *,
+        epochs: int = 1,
+        batch_size: int = 2,
+        max_length: int = 64,
+        learning_rate: float = 5e-5,
+    ) -> dict[str, Any]:
+        if isinstance(texts, Dataset):
+            corpus = [r.text for r in texts if r.text.strip()]
+        else:
+            corpus = [t for t in texts if t.strip()]
+        if not corpus:
+            raise ConfigurationError(
+                "HFDistillTrainer.fit requires non-empty texts",
+                code="training.hf_distill_empty",
+            )
+        if self.dry_run:
+            return {
+                "kind": "hf_distill_result",
+                "dry_run": True,
+                "epochs": epochs,
+                "samples": len(corpus),
+                "student": self.student_id,
+                "teacher": self.teacher_id,
+            }
+        if self._student is None:
+            self.prepare()
+        assert self._student is not None
+        assert self._teacher is not None
+        assert self._tokenizer is not None
+        torch = self._torch
+        optim = torch.optim.AdamW(self._student.parameters(), lr=learning_rate)
+        history: list[dict[str, float]] = []
+        temperature = max(self.config.temperature, 1e-6)
+        alpha = self.config.alpha
+
+        for epoch in range(epochs):
+            total = 0.0
+            n = 0
+            for i in range(0, len(corpus), batch_size):
+                batch = corpus[i : i + batch_size]
+                enc = self._tokenizer(
+                    batch,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=max_length,
+                    padding=True,
+                )
+                input_ids = enc["input_ids"]
+                attention = enc.get("attention_mask")
+                with torch.no_grad():
+                    t_out = self._teacher(input_ids=input_ids, attention_mask=attention)
+                    t_logits = t_out.logits
+                s_out = self._student(input_ids=input_ids, attention_mask=attention)
+                s_logits = s_out.logits
+                # Soft KD on next-token logits
+                soft = torch.nn.functional.kl_div(
+                    torch.nn.functional.log_softmax(s_logits / temperature, dim=-1),
+                    torch.nn.functional.softmax(t_logits / temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (temperature * temperature)
+                # Hard CE against teacher-forced labels
+                shift_logits = s_logits[..., :-1, :].contiguous()
+                shift_labels = input_ids[..., 1:].contiguous()
+                hard = torch.nn.functional.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    ignore_index=self._tokenizer.pad_token_id or -100,
+                )
+                loss = alpha * soft + (1.0 - alpha) * hard
+                optim.zero_grad()
+                loss.backward()
+                optim.step()
+                total += float(loss.detach())
+                n += 1
+            mean = total / max(n, 1)
+            history.append({"epoch": float(epoch), "loss": mean})
+
+        from pathlib import Path
+
+        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        self._student.save_pretrained(self.output_dir)
+        self._tokenizer.save_pretrained(self.output_dir)
+        return {
+            "kind": "hf_distill_result",
+            "dry_run": False,
+            "epochs": epochs,
+            "samples": len(corpus),
+            "history": history,
+            "output_dir": self.output_dir,
+            "student": self.student_id,
+            "teacher": self.teacher_id,
+        }
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "kind": "hf_distill_trainer",
+            "student": self.student_id,
+            "teacher": self.teacher_id,
+            "config": self.config.model_dump(),
+            "dry_run": self.dry_run,
+            "prepared": self._student is not None,
+        }
+
+
+def create_hf_distiller(
+    student: str = "sshleifer/tiny-gpt2",
+    teacher: str = "sshleifer/tiny-gpt2",
+    **options: Any,
+) -> HFDistillTrainer:
+    return HFDistillTrainer(student, teacher, **options)

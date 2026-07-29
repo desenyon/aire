@@ -39,6 +39,7 @@ class ImageGenerationResult(BaseModel):
     b64: str | None = None
     text: str = ""
     model: str = "unknown"
+    stub: bool = False
 
 
 class VisionPipeline:
@@ -97,7 +98,8 @@ class VisionPipeline:
 
             {"detections": [{"label": "cat", "confidence": 0.9, "box": [0,0,1,1]}]}
 
-        Offline echo models fall back to label-list heuristics from the prompt text.
+        Offline echo models fall back to label-list heuristics from the prompt text
+        (experimental / stub-quality — not a real detector).
         """
         content = _to_image(image)
         label_hint = (
@@ -121,11 +123,22 @@ class VisionPipeline:
         )
 
     def describe_pipeline(self) -> dict[str, Any]:
-        return {"kind": "vision_pipeline", "model": self.model.info.ref}
+        return {
+            "kind": "vision_pipeline",
+            "model": self.model.info.ref,
+            "detect": (
+                "vision-JSON detector — real with vision models (e.g. gpt-4o); "
+                "not a dedicated YOLO/detection network"
+            ),
+        }
 
 
 class ImageGenerationPipeline:
-    """Text-to-image generation through models advertising ``image-generation``."""
+    """Text-to-image via models advertising ``image-generation``.
+
+    Without a real image provider this returns stub results (text only).
+    Callers must check ``ImageGenerationResult.stub``.
+    """
 
     def __init__(self, model: Model) -> None:
         if not model.info.supports(Capability.IMAGE_GENERATION):
@@ -137,27 +150,80 @@ class ImageGenerationPipeline:
         self.model = model
 
     async def generate(self, prompt: str, *, size: str = "1024x1024") -> ImageGenerationResult:
-        """Generate an image description / URI from a text prompt.
+        """Generate an image via OpenAI Images API or capability-gated fallback.
 
-        Providers that return a data URI or https URL in the completion text are
-        parsed into ``uri``; otherwise ``text`` holds the raw model response
-        (useful for offline stubs).
+        OpenAI ``dall-e-*`` / ``gpt-image-*`` models call ``/images/generations``
+        and return real ``b64`` / ``uri`` with ``stub=False``. Other providers
+        that only return text URIs are parsed; otherwise ``stub=True``.
         """
+        if self._try_openai_images():
+            from aire.integrations.openai_media import openai_image
+
+            name = self.model.info.ref.split(":", 1)[-1]
+            result = await openai_image(
+                prompt,
+                model=name,
+                size=size,
+                api_key=self._openai_key(),
+                base_url=self._openai_base(),
+                client=self._openai_http(),
+            )
+            return ImageGenerationResult(
+                prompt=prompt,
+                uri=result.get("uri"),
+                b64=result.get("b64"),
+                text=str(result.get("revised_prompt") or ""),
+                model=self.model.info.ref,
+                stub=False,
+            )
+
         request = GenerationRequest.of(
             f"Generate an image ({size}) for this prompt and return a URI or description:\n{prompt}"
         )
-        result = await self.model.generate(request)
-        text = result.text.strip()
+        gen = await self.model.generate(request)
+        text = gen.text.strip()
         uri = _extract_uri(text)
         return ImageGenerationResult(
             prompt=prompt,
             uri=uri,
             text=text,
             model=self.model.info.ref,
+            stub=uri is None,
         )
 
+    def _try_openai_images(self) -> bool:
+        from aire.integrations.openai_media import is_image_model
+
+        ref = self.model.info.ref
+        provider, _, name = ref.partition(":")
+        return provider in {"openai", "azure"} and is_image_model(name or ref)
+
+    def _openai_key(self) -> str | None:
+        client = getattr(self.model, "_client", None)
+        headers = getattr(getattr(client, "raw", None), "headers", None)
+        if headers is not None:
+            auth = headers.get("Authorization") or headers.get("authorization")
+            if auth and str(auth).lower().startswith("bearer "):
+                return str(auth).split(" ", 1)[1]
+        return None
+
+    def _openai_base(self) -> str | None:
+        client = getattr(self.model, "_client", None)
+        raw = getattr(client, "raw", None)
+        base = getattr(raw, "base_url", None)
+        return str(base).rstrip("/") if base else None
+
+    def _openai_http(self) -> Any:
+        client = getattr(self.model, "_client", None)
+        return getattr(client, "raw", None)
+
     def describe(self) -> dict[str, Any]:
-        return {"kind": "image_generation_pipeline", "model": self.model.info.ref}
+        return {
+            "kind": "image_generation_pipeline",
+            "model": self.model.info.ref,
+            "openai_images": self._try_openai_images(),
+            "honesty": "stub=True when no image URI/bytes are returned",
+        }
 
 
 def _to_image(image: str | Path | ImageContent) -> ImageContent:

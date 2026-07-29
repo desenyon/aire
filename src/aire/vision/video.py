@@ -1,4 +1,4 @@
-"""Video summarization pipeline (frame sampling + model describe)."""
+"""Video summarization pipeline (frame sampling + vision model)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from aire.core.content import Message, TextContent, VideoContent
+from aire.core.content import ImageContent, Message, TextContent, VideoContent
 from aire.core.errors import ConfigurationError, NotFoundError
 from aire.core.types import Capability
 from aire.models.base import Model
@@ -22,7 +22,12 @@ class VideoSummary(BaseModel):
 
 
 class VideoPipeline:
-    """Summarize video via model vision/video capability or offline stub."""
+    """Summarize video by sampling frames and sending them to a vision model.
+
+    With ffmpeg + a vision-capable model, frames are real JPEG images in the
+    multimodal request. Without ffmpeg, synthetic frame labels are used and
+    ``metadata.stub=True``. Without any model, returns an offline stub summary.
+    """
 
     def __init__(self, model: Model | None = None) -> None:
         self.model = model
@@ -42,9 +47,31 @@ class VideoPipeline:
                 f"no model configured. Prompt was: {prompt}",
                 frames_used=0,
                 model="stub",
-                metadata={"prompt": prompt},
+                metadata={"prompt": prompt, "stub": True},
             )
         info = self.model.info
+        frames, frame_backend = _sample_frame_uris(content, max_frames=max_frames)
+
+        # Preferred path: real frame images + vision model.
+        if info.supports(Capability.VISION_INPUT) and frame_backend == "ffmpeg":
+            blocks: list[Any] = [TextContent(text=prompt)]
+            for path in frames:
+                try:
+                    blocks.append(ImageContent.from_file(path))
+                except Exception:  # noqa: S112
+                    continue
+            if len(blocks) > 1:
+                result = await self.model.generate(
+                    GenerationRequest(messages=[Message(role="user", content=blocks)])
+                )
+                return VideoSummary(
+                    summary=result.text,
+                    frames_used=len(blocks) - 1,
+                    model=info.ref,
+                    metadata={"frame_backend": "ffmpeg", "stub": False, "mode": "vision_frames"},
+                )
+
+        # Native video content block if the provider accepts it.
         if info.supports(Capability.VISION_INPUT) or "video" in {
             str(c).lower() for c in info.capabilities
         }:
@@ -61,22 +88,31 @@ class VideoPipeline:
                 summary=result.text,
                 frames_used=max_frames,
                 model=info.ref,
+                metadata={"mode": "video_content", "stub": False},
             )
-        # Fallback: ask text-only model with a placeholder frame description.
-        frames, frame_backend = _sample_frame_uris(content, max_frames=max_frames)
+
+        # Text-only fallback with frame refs.
         frame_note = f"{len(frames)} sampled frame refs: " + ", ".join(frames[:3])
         text = await self.model.ask(f"{prompt}\n\n{frame_note}")
         return VideoSummary(
             summary=str(text),
             frames_used=len(frames),
             model=info.ref,
-            metadata={"mode": "text_fallback", "frame_backend": frame_backend},
+            metadata={
+                "mode": "text_fallback",
+                "frame_backend": frame_backend,
+                "stub": frame_backend == "synthetic",
+            },
         )
 
     def describe(self) -> dict[str, Any]:
         return {
             "kind": "video_pipeline",
             "model": self.model.info.ref if self.model else None,
+            "honesty": (
+                "best path: ffmpeg frame sample + vision model (stub=False); "
+                "without ffmpeg/model, metadata.stub=True"
+            ),
             "frame_sampling": "ffmpeg when available else synthetic #frame=N labels",
         }
 

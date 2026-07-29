@@ -2,6 +2,9 @@
 
 These are agent-friendly contracts — prepare a model for lower-precision
 inference without pulling heavy deps until :meth:`Quantizer.prepare` runs.
+
+``method='stub'`` is an offline placeholder that returns a describe dict only —
+it does NOT quantize weights.
 """
 
 from __future__ import annotations
@@ -52,9 +55,17 @@ class Quantizer:
         self._tokenizer: Any = None
 
     def prepare(self) -> Any:
-        """Load a quantized model. Returns the model object (or a stub describe dict)."""
+        """Load a quantized model. Returns the model object (or a stub describe dict).
+
+        With ``method='stub'`` this is an honesty placeholder — no weights change.
+        """
         if self.config.method == "stub":
-            self._model = {"kind": "quantized_stub", "bits": self.config.bits}
+            self._model = {
+                "kind": "quantized_stub",
+                "bits": self.config.bits,
+                "stub": True,
+                "honesty": "no real quantization performed",
+            }
             return self._model
         if self.config.method != "bitsandbytes":
             raise ConfigurationError(
@@ -97,6 +108,7 @@ class Quantizer:
             "model": self.model_name,
             "config": self.config.model_dump(),
             "prepared": self._model is not None,
+            "stub_method": self.config.method == "stub",
             "available": {
                 "transformers": transformers_ok,
                 "bitsandbytes": bnb,

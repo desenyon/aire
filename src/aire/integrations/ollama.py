@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from aire.core.content import TextContent
+from aire.core.plugins import PluginInfo
 from aire.core.types import Capability, HealthStatus, Usage
 from aire.integrations.http import ProviderHttpClient
 from aire.models.base import EmbeddingModel, Model, estimate_tokens
@@ -154,7 +155,7 @@ class OllamaEmbedder(EmbeddingModel):
         return EmbeddingResult(vectors=vectors, model=self.name)
 
 
-def register(runtime: Runtime) -> None:
+def register(runtime: Runtime) -> PluginInfo:
     def _client(runtime: Runtime, options: dict[str, Any]) -> ProviderHttpClient:
         import os
 
@@ -174,3 +175,16 @@ def register(runtime: Runtime) -> None:
 
     runtime.model_providers.register("ollama", _model_factory, replace=True)
     runtime.embedders.register("ollama", _embedder_factory, replace=True)
+    return PluginInfo(
+        name="ollama",
+        version="0.1.0",
+        provides=["model:ollama", "embedder:ollama"],
+    )
+
+
+class OllamaProvider:
+    """Entry-point target for the ``ollama`` provider."""
+
+    @staticmethod
+    def register(runtime: Runtime) -> PluginInfo:
+        return register(runtime)

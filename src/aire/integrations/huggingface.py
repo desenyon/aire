@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aire.core.errors import AuthenticationError
+from aire.core.plugins import PluginInfo
 from aire.integrations.http import ProviderHttpClient
 from aire.integrations.openai import OpenAIEmbedder, OpenAIModel
 from aire.models.base import EmbeddingModel, Model
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 ROUTER_BASE_URL = "https://router.huggingface.co/v1"
 
 
-def register(runtime: Runtime) -> None:
+def register(runtime: Runtime) -> PluginInfo:
     def _client(runtime: Runtime, options: dict[str, Any]) -> ProviderHttpClient:
         cred = runtime.settings.credential("huggingface")
         api_key = options.get("api_key") or cred.resolve_key("HF_TOKEN")
@@ -45,3 +46,16 @@ def register(runtime: Runtime) -> None:
 
     runtime.model_providers.register("huggingface", _model_factory, replace=True)
     runtime.embedders.register("huggingface", _embedder_factory, replace=True)
+    return PluginInfo(
+        name="huggingface",
+        version="0.1.0",
+        provides=["model:huggingface", "embedder:huggingface"],
+    )
+
+
+class HuggingFaceProvider:
+    """Entry-point target for the ``huggingface`` provider."""
+
+    @staticmethod
+    def register(runtime: Runtime) -> PluginInfo:
+        return register(runtime)

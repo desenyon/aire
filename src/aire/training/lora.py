@@ -94,7 +94,7 @@ class LoRATrainer:
         self._peft_model = peft.get_peft_model(self._model, lora)
         return self._peft_model
 
-    def fit(
+    def fit(  # noqa: C901
         self,
         dataset: Dataset | list[str] | list[dict[str, Any]],
         *,
@@ -103,11 +103,17 @@ class LoRATrainer:
         batch_size: int = 2,
         max_length: int = 128,
         dry_run: bool | None = None,
+        resume_from_checkpoint: str | bool | None = None,
+        save_strategy: str = "epoch",
+        eval_ratio: float = 0.0,
     ) -> TrainResult:
         """Fine-tune with Hugging Face ``Trainer`` (or dry-run without GPU/PEFT).
 
         ``dry_run=True`` validates the dataset and returns a synthetic
         :class:`TrainResult` without loading weights — used for CI / recipes.
+
+        ``resume_from_checkpoint``: path to a HF checkpoint dir, ``True`` to
+        resume from ``output_dir``, or ``None`` for a fresh run.
         """
         texts = _texts_from(dataset)
         if not texts:
@@ -145,15 +151,27 @@ class LoRATrainer:
             )
             return encoded
 
-        # Prefer datasets library; fall back to a tiny torch Dataset.
+        eval_dataset: Any = None
         if importlib.util.find_spec("datasets") is not None:
             import datasets as hf_datasets  # type: ignore[import-not-found]
 
             hf_ds = hf_datasets.Dataset.from_dict({"text": texts})
-            tokenized = hf_ds.map(tokenize_fn, batched=True, remove_columns=["text"])
+            if 0.0 < eval_ratio < 1.0 and len(texts) >= 2:
+                split = hf_ds.train_test_split(test_size=eval_ratio, seed=42)
+                train_raw, eval_raw = split["train"], split["test"]
+            else:
+                train_raw, eval_raw = hf_ds, None
+            tokenized = train_raw.map(tokenize_fn, batched=True, remove_columns=["text"])
             tokenized = tokenized.map(lambda x: {"labels": x["input_ids"]})
+            if eval_raw is not None:
+                eval_dataset = eval_raw.map(tokenize_fn, batched=True, remove_columns=["text"])
+                eval_dataset = eval_dataset.map(lambda x: {"labels": x["input_ids"]})
         else:
             tokenized = _TorchTextDataset(texts, self._tokenizer, max_length=max_length)
+
+        resume: str | bool | None = resume_from_checkpoint
+        if resume is True:
+            resume = self.output_dir
 
         training_args = transformers.TrainingArguments(
             output_dir=self.output_dir,
@@ -161,7 +179,8 @@ class LoRATrainer:
             per_device_train_batch_size=batch_size,
             learning_rate=learning_rate,
             logging_steps=1,
-            save_strategy="no",
+            save_strategy=save_strategy,
+            eval_strategy="epoch" if eval_dataset is not None else "no",
             report_to=[],
             remove_unused_columns=False,
         )
@@ -169,8 +188,9 @@ class LoRATrainer:
             model=self._peft_model,
             args=training_args,
             train_dataset=tokenized,
+            eval_dataset=eval_dataset,
         )
-        train_out = trainer.train()
+        train_out = trainer.train(resume_from_checkpoint=resume)
         metrics = getattr(train_out, "metrics", {}) or {}
         loss = float(metrics.get("train_loss", 0.0))
         float_history = {"epoch": float(epochs - 1), "loss": loss}
@@ -189,6 +209,20 @@ class LoRATrainer:
         self._last_result = result
         self.save()
         return result
+
+    def resume(self, checkpoint: str | None = None, **fit_kwargs: Any) -> TrainResult:
+        """Resume LoRA training from ``checkpoint`` (default: ``output_dir``)."""
+        dataset = fit_kwargs.pop("dataset", None)
+        if dataset is None:
+            raise ConfigurationError(
+                "resume() requires dataset=",
+                code="training.lora_resume_dataset",
+            )
+        return self.fit(
+            dataset,
+            resume_from_checkpoint=checkpoint if checkpoint is not None else True,
+            **fit_kwargs,
+        )
 
     async def afit(
         self,
@@ -224,8 +258,9 @@ class LoRATrainer:
             "install": "pip install 'aire[peft]'",
             "config": self.config.model_dump(),
             "prepared": self._peft_model is not None,
-            "methods": ["prepare", "fit", "afit", "save", "describe"],
+            "methods": ["prepare", "fit", "afit", "resume", "save", "describe"],
             "dry_run": self.config.dry_run,
+            "resume_supported": True,
             "last_result": self._last_result.model_dump() if self._last_result else None,
         }
 
