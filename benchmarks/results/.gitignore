@@ -1,0 +1,3 @@
+# Offline microbench JSON outputs (CI artifact / local runs).
+*.json
+!.gitkeep

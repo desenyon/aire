@@ -1,154 +1,62 @@
-# aire — Architecture
+# Architecture
 
-## Layered design
+aire is organized as a layered library under `src/aire/`. Heavy optional deps (torch, FastAPI, Neo4j, …) are imported only when a subsystem needs them.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Facade: aire.AI  (namespaces, AI.project builder, AI.from_config)│
-├─────────────────────────────────────────────────────────────────┤
-│  Capability modules                                             │
-│  data · rag · tools · agents · workflows · evaluation · safety  │
-│  optimization · multimodal · synthetic · training · deployment  │
-├─────────────────────────────────────────────────────────────────┤
-│  Universal interfaces                                           │
-│  Model · EmbeddingModel · VectorStore · Chunker · Reranker ·    │
-│  Tool · Memory · Guardrail · Trainer · Metric · Converter       │
-├─────────────────────────────────────────────────────────────────┤
-│  Core runtime                                                   │
-│  Settings · Registry · PluginManager · EventBus · ResourceMgr · │
-│  ExecutionContext · errors · content · serialization · logging  │
-├─────────────────────────────────────────────────────────────────┤
-│  Provider integrations (optional, lazily imported)              │
-│  openai · anthropic · ollama · huggingface · qdrant · chroma    │
-└─────────────────────────────────────────────────────────────────┘
-```
+## Package map
 
-Dependency rule: arrows point **downward only**. Core never imports capability
-modules or providers; capability modules never import provider SDKs; providers
-depend only on core + interfaces. The `aire.integrations.http.ProviderHttpClient`
-is the single HTTP plumbing point all REST providers share.
+| Package | Role |
+|---------|------|
+| `core/` | Runtime, Settings, registries, plugins, errors, events |
+| `models/` + `integrations/` | Model protocols + HTTP providers (`provider:name`) |
+| `data/` | Loaders, Dataset, chunkers |
+| `rag/` | Knowledge pipeline, stores, rewrite/compress/ACL/incremental |
+| `graph/` | GraphRAG extract/store/communities |
+| `agents/` | Deterministic agent runtime, builder, patterns, sessions, planning |
+| `tools/` | `@tool`, builtins, OpenAPI import |
+| `workflows/` | Graph engine + HITL |
+| `evaluation/` | Metrics, runner, gates |
+| `observability/` | Tracer, metrics, OTLP, analytics |
+| `safety/` | Guardrails, redaction, PolicyEngine |
+| `optimization/` | Cache, router, cost policy |
+| `deployment/` | FastAPI app, OpenAI-compat gateway, artifacts, scale pack |
+| `training/` | LoRA/quantize/distill/HPO + **toy** foundation stacks |
+| `ml/` | Estimators / arch blocks (separate from agent story) |
+| `mcp/` | Stdio MCP **subset** (tools/resources/prompts) |
+| `cli/` | Typer entrypoint (`aire`) |
+| `audio/`, `vision/`, `workers/`, … | Platform extras — several are stub-quality |
 
-## Key architectural decisions (ADRs, condensed)
+## Key decisions
 
-### ADR-1: Content-addressed references (`provider:name`)
+### Offline-first
 
-Every model, embedder, vector store, chunker and reranker is identified by a
-`Ref` string such as `openai:gpt-4o-mini` or `local:default`. Resolution goes
-through a `Registry[T]` populated by plugins. This makes provider switching a
-configuration change, not a code change.
+Builtins `mock:echo` and `local:hashing` implement the model/embedder contracts without network or downloads. CI and examples should prefer them.
 
-### ADR-2: Runtime as composition root
+### `provider:name` refs
 
-`aire.core.runtime.Runtime` wires settings, registries, the plugin manager,
-event bus, resource manager and tracer. Everything that needs infrastructure
-receives a `Runtime` (constructor injection). A lazily-created process-wide
-default runtime backs the `AI` facade; tests and multi-tenant apps construct
-explicit runtimes.
+Models, embedders, and stores resolve through `Ref.parse("provider:name")` and runtime registries. Examples: `mock:echo`, `openai:gpt-4o-mini`, `local:hashing`, `local:default` (vector store).
 
-### ADR-3: Library-owned request/response types
-
-Providers never leak vendor payloads. `GenerationRequest`, `GenerationResult`,
-`EmbeddingRequest`, `Message` and the multimodal `*Content` blocks are owned by
-`aire.models.types` / `aire.core.content`. Provider adapters translate at the
-boundary. This is what makes `AI.models.use("openai:...")` →
-`AI.models.use("ollama:...")` a one-line change.
-
-### ADR-4: Deterministic agent state machine
-
-Agents are explicit state machines (`AgentExecutor`), not recursive loops:
-
-```
-RUNNING → MODEL_CALL → PERMISSION_DENIED? → TOOL_CALL → OBSERVATION → FINISH
-                      ↘ MAX_STEPS | BUDGET_EXCEEDED | FAILED
+```python
+model = AI.models.use_sync("mock:echo")
+embedder = AI.models.embedder_sync("local:hashing")
+store = AI.rag.vector_store("local:default")
 ```
 
-Every transition is recorded as an `AgentStep` with usage, so executions are
-auditable, replayable (via `AgentState`) and budget-bounded
-(`ExecutionContext.budget` enforced by `ctx.tick()`).
+### `.describe()`
 
-### ADR-5: Graph workflows with visit-bounded loops
+Subsystems and many objects return JSON-serializable manifests via `.describe()`. Prefer this over reading source when exploring capabilities.
 
-The workflow engine (`aire.workflows.graph.Workflow`) schedules nodes by
-edge-firing counts: a node runs when a new in-edge firing is available and all
-predecessors are terminal. Conditional edges simply don't fire; unreachable
-nodes are marked `SKIPPED`. Cycles are legal but bounded by `max_visits`,
-giving loops without unbounded recursion. Checkpoints write the full
-`WorkflowState` as JSON after every node transition.
-
-### ADR-6: Structured errors as API
-
-All failures are `AireError` subclasses carrying `code`, `message`, `context`,
-`retryable` and a `cause` chain. Provider HTTP failures are mapped once in
-`ProviderHttpClient`/`map_http_error` so callers always see
-`RateLimitError`, `AuthenticationError`, `TimeoutError`, … regardless of vendor.
-`wrap_errors` preserves unknown exceptions by wrapping them in
-`InternalError` with the original attached.
-
-### ADR-7: Plugins via entry points + programmatic registration
-
-External packages register under the `aire.providers` entry-point group and
-expose `register(runtime) -> PluginInfo`. Discovery is lazy: importing `aire`
-never imports plugins; `PluginManager.discover()` runs only when a runtime is
-built or `AI.plugins.discover()` is called. Built-in providers (`mock`,
-`echo`, `local` stores) are registered directly by the runtime.
-
-### ADR-8: Observability as a first-class seam
-
-`Tracer`/`Span` mirror the OpenTelemetry shape (trace/span ids, attributes,
-status) with `MemoryExporter` and `JsonlExporter` built in and sensitive
-attributes masked. `Metrics` provides counters/gauges/latencies. The
-`EventBus` broadcasts domain events (`agent.tool_call`, `model.generate`, …)
-for audit and UI consumption. Tracing is wired through models, RAG, agents
-and deployment endpoints — not bolted on per-call-site.
-
-### ADR-9: Optional dependencies are hard-isolated
-
-`fastapi`, `numpy`, `torch`, `datasets`, `pillow` are extras. Import sites are
-either module-level `try/except ImportError` (deployment) or function-local
-imports (training adapters), so `import aire` stays fast and dependency-light.
-The performance test suite asserts import-time and dependency boundaries.
-
-### ADR-10: Sync facade over async core
-
-All network/inference code is async. For scripts and notebooks, thin `*_sync`
-wrappers (`run_sync`) exist on the facade and builders; they refuse to run
-inside an active event loop instead of deadlocking.
-
-## Module map
-
-```
-src/aire/
-  core/          runtime plumbing (no AI deps)
-  models/        Model/EmbeddingModel ABCs, registry, builtins, retry
-  integrations/  provider adapters (httpx-based) + plugin shims
-  data/          Dataset, loaders, chunkers
-  rag/           VectorStore, Retriever (hybrid + RRF), Reranker, Knowledge
-  tools/         @tool decorator, ToolRegistry, builtin tools
-  agents/        AgentExecutor state machine, Memory, Agent facade
-  workflows/     graph engine, checkpoints, streaming events
-  evaluation/    metrics registry, judges, Evaluator, reports
-  observability/ tracing, metrics
-  safety/        guardrails, redaction, approval policy, patterns
-  optimization/  exact/semantic model cache, ModelRouter
-  multimodal/    converter registry + model-backed conversions
-  vision/ audio/ high-level pipelines over capable models
-  synthetic/     model-driven dataset generation
-  training/      framework-agnostic trainer loop
-  deployment/    FastAPI factory, artifact generation
-  cli/           typer CLI (aire ...)
-  ai.py          AI facade namespaces
-  knowledge_assistant.py  fluent AI.project builder (vertical slice)
+```python
+AI.describe()
+AI.agents.describe()
+AI.models.describe()
 ```
 
-## Testing architecture
+### Deterministic agents
 
-- `tests/unit` — isolated behavior, no network.
-- `tests/contract` — every Model/EmbeddingModel/VectorStore satisfies the same
-  protocol-level contract.
-- `tests/integration` — cross-module flows, including the offline vertical
-  slice (ingest → ask → evaluate → trace → FastAPI deploy) and httpx-mocked
-  provider payloads.
-- `tests/security` — injection, path traversal, unsafe YAML, secret redaction,
-  permission bypass.
-- `tests/performance` — import time, embedding throughput, search latency,
-  workflow overhead budgets.
+`Agent` runs a budgeted state machine (`AgentExecutor`): model call → optional tool calls → finish. Steps are recorded on `AgentState` / `AgentResult`. Planning (`AgentConfig.planning` / `PlanActVerify`) is an optional outer loop, not a free-form planner.
+
+### Facade levels
+
+1. **Declarative** — `AI.project(...)` / `AI.from_config("aire.yaml")`
+2. **Composable** — `AI.models.use(...)`, `AI.rag.create(...)`, `AI.agents.create(...)`
+3. **Low-level** — protocols and adapters directly

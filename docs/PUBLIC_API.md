@@ -1,279 +1,77 @@
-# aire — Public API
+# Public API
 
-This document defines the supported surface. Anything importable from a
-package `__init__` (or documented here) is public; everything else —
-especially modules and names prefixed with `_` — is internal and may change
-without notice. From 1.0, breaking changes to the public API require a
-deprecation cycle and a migration note.
+Symbols re-exported from `aire` (`src/aire/__init__.py`) and the `AI` facade (`src/aire/ai.py`).
 
-## Top level
+## Top-level exports
 
-```python
-from aire import AI, __version__
-from aire.core.errors import AireError
-```
+| Symbol | Role |
+|--------|------|
+| `AI` | Unified facade |
+| `Agent`, `AgentConfig`, `AgentResult`, `AgentStatus` | Agent types |
+| `Team`, `TeamResult` | Multi-agent team |
+| `tool`, `Tool`, `ToolSpec`, `ToolResult`, `SideEffect` | Tools |
+| `Knowledge`, `Answer`, `Citation` | RAG |
+| `Assistant` | Fluent project builder (`AI.project`) |
+| `Model`, `EmbeddingModel`, `ModelInfo`, `GenerationRequest`, `GenerationResult` | Models |
+| `Dataset`, `Record` | Data |
+| `EvalCase`, `EvalReport`, `Evaluator` | Evaluation |
+| `KnowledgeGraph` | GraphRAG |
+| `LongTermMemory`, `MemoryEntry` | Memory |
+| `Workflow`, `WorkflowResult` | Workflows |
+| `Runtime`, `Settings` | Core runtime/config |
+| `Message`, content types (`TextContent`, …) | Content |
+| `Capability`, `HealthStatus`, `Manifest`, `Ref`, `Usage` | Shared types |
+| `AireError`, `ConfigurationError`, `PermissionDeniedError`, `ProviderError` | Errors |
+| `__version__` | Package version (`0.3.5`) |
 
-## The AI facade
+Import what you need from `aire` first; deeper modules are stable for advanced use but not all are re-exported.
 
-`AI` exposes lazily-bound namespaces over the default runtime:
+## `AI` facade namespaces
 
 | Namespace | Highlights |
-|---|---|
-| `AI.models` | `use(spec)`, `use_sync(spec)`, `embedder(spec)`, `register_callable(name, fn)`, `router(candidates, objective=...)`, `cache(model)` |
-| `AI.data` | `load(source, ...)`, `from_texts(texts)`, `chunker(name, **opts)` |
-| `AI.rag` | `knowledge(...)`, `vector_store(spec)` |
-| `AI.graph` | `create(...)` (KnowledgeGraph), `store(spec)` (graph stores) |
-| `AI.memory` | `create(path=..., embedder=...)` (LongTermMemory) |
-| `AI.mcp` | `server(tools)`, `connect(command)`, `connect_sync(command)` |
-| `AI.tools` | `tool(...)` decorator, `registry()`, `builtins()` |
-| `AI.agents` | `create(model, tools=..., memory=..., config=...)`, `create_sync(...)`, `team(members, supervisor=...)` |
-| `AI.workflows` | `create(name, ...)` |
-| `AI.evaluate` | `run(target, dataset, metrics=...)` |
-| `AI.observe` | `tracer()`, `metrics()` |
-| `AI.safety` | `guardrails(*names)`, `redact(text)` |
-| `AI.deploy` | `api(target, ...)`, `artifacts(target, dir)` |
-| `AI.gateway` | `create(...)`, `serve(host, port, ...)`, `endpoints()` |
-| `AI.project` | fluent builder (`aire.knowledge_assistant.Assistant`) |
-| `AI.configure` | `configure(settings_or_path)`, `runtime()` |
+|-----------|------------|
+| `AI.models` | `use` / `use_sync`, `embedder`, `router`, `cache`, `register_callable`, `describe` |
+| `AI.data` | `load`, `chunker`, `describe` |
+| `AI.rag` | `create` → `Knowledge`, `vector_store`, `incremental`, `describe` |
+| `AI.graph` | `create`, `store`, `communities` |
+| `AI.memory` | long-term memory helpers |
+| `AI.mcp` | MCP server/client helpers |
+| `AI.agents` | `create` / `create_sync`, `team`, `builder`, `pattern`, `toolkit`, `approver`, topologies |
+| `AI.observe` | tracer, metrics, analytics, costs |
+| `AI.deploy` | `api`, `artifacts`, `scale` |
+| `AI.gateway` | `create`, `serve`, `endpoints` |
+| `AI.workflows` | `create`, HITL helpers |
+| `AI.training` | LoRA / quantize / distill / HPO / **foundation (toy)** |
+| `AI.ml` | estimators / arch |
+| `AI.safety` | `guardrails`, `redact`, `policy` |
+| `AI.skills` | skill registry |
+| `AI.schedule` | scheduler |
+| `AI.workers` | in-process / file queue workers |
+| `AI.recipes` | one-call scaffolds |
+| `AI.locks` | project lock files |
+| `AI.vision` / `AI.audio` / `AI.docs` | multimodal helpers (partially stubbed) |
 
-## Core contracts
+## Class methods on `AI`
 
-```python
-from aire.core.content import (
-    Message, TextContent, ImageContent, AudioContent, VideoContent,
-    DocumentContent, StructuredContent,
-)
-from aire.core.config import Settings, load_settings
-from aire.core.context import Budget, ExecutionContext
-from aire.core.errors import (
-    AireError, ConfigurationError, DataError, NotFoundError, ProviderError,
-    AuthenticationError, RateLimitError, TimeoutError, BudgetExceededError,
-    PermissionDeniedError, SafetyError, OutputValidationError, WorkflowError,
-    RetrievalError, PluginError, InternalError, ensure_aire_error,
-)
-from aire.core.runtime import Runtime
-from aire.core.types import Capability, HealthStatus, Manifest, Ref, Usage
-```
+- `AI.runtime()` / `AI.configure(...)` — process-wide `Runtime`
+- `AI.project(name)` / `AI.from_config(path)` → `Assistant`
+- `AI.workflow(name)` / `AI.recipe(name)` / `AI.topologies()`
+- `AI.tool(...)` — alias for registering tools
+- `AI.evaluate(target, dataset, ...)` — evaluation runner
+- `AI.describe()` — top-level manifest
 
-## Models
+## Typical usage
 
 ```python
-from aire.models import (
-    Model, EmbeddingModel, ModelRegistry, register_callable,
-    EchoModel, CallableModel, HashingEmbedder, with_retry,
-    GenerationRequest, GenerationResult, GenerationChunk, EmbeddingRequest,
-    EmbeddingResult, ModelInfo, ToolCall, ToolDefinition, StructuredOutputSpec,
-)
+from aire import AI, tool
+
+model = AI.models.use_sync("mock:echo")
+
+@tool
+def add(a: int, b: int) -> int:
+    """Add two integers."""
+    return a + b
+
+agent = AI.agents.create_sync(model, tools=[add])
+print(agent.run_sync("hello").output)
 ```
-
-- `Model.generate(request) -> GenerationResult`
-- `Model.stream(request) -> AsyncIterator[GenerationChunk]`
-- `Model.ask(prompt) -> str`, `Model.ask_structured(prompt, SchemaModel)`
-- `EmbeddingModel.embed(request) -> EmbeddingResult`, `.embed_one(text)`
-- `ModelRegistry(runtime).use("provider:name")`, `.embedder(spec)`
-
-## Data
-
-```python
-from aire.data import (
-    Dataset, Record, DatasetSplit, QualityReport, load,
-    Chunker, FixedChunker, SentenceChunker, RecursiveChunker, TextChunk, get_chunker,
-)
-```
-
-Chainable: `dataset.validate().deduplicate().split(train=0.8, validation=0.1, test=0.1)`.
-
-`load(source)` accepts: `.jsonl`/`.json`/`.csv` files, `.html`/`.htm` (clean
-text extraction, also for HTML URLs and directory members), `.parquet`/`.xlsx`/
-`.xls` (lazy pandas, `aire[ml]`), text files, directories, `http(s)://` URLs,
-and in-memory lists. `aire.data.loaders.html_to_text` is exported for direct use.
-
-## RAG
-
-```python
-from aire.rag import (
-    Knowledge, Document, Chunk, ScoredChunk, Citation, Answer, IndexReport,
-    VectorStore, LocalVectorStore, Retriever, get_reranker,
-    EmbeddingReranker, ModelReranker, LexicalOverlapReranker,
-)
-    IdentityReranker, LexicalOverlapReranker,
-)
-```
-
-Vector store refs: `local:*`, `sqlite:<path>` (embedded, transactional),
-`qdrant:*`, `chroma:*`, `pinecone:*`, `weaviate:*` (native BM25), `milvus:*`.
-
-## Knowledge graphs (GraphRAG)
-
-```python
-from aire.graph import (
-    KnowledgeGraph, GraphStore, SQLiteGraphStore,
-    GraphExtractor, LexicalGraphExtractor, ModelGraphExtractor,
-    Entity, Relation, Extraction, Subgraph, GraphIndexReport,
-)
-```
-
-- `await graph.ingest(source)` — chunk, extract triples, index chunks.
-- `await graph.subgraph(question, depth=1)` — entity linking + BFS neighborhood.
-- `await graph.query(question, k=5)` — graph + vector fused, cited `Answer`.
-- Graph store refs via `AI.graph.store("sqlite:<path>")` (`sqlite:memory` default).
-
-## Long-term memory
-
-```python
-from aire.memory import LongTermMemory, MemoryEntry, MemoryKind
-```
-
-Implements the agent `Memory` interface (drop-in `Agent(memory=...)`) plus
-`remember()`, `recall_semantic(query, k=...)`, `consolidate(model)`, and
-optional JSONL persistence (`path=`).
-
-## MCP (Model Context Protocol)
-
-```python
-from aire.mcp import MCPServer, MCPClient, MCPError
-```
-
-- `MCPServer(tools, knowledge=True)` — `handle(message)`, `serve_stdio()`;
-  CLI: `aire mcp-serve`. Exposes knowledge resources (`aire://guide`,
-  `aire://manifest`, `aire://errors`, `aire://refs`) and task prompts
-  (`aire_quickstart`, `aire_rag`, `aire_agent`, `aire_gateway`, `aire_ml`).
-- `MCPClient(command)` — async context manager; `list_tools()`,
-  `call_tool(name, args)`, `tools()` (adapts remote tools into aire `Tool`s),
-  `list_resources()`, `read_resource(uri)`, `list_prompts()`,
-  `get_prompt(name, args)`.
-- Transport: newline-delimited JSON-RPC 2.0 over stdio (protocol `2025-06-18`).
-
-## Model creation (ML)
-
-```python
-from aire.ml import (
-    Estimator, FitReport, Prediction, TaskType, Pipeline, Transform,
-    MajorityClassifier, CentroidClassifier, KNNClassifier, LinearRegressor,
-    SklearnEstimator, TorchEstimator, StandardScaler, MinMaxScaler,
-    EarlyStopping, HistoryCallback, create_transform,
-    frame_to_dataset, dataset_to_frame, predictions_to_frame, available_backends,
-)
-```
-
-- `AI.ml.create(spec, **options)` / `AI.ml.fit(spec, dataset, target=)` /
-  `AI.ml.train(spec, dataset, transforms=...)` / `AI.ml.pipeline(steps)` /
-  `AI.ml.transform(spec)` / `AI.ml.backends()` / `AI.ml.catalog()` /
-  `AI.ml.transforms_catalog()` / `AI.ml.to_frame(ds)` / `AI.ml.from_frame(df, target=)`.
-- `AI.ml.cross_validate(spec, dataset, k=)` / `AI.ml.grid_search(...)` /
-  `AI.ml.random_search(...)` (both accept `direction="maximize"|"minimize"`) /
-  `est.feature_importance(dataset)`.
-- Estimator refs: `simple:majority · centroid · knn · linear_regression`
-  (native, offline), `sklearn:<name|dotted.path>` (aire[ml]),
-  `torch:mlp` with `hidden=`, `optimizer=`, `loss=`, `batch_size=`,
-  `scheduler=`, `callbacks=`, `module_factory=` (aire[torch]),
-  `keras:mlp` (aire[keras]), `xgboost:classifier|regressor` (aire[xgboost]),
-  `lightgbm:classifier|regressor` (aire[lightgbm]).
-- Transform refs: `native:standard_scaler|minmax_scaler`, `sklearn:<transformer>`.
-- Contract: `await est.fit(dataset, target=)` → `FitReport`;
-  `await est.predict(records)` → `Prediction(value, probabilities)`;
-  `await est.evaluate(dataset)` → classification report or MAE/RMSE/R²;
-  `est.save(path)` / `est.load(path)`; `est.describe()`. Feature convention:
-  `metadata["features"]` → numeric metadata → text-derived. aire never
-  pickles: sklearn/xgboost/lightgbm persist via their own APIs on `est.model`;
-  torch loads use `weights_only=True`.
-- **Composable architectures** (`AI.ml.arch`): build stacks from independently
-  registered blocks — `attention()` / `ffn()` / `norm()` / `residual()` /
-  `block()` / `compose(layers=[...])`; `register_attention` / `register_ffn` /
-  `register_architecture`. Blocks: mha, linear, delta, gated_delta, kda, mla;
-  mlp, swiglu, situ_mlp, moe, latent_moe; layernorm, rmsnorm; add, attn_res.
-- **`AI.ml.optim.create(name, params, **opts)`**: sgd, adam, adamw, rmsprop,
-  adagrad.
-- **`AI.ml.loss.create(name, **opts)`**: cross_entropy, nll, mse, l1, huber,
-  smooth_l1, bce, kl_div, cosine, ctc, moe_load_balance.
-
-## Tools & agents
-
-```python
-from aire.tools import tool, Tool, ToolRegistry, ToolSpec, ToolResult,
-from aire.tools import SideEffect, RetryPolicy, builtin_tools
-from aire.agents import Agent, AgentConfig, AgentStatus, AgentStep, AgentResult,
-from aire.agents import Memory, BufferMemory, JsonlMemory
-from aire.agents import Team, TeamResult, Delegation, DelegationRecord
-```
-
-- `agent.as_tool(name=..., description=...)` — agent-as-tool composition.
-- `Team(members, supervisor, max_rounds=6)` — supervisor-routed delegation with
-  structured decisions and auditable `DelegationRecord`s; `AI.agents.team(...)`.
-- Approval policies (`aire.agents.approvals`, or `AI.agents.approver(kind)`):
-  `RuleApprover(auto_approve_below=..., allow=..., deny=...)` with audit trail,
-  `InteractiveApprover()` human-in-the-loop prompts with session memory.
-
-## Workflows
-
-```python
-from aire.workflows import Workflow, WorkflowState, WorkflowResult, WorkflowEvent, NodeSpec
-```
-
-`wf.add(name, fn, retries=..., timeout_seconds=..., requires_approval=...)`,
-`wf.connect(a, b, when=...)`, `await wf.run(input, state=...)`,
-`wf.run_stream(input)`, `Workflow(checkpoint_path=...)` (state persisted after
-every node), `Workflow.load_checkpoint(path)`, `await wf.resume(path?)`
-(continues from a checkpoint: completed nodes are skipped, failed nodes retry).
-
-## Evaluation & observability
-
-```python
-from aire.evaluation import Evaluator, EvalCase, EvalReport, CaseResult, get_metric
-from aire.observability import Tracer, Span, MemoryExporter, JsonlExporter, Metrics
-from aire.observability import OTLPExporter  # batched OTLP/HTTP+JSON to any collector
-```
-
-- `FunctionTrainer(step, config)` — `await trainer.fit(dataset, resume_from=...)`
-  (continues from a checkpoint), `FunctionTrainer.load_checkpoint(path)`.
-- `AI.training.quantize(...)` / `AI.training.distill(...)` — quantization and
-  knowledge-distillation adapter interfaces (lazy / offline-capable).
-- Metrics: `exact_match`, `semantic_overlap`, `embedding_similarity`, `bleu`,
-  `rouge_l`, `groundedness`, `faithfulness`, `model_judge`, … via `get_metric`.
-- Vision: `VisionPipeline.detect`, `ImageGenerationPipeline.generate`;
-  Audio: `AudioPipeline.synthesize` (TTS).
-
-## Safety & optimization
-
-```python
-from aire.safety import (
-    Guardrail, GuardrailChain, PIIGuardrail, InjectionGuardrail, SecretGuardrail,
-    ApprovalPolicy, redact, redact_pii, redact_secrets,
-)
-from aire.optimization import (
-    CachedModel, SemanticCachedModel, ModelRouter, RouteDecision, CostPolicy,
-)
-```
-
-- `ModelRouter(..., policy=CostPolicy(daily_budget_usd=..., max_cost_per_request_usd=...))`
-  applies budget guards and prefer-cheaper-within-margin routing.
-## Deployment & CLI
-
-```python
-from aire.deployment import Gateway, create_app, create_gateway, generate_artifacts
-```
-
-- `create_gateway(runtime, models=..., aliases=..., embeddings=..., routing=..., objective=..., budgets=..., circuit_breaker=..., failure_threshold=..., cooldown_seconds=..., request_log=..., auth_token=..., rate_limit_per_minute=..., metrics=...)` —
-  OpenAI-compatible gateway app (`/v1/chat/completions` with SSE streaming,
-  Anthropic-compatible `/v1/messages`, `/v1/embeddings`, `/v1/models`,
-  `/v1/gateway/manifest`). Circuit breakers skip failing candidates; daily cost
-  budgets cap spend per alias/ref; `request_log` writes a JSONL audit trail.
-- `Gateway(runtime, chat_routes=..., embedding_routes=..., routing=..., objective=...)` —
-  transport-independent routing core; `.describe()` emits the gateway manifest
-  (routes, circuit states, budgets, today's spend).
-- OpenAI-compatible provider aliases (registered lazily on first use):
-  `lmstudio · llamacpp · llamafile · vllm · mlx · localai · tgi` (local),
-  `groq · together · fireworks · deepseek · mistral · xai · openrouter · cerebras · perplexity` (hosted),
-  and generic `openai_compatible:<model>` with `base_url=`.
-- Config: `Settings.gateway` (`GatewayConfig`) — the `gateway:` section of `aire.yaml`.
-
-CLI: `aire init · run · evaluate · serve · gateway · mcp-serve · inspect · plugins · doctor · version`.
-
-## Stability guarantees
-
-- **Stable after 1.0**: everything above, plus the plugin contract in
-  `docs/PLUGIN_SPEC.md` and error `code` values.
-- **Provisional (may evolve pre-1.0 with changelog notes)**: training loop
-  hooks, multimodal converter registry shape, deployment artifact templates.
-- **Never public**: `aire.integrations.*` internals (construct through refs and
-  the registry instead), any `_`-prefixed name, and test helpers.
