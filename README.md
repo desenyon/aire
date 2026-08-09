@@ -141,3 +141,89 @@ available via integrations — see docs and `aire.integrations`.
 ## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE).
+
+<!-- architecture-atlas-v5:start -->
+## Architecture Atlas v5
+
+These editable Mermaid diagrams mirror the [Notion architecture dossier](https://app.notion.com/p/3b467342e8c18175aaefc8ed5958d1fe?pvs=204).
+
+### 1. Capability planes
+
+```mermaid
+flowchart TB
+  APP["Application code / CLI"] --> FACADE["AI facade<br>models, rag, agents, workflows, eval, deploy"]
+  FACADE --> BUILDER["Project builder + configuration precedence"]
+  BUILDER --> REF["provider:name model and embedding references"]
+  REF --> REG["Provider registry + entry-point plugins"]
+  REG --> PROVIDERS["OpenAI / Anthropic / Ollama / Hugging Face / mock / echo"]
+  BUILDER --> DATA["Document loaders -> chunkers -> embeddings -> vector stores"]
+  DATA --> RETRIEVE["Retriever + citation assembler"]
+  BUILDER --> TOOLS["Explicit tool schemas + executor"]
+  TOOLS --> AGENT["Deterministic agent loop + memory"]
+  RETRIEVE --> AGENT
+  AGENT --> FLOW["Workflow graph"]
+  FLOW --> SAFE["Safety policies"]
+  FLOW --> EVAL["Evaluation harness"]
+  FLOW --> OBS["Observability hooks"]
+  FLOW --> DEPLOY["Serve/deployment adapters"]
+  STUB["Vision / audio / foundation honest stubs"] -. stub=True .-> FACADE
+```
+
+### 2. Provider and RAG wiring
+
+```mermaid
+flowchart LR
+  CONFIG["Project config"] --> RESOLVE["Capability resolver"] --> PLUGIN{"Matching provider plugin available?"}
+  PLUGIN -->|yes| CONTRACT["Provider-neutral model/embedding contract"]
+  PLUGIN -->|no| ERR["AireError<br>stable code, context, retryable"]
+  DOCS["Documents"] --> LOAD["Load"] --> CHUNK["Chunk"] --> EMBED["Embed"] --> VDB[("Vector store")]
+  QUERY["User query"] --> RET["Retrieve relevant chunks"] --> CITE["Attach source spans and citations"] --> AGENT["Agent/workflow runtime"]
+  CONTRACT --> AGENT
+  TOOL["Tool contract"] --> AGENT
+  AGENT --> RESULT["Structured result or structured error"]
+  RESULT --> TRACE[("Trace/evaluation artifacts")]
+```
+
+### 3. Runtime narrative
+
+```mermaid
+sequenceDiagram
+  actor App as Application
+  participant B as Project Builder
+  participant P as Provider Registry
+  participant R as RAG Plane
+  participant A as Agent Runtime
+  participant X as Safety / Eval / Deploy
+  App->>B: AI.project / AI.models / AI.agents
+  B->>P: resolve provider:name and required capabilities
+  P-->>B: plugin contract or structured AireError
+  opt documents configured
+    B->>R: load, chunk, embed and index
+    R-->>A: retrieved evidence with source spans
+  end
+  B->>A: bind model, tools, memory and workflow
+  A->>P: provider-neutral model/tool call
+  P-->>A: typed result or retryable error
+  A->>X: policy, tracing, evaluation and deployment hooks
+  A-->>App: answer, citations, metadata and declared stub state
+```
+
+### 4. Reliability model
+
+```mermaid
+stateDiagram-v2
+  [*] --> CONFIGURED
+  CONFIGURED --> PROVIDER_RESOLVED
+  PROVIDER_RESOLVED --> INDEXING: knowledge project
+  PROVIDER_RESOLVED --> READY: model-only project
+  INDEXING --> READY
+  READY --> RUNNING_AGENT
+  RUNNING_AGENT --> CALLING_TOOL
+  RUNNING_AGENT --> CALLING_MODEL
+  CALLING_TOOL --> RUNNING_AGENT
+  CALLING_MODEL --> RUNNING_AGENT
+  RUNNING_AGENT --> EVALUATING --> DEPLOYED
+  CONFIGURED --> DEGRADED_STUB: explicitly selected or missing real media provider
+```
+
+<!-- architecture-atlas-v5:end -->
