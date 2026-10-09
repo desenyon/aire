@@ -12,6 +12,7 @@ Configuration (by priority): explicit options → ``aire.yaml providers.openai``
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -250,7 +251,11 @@ class OpenAIEmbedder(EmbeddingModel):
         self._name = name
         self._client = client
         self._provider = provider
-        self._dimension = 1536 if "small" in name or "ada" in name else 3072
+        self._dimension = {
+            "text-embedding-ada-002": 1536,
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072,
+        }.get(name, 0)
 
     @property
     def name(self) -> str:
@@ -269,11 +274,24 @@ class OpenAIEmbedder(EmbeddingModel):
         data = await with_retry(_call)
         rows = sorted(data.get("data", []), key=lambda r: r.get("index", 0))
         usage_raw = data.get("usage", {}) or {}
-        return EmbeddingResult(
+        result = EmbeddingResult(
             vectors=[row.get("embedding", []) for row in rows],
             model=self.name,
             usage=Usage(input_tokens=usage_raw.get("prompt_tokens", 0)),
         )
+        # Compatible endpoints serve arbitrary embedding models. Discover their
+        # width from a valid first batch instead of guessing from the model name.
+        if (
+            not self._dimension
+            and result.dimension
+            and len(result.vectors) == len(request.inputs)
+            and all(
+                len(vector) == result.dimension and all(math.isfinite(x) for x in vector)
+                for vector in result.vectors
+            )
+        ):
+            self._dimension = result.dimension
+        return result
 
 
 def _text(content: str) -> Any:

@@ -15,6 +15,8 @@ All notable changes to aire are documented here. The format follows
 - Assemble interleaved OpenAI and Anthropic stream arguments before publishing
   tool calls; surface invalid/incomplete calls as structured errors. Retain
   Ollama streamed tool calls and terminal usage.
+- Discover custom OpenAI-compatible embedding dimensions from a valid response
+  instead of guessing, preserving arbitrary embedding backend compatibility.
 - Apply Local/SQLite metadata and ACL filters to tokenless queries before limits.
   Prepare and validate embeddings before index replacement. Add atomic local and
   SQLite document/full-index replacement, and commit SQLite changes before cache

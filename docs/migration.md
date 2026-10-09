@@ -29,6 +29,9 @@ published by this update.
 stored data. Local replacement swaps the in-memory mapping; SQLite replacement
 commits one database transaction before updating its cache. Invalid embedding
 counts, dimensions, or non-finite values produce `rag.invalid_embeddings`.
+OpenAI-compatible embedders with unknown model names report dimension zero until
+their first valid response, then retain the discovered dimension. Known OpenAI
+embedding models keep their declared dimensions.
 
 `Knowledge.ingest(..., replace=True)` is additive. `IncrementalIndex.reindex` with
 `clear=True` uses it instead of clearing first. Local/SQLite implement atomic full

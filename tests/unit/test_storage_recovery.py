@@ -194,3 +194,24 @@ def test_tokenless_acl_filter_and_nonpositive_limits(store):
     assert [h.chunk.id for h in hits] == ["b"]
     assert run_sync(store.search_text("", k=-1)) == []
     assert run_sync(store.search([1.0], k=-1)) == []
+
+
+@pytest.mark.parametrize("name", ["custom-small-embedder", "custom-embedder"])
+def test_compatible_embedder_discovers_custom_dimension(name):
+    from aire.integrations.openai import OpenAIEmbedder
+
+    class Client:
+        async def post_json(self, path, payload):
+            return {
+                "data": [
+                    {"index": i, "embedding": [1.0, 2.0, 3.0]}
+                    for i, _ in enumerate(payload["input"])
+                ]
+            }
+
+    embedder = OpenAIEmbedder(name, Client(), provider="openai_compatible")
+    knowledge = Knowledge(Runtime(), embedder=embedder)
+    report = run_sync(knowledge.ingest([Document(id="doc", text="custom embedding backend")]))
+    assert report.chunks == 1
+    assert embedder.dimension == 3
+    assert run_sync(knowledge.retrieve("custom"))
