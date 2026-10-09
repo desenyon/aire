@@ -193,9 +193,9 @@ class AgentBuilder:
         return {
             "kind": "agent_builder",
             "name": self._name,
-            "model": self._model if isinstance(self._model, str) else getattr(
-                getattr(self._model, "info", None), "ref", type(self._model).__name__
-            ),
+            "model": self._model
+            if isinstance(self._model, str)
+            else getattr(getattr(self._model, "info", None), "ref", type(self._model).__name__),
             "tools": [t if isinstance(t, str) else t.spec.name for t in self._tools],
             "skills": list(self._skills),
             "config": self.config().model_dump(mode="json"),

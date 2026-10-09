@@ -36,9 +36,7 @@ def frame_to_dataset(
     records: list[Record] = []
     columns = list(frame.columns)
     feature_cols = [
-        c
-        for c in columns
-        if c != target and c != text_column and frame[c].dtype.is_numeric()
+        c for c in columns if c != target and c != text_column and frame[c].dtype.is_numeric()
     ]
     for i, row in enumerate(frame.iter_rows(named=True)):
         features = {c: float(row[c]) for c in feature_cols if row[c] is not None}

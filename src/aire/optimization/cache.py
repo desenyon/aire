@@ -89,9 +89,7 @@ class CachedModel(Model):
                 last_usage = chunk.usage
             yield chunk
         text = "".join(pieces)
-        result = GenerationResult.text_result(
-            text, model=self.inner.info.ref, usage=last_usage
-        )
+        result = GenerationResult.text_result(text, model=self.inner.info.ref, usage=last_usage)
         if finish:
             result = result.model_copy(update={"finish_reason": finish})
         if len(self._cache) >= self.max_entries:
@@ -195,9 +193,7 @@ class SemanticCachedModel(Model):
                 last_usage = chunk.usage
             yield chunk
         text = "".join(pieces)
-        result = GenerationResult.text_result(
-            text, model=self.inner.info.ref, usage=last_usage
-        )
+        result = GenerationResult.text_result(text, model=self.inner.info.ref, usage=last_usage)
         if finish:
             result = result.model_copy(update={"finish_reason": finish})
         if len(self._entries) >= self.max_entries:

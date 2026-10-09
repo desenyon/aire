@@ -91,9 +91,7 @@ class Distiller:
         hard_target: Any | None = None,
         student_pred: Any | None = None,
     ) -> DistillationResult:
-        soft = soft_kl_loss(
-            student_logits, teacher_logits, temperature=self.config.temperature
-        )
+        soft = soft_kl_loss(student_logits, teacher_logits, temperature=self.config.temperature)
         hard = 0.0
         if self.hard_loss_fn is not None and hard_target is not None:
             hard = float(self.hard_loss_fn(student_pred, hard_target))
@@ -215,9 +213,10 @@ class HFDistillTrainer:
     def prepare(self) -> None:
         import importlib.util
 
-        if importlib.util.find_spec("transformers") is None or importlib.util.find_spec(
-            "torch"
-        ) is None:
+        if (
+            importlib.util.find_spec("transformers") is None
+            or importlib.util.find_spec("torch") is None
+        ):
             raise ConfigurationError(
                 "HFDistillTrainer requires transformers+torch: pip install 'aire[peft]'",
                 code="training.hf_distill_missing",

@@ -555,9 +555,7 @@ def analytics(
     demo = analytics_obj is None and not env_ref
     if analytics_obj is None:
         analytics_obj = create_analytics()
-        analytics_obj.record_run(
-            model="mock:echo", cost_usd=0.0, latency_ms=1.0, operation="cli"
-        )
+        analytics_obj.record_run(model="mock:echo", cost_usd=0.0, latency_ms=1.0, operation="cli")
     if prometheus:
         if demo:
             typer.echo("# aire analytics: demo mode (no process metrics attached)")

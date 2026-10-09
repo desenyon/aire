@@ -105,12 +105,12 @@ class KerasEstimator(Estimator):
         self.batch_size = batch_size
         self.optimizer_name = optimizer
         self.loss_name = loss or (
-            "sparse_categorical_crossentropy"
-            if self.task == TaskType.CLASSIFICATION
-            else "mse"
+            "sparse_categorical_crossentropy" if self.task == TaskType.CLASSIFICATION else "mse"
         )
-        self.metrics = list(metrics) if metrics is not None else (
-            ["accuracy"] if self.task == TaskType.CLASSIFICATION else ["mae"]
+        self.metrics = (
+            list(metrics)
+            if metrics is not None
+            else (["accuracy"] if self.task == TaskType.CLASSIFICATION else ["mae"])
         )
         self.model_factory = model_factory
         self.callbacks = list(callbacks or [])
@@ -227,9 +227,7 @@ class KerasEstimator(Estimator):
                 else {self._classes[0]: float(v)}
                 for v in rows
             ]
-        return [
-            dict(zip(self._classes, (float(p) for p in row), strict=True)) for row in rows
-        ]
+        return [dict(zip(self._classes, (float(p) for p in row), strict=True)) for row in rows]
 
     def _state(self) -> dict[str, Any]:
         raise ConfigurationError("keras estimators persist via save()", code="ml.state_unavailable")

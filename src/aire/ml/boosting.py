@@ -34,8 +34,10 @@ class XGBoostEstimator(Estimator):
     ) -> None:
         super().__init__()
         xgb = _require("xgboost", "xgboost")
-        resolved_task = TaskType(task) if task else (
-            TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION
+        resolved_task = (
+            TaskType(task)
+            if task
+            else (TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION)
         )
         self.task = resolved_task
         self.name = name
@@ -106,8 +108,10 @@ class LightGBMEstimator(Estimator):
     ) -> None:
         super().__init__()
         lgb = _require("lightgbm", "lightgbm")
-        resolved_task = TaskType(task) if task else (
-            TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION
+        resolved_task = (
+            TaskType(task)
+            if task
+            else (TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION)
         )
         self.task = resolved_task
         self.name = name
@@ -180,15 +184,15 @@ class CatBoostEstimator(Estimator):
     ) -> None:
         super().__init__()
         cb = _require("catboost", "catboost")
-        resolved_task = TaskType(task) if task else (
-            TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION
+        resolved_task = (
+            TaskType(task)
+            if task
+            else (TaskType.REGRESSION if "regressor" in name else TaskType.CLASSIFICATION)
         )
         self.task = resolved_task
         self.name = name
         cls = (
-            cb.CatBoostRegressor
-            if resolved_task == TaskType.REGRESSION
-            else cb.CatBoostClassifier
+            cb.CatBoostRegressor if resolved_task == TaskType.REGRESSION else cb.CatBoostClassifier
         )
         params = {
             "iterations": 50,

@@ -375,9 +375,7 @@ async def random_search(
     while len(trials) < n_iter and attempts < max_attempts:
         attempts += 1
         params = {
-            key: param_distributions[key][
-                rng.randint(0, len(param_distributions[key]) - 1)
-            ]
+            key: param_distributions[key][rng.randint(0, len(param_distributions[key]) - 1)]
             for key in keys
         }
         key_t = tuple((k, params[k]) for k in keys)

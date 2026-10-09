@@ -26,9 +26,7 @@ class ColumnTransformer(Transform):
     ) -> None:
         super().__init__()
         if remainder not in ("drop", "passthrough"):
-            raise ConfigurationError(
-                "remainder must be drop|passthrough", code="ml.remainder"
-            )
+            raise ConfigurationError("remainder must be drop|passthrough", code="ml.remainder")
         self.remainder = remainder
         self._specs = transformers
         self._fitted: list[tuple[str, Transform, list[int]]] = []
@@ -101,7 +99,4 @@ class FeatureUnion(Transform):
         outs = [t.transform_matrix(x) for _, t in self._fitted]
         if not outs:
             return [[] for _ in x]
-        return [
-            [v for part in parts for v in part]
-            for parts in zip(*outs, strict=True)
-        ]
+        return [[v for part in parts for v in part] for parts in zip(*outs, strict=True)]

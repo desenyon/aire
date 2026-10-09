@@ -368,9 +368,7 @@ class Gateway:
         cached = await self._semantic_lookup(public, request)
         if cached is not None:
             ref, result = cached
-            yield ref, GenerationChunk(
-                text=result.text, finish_reason="stop", usage=result.usage
-            )
+            yield ref, GenerationChunk(text=result.text, finish_reason="stop", usage=result.usage)
             return
 
         chain = await self._chat_chain(public)
@@ -610,9 +608,7 @@ def _register_chat_route(
     @app.post("/v1/chat/completions", dependencies=[Depends(guard)])
     async def chat_completions(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = await _guard_generation_request(
-            _build_generation_request(body), safety_chain
-        )
+        request = await _guard_generation_request(_build_generation_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
                 _sse_stream(gateway, public, request, metrics),
@@ -643,9 +639,7 @@ def _register_anthropic_route(
     @app.post("/v1/messages", dependencies=[Depends(guard)])
     async def anthropic_messages(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = await _guard_generation_request(
-            _build_anthropic_request(body), safety_chain
-        )
+        request = await _guard_generation_request(_build_anthropic_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
                 _anthropic_sse_stream(gateway, public, request, metrics),
@@ -1048,9 +1042,7 @@ async def _guard_generation_request(
     return request.with_messages(messages)
 
 
-async def _guard_generation_result(
-    result: GenerationResult, chain: Any | None
-) -> GenerationResult:
+async def _guard_generation_result(result: GenerationResult, chain: Any | None) -> GenerationResult:
     if chain is None:
         return result
     from aire.core.content import TextContent

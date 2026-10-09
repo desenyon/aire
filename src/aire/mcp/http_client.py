@@ -171,11 +171,7 @@ class MCPHttpClient:
     async def read_resource(self, uri: str) -> str:
         result = await self._request("resources/read", {"uri": uri})
         contents = result.get("contents") or []
-        return "".join(
-            str(part.get("text") or "")
-            for part in contents
-            if isinstance(part, dict)
-        )
+        return "".join(str(part.get("text") or "") for part in contents if isinstance(part, dict))
 
     async def list_prompts(self) -> list[dict[str, Any]]:
         result = await self._request("prompts/list")

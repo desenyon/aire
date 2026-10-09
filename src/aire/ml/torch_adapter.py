@@ -191,9 +191,7 @@ class TorchEstimator(Estimator):
             num_workers=self.num_workers,
         )
 
-    def _split(
-        self, x_tensor: Any, y_tensor: Any
-    ) -> tuple[Any, Any, Any | None, Any | None]:
+    def _split(self, x_tensor: Any, y_tensor: Any) -> tuple[Any, Any, Any | None, Any | None]:
         if self.validation_split <= 0:
             return x_tensor, y_tensor, None, None
         n = x_tensor.size(0)
@@ -237,9 +235,7 @@ class TorchEstimator(Estimator):
         # onecycle needs steps_per_epoch
         if self.scheduler_name == "onecycle":
             bs = self.batch_size or max(len(x_tr), 1)
-            self.scheduler_options.setdefault(
-                "steps_per_epoch", max(1, (len(x_tr) + bs - 1) // bs)
-            )
+            self.scheduler_options.setdefault("steps_per_epoch", max(1, (len(x_tr) + bs - 1) // bs))
         scheduler = self._make_scheduler(optimizer)
         callbacks = list(self.callbacks)
         history_cb = HistoryCallback()
@@ -264,9 +260,7 @@ class TorchEstimator(Estimator):
                     scaler.scale(loss).backward()
                     if self.grad_clip is not None:
                         scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            self._model.parameters(), self.grad_clip
-                        )
+                        torch.nn.utils.clip_grad_norm_(self._model.parameters(), self.grad_clip)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
@@ -274,9 +268,7 @@ class TorchEstimator(Estimator):
                     loss = loss_fn(output, yb)
                     loss.backward()
                     if self.grad_clip is not None:
-                        torch.nn.utils.clip_grad_norm_(
-                            self._model.parameters(), self.grad_clip
-                        )
+                        torch.nn.utils.clip_grad_norm_(self._model.parameters(), self.grad_clip)
                     optimizer.step()
                 if self.scheduler_name == "onecycle" and scheduler is not None:
                     scheduler.step()
@@ -322,9 +314,7 @@ class TorchEstimator(Estimator):
         assert self._model is not None
         self._model.eval()
         with torch.no_grad():
-            output = self._model(
-                torch.tensor(x, dtype=torch.float32, device=self.device)
-            )
+            output = self._model(torch.tensor(x, dtype=torch.float32, device=self.device))
         if self.task == TaskType.CLASSIFICATION:
             indices = output.argmax(dim=1).tolist()
             return [self._classes[i] for i in indices]
@@ -337,14 +327,9 @@ class TorchEstimator(Estimator):
         assert self._model is not None
         self._model.eval()
         with torch.no_grad():
-            logits = self._model(
-                torch.tensor(x, dtype=torch.float32, device=self.device)
-            )
+            logits = self._model(torch.tensor(x, dtype=torch.float32, device=self.device))
             probs = torch.softmax(logits, dim=1).tolist()
-        return [
-            dict(zip(self._classes, (float(p) for p in row), strict=True))
-            for row in probs
-        ]
+        return [dict(zip(self._classes, (float(p) for p in row), strict=True)) for row in probs]
 
     def _state(self) -> dict[str, Any]:
         raise ConfigurationError("torch estimators persist via save()", code="ml.state_unavailable")
@@ -360,9 +345,7 @@ class TorchEstimator(Estimator):
         # unwrap compiled module if needed
         model = self._model
         state_dict = (
-            model._orig_mod.state_dict()
-            if hasattr(model, "_orig_mod")
-            else model.state_dict()
+            model._orig_mod.state_dict() if hasattr(model, "_orig_mod") else model.state_dict()
         )
         self.torch.save(
             {

@@ -146,9 +146,10 @@ model = AI.ml.arch.compose(
         {"attention": "mha", "ffn": "mlp"},
         {"attention": "kda", "ffn": "moe", "ffn_options": {"n_experts": 8}},
     ],
-    n_embd=64, n_head=4,
+    n_embd=64,
+    n_head=4,
 )
-AI.ml.arch.available()          # all registered block kinds
+AI.ml.arch.available()  # all registered block kinds
 AI.ml.arch.attention("mla", n_embd=64, n_head=4, gated=True)
 AI.ml.optim.create("adamw", model.parameters(), lr=1e-3)
 AI.ml.loss.create("cross_entropy")

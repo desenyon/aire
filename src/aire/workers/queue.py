@@ -232,9 +232,7 @@ class RedisQueueWorker:
         result.job.created_at = job.created_at
         return result
 
-    async def drain(
-        self, *, max_jobs: int = 10, block_seconds: float = 1.0
-    ) -> list[WorkerResult]:
+    async def drain(self, *, max_jobs: int = 10, block_seconds: float = 1.0) -> list[WorkerResult]:
         results: list[WorkerResult] = []
         for _ in range(max_jobs):
             one = await self.process_one(block_seconds=block_seconds)

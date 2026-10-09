@@ -10,6 +10,7 @@ class Callback(Protocol):
     def on_epoch_end(self, epoch: int, logs: dict[str, float], state: dict[str, Any]) -> bool:
         """Return True to stop training early."""
         ...
+
     def on_train_end(self, state: dict[str, Any]) -> None: ...
 
 

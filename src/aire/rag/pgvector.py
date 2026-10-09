@@ -345,9 +345,7 @@ def register(runtime: Any) -> None:
     def _factory(name: str = "default", *, runtime: Any = None, **options: Any) -> VectorStore:
         dsn = options.pop("dsn", None) or options.pop("url", None)
         if not dsn:
-            raise ConfigurationError(
-                "pgvector store requires dsn=", code="rag.pgvector_dsn"
-            )
+            raise ConfigurationError("pgvector store requires dsn=", code="rag.pgvector_dsn")
         return PgVectorStore(dsn, **options)
 
     runtime.vector_stores.register("pgvector", _factory, replace=True)

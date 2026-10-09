@@ -67,9 +67,8 @@ class Knowledge:
         self._compressor: Any | None = None
         from aire.safety.guardrails import resolve_guardrails
 
-        self.guardrails = resolve_guardrails(
-            guardrails, safety=runtime.settings.safety
-        )
+        self.guardrails = resolve_guardrails(guardrails, safety=runtime.settings.safety)
+
     # -- ingestion -----------------------------------------------------------------
 
     async def _embedder(self) -> EmbeddingModel:
@@ -257,9 +256,7 @@ class Knowledge:
             )
         else:
             context = "\n\n".join(f"[{i + 1}] {hit.chunk.text}" for i, hit in enumerate(hits))
-        prompt = (template or self.prompt_template).format(
-            context=context, question=question_text
-        )
+        prompt = (template or self.prompt_template).format(context=context, question=question_text)
         from aire.models.types import GenerationRequest
 
         request = GenerationRequest.of(prompt, **generate_kwargs)

@@ -97,9 +97,12 @@ def openapi_to_tools(
                 continue
             if method.lower() not in {"get", "post", "put", "patch", "delete", "head"}:
                 continue
-            op_id = str(op.get("operationId") or f"{method}_{path}").replace("/", "_").replace(
-                "{", ""
-            ).replace("}", "")
+            op_id = (
+                str(op.get("operationId") or f"{method}_{path}")
+                .replace("/", "_")
+                .replace("{", "")
+                .replace("}", "")
+            )
             if include is not None and op_id not in include:
                 continue
             name = f"{prefix}{op_id}" if prefix else op_id

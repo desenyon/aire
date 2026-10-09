@@ -38,9 +38,7 @@ def _log_loss(
     y_true: list[Any], y_pred: list[Any], probabilities: list[dict[str, float]] | None
 ) -> float:
     if not probabilities:
-        raise ConfigurationError(
-            "log_loss requires predict_proba support", code="ml.score_proba"
-        )
+        raise ConfigurationError("log_loss requires predict_proba support", code="ml.score_proba")
     eps = 1e-15
     total = 0.0
     for t, probs in zip(y_true, probabilities, strict=True):

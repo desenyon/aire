@@ -169,8 +169,7 @@ def describe() -> dict[str, Any]:
             "block": 'AI.ml.arch.block(attention="kda", ffn="latent_moe", n_embd=64, n_head=4)',
             "compose": "AI.ml.arch.compose(layers=[{attention, ffn}, ...], n_embd=64, n_head=4)",
             "register": (
-                "@AI.ml.arch.register_attention('mine') / register_ffn / "
-                "register_architecture"
+                "@AI.ml.arch.register_attention('mine') / register_ffn / register_architecture"
             ),
         },
     }

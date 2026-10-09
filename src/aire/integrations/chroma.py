@@ -131,9 +131,7 @@ class ChromaVectorStore(VectorStore):
     async def delete_by_document(self, document_id: str) -> int:
         """Delete points whose metadata ``document_id`` or ``source`` matches."""
         cid = await self._id()
-        where: dict[str, Any] = {
-            "$or": [{"document_id": document_id}, {"source": document_id}]
-        }
+        where: dict[str, Any] = {"$or": [{"document_id": document_id}, {"source": document_id}]}
         # Best-effort: get matching ids then delete (where on delete varies by Chroma version).
         data = await self.client.post_json(
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/get",

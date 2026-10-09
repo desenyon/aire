@@ -282,9 +282,7 @@ class AgentExecutor:
         if self.policy is not None:
             allowed, deny_msg = await self._policy_gate(call, tool.spec, ctx)
             if not allowed:
-                self._append_step(
-                    state, StepKind.PERMISSION_DENIED, tool=call.name, policy=True
-                )
+                self._append_step(state, StepKind.PERMISSION_DENIED, tool=call.name, policy=True)
                 self._observe(state, call, deny_msg or "error: permission denied (policy)")
                 return
         elif str(tool.spec.side_effect) in self.config.approval_levels:

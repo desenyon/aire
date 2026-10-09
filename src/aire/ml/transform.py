@@ -39,9 +39,7 @@ class Transform(abc.ABC):
 
     def transform_matrix(self, x: list[list[float]]) -> list[list[float]]:
         if not self.fitted:
-            raise ConfigurationError(
-                f"transform {self.name!r} is not fitted", code="ml.not_fitted"
-            )
+            raise ConfigurationError(f"transform {self.name!r} is not fitted", code="ml.not_fitted")
         return self._transform(x)
 
     def fit_transform_matrix(
@@ -141,9 +139,7 @@ class MinMaxScaler(Transform):
         self.spans = [m - mn if m != mn else 1.0 for mn, m in zip(self.mins, maxs, strict=True)]
 
     def _transform(self, x: list[list[float]]) -> list[list[float]]:
-        return [
-            [(row[i] - self.mins[i]) / self.spans[i] for i in range(len(row))] for row in x
-        ]
+        return [[(row[i] - self.mins[i]) / self.spans[i] for i in range(len(row))] for row in x]
 
     def state(self) -> dict[str, Any]:
         return {"mins": self.mins, "spans": self.spans, "feature_names": self.feature_names}
@@ -215,9 +211,7 @@ def create_transform(spec: str, **options: Any) -> Transform:
                 f"unknown native transform {name!r}",
                 code="ml.transform_unknown",
                 context={
-                    "available": sorted(
-                        [*NATIVE_TRANSFORMS, "column_transformer", "feature_union"]
-                    )
+                    "available": sorted([*NATIVE_TRANSFORMS, "column_transformer", "feature_union"])
                 },
             ) from None
     if provider == "sklearn":

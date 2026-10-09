@@ -16,9 +16,7 @@ def test_read_file_escape_raises(sandbox_root: Path, tmp_path: Path) -> None:
     outside.write_text("secret\n", encoding="utf-8")
     reader = next(t for t in builtin_tools() if t.name == "read_file")
     # Escape attempt relative to sandbox
-    result = run_sync(
-        reader.execute({"path": str(outside), "sandbox_root": str(sandbox_root)})
-    )
+    result = run_sync(reader.execute({"path": str(outside), "sandbox_root": str(sandbox_root)}))
     assert not result.ok
     # Prefer SafetyError in cause/message; Tool wraps some failures
     err = (result.error or "").lower()
@@ -28,9 +26,7 @@ def test_read_file_escape_raises(sandbox_root: Path, tmp_path: Path) -> None:
 def test_read_file_inside_sandbox_ok(sandbox_root: Path) -> None:
     reader = next(t for t in builtin_tools() if t.name == "read_file")
     result = run_sync(
-        reader.execute(
-            {"path": str(sandbox_root / "hello.txt"), "sandbox_root": str(sandbox_root)}
-        )
+        reader.execute({"path": str(sandbox_root / "hello.txt"), "sandbox_root": str(sandbox_root)})
     )
     assert result.ok
     assert "hello from sandbox" in str(result.output)

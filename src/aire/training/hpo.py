@@ -145,9 +145,7 @@ async def search_trainer(
             score = await score
         return float(score)
 
-    return await random_search(
-        objective, space, n_trials=n_trials, direction=direction, seed=seed
-    )
+    return await random_search(objective, space, n_trials=n_trials, direction=direction, seed=seed)
 
 
 def optuna_search(

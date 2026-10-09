@@ -58,9 +58,7 @@ class Pipeline(Estimator):
             )
 
     @staticmethod
-    def _resolve_step(
-        step: str | Transform | Estimator, *, final: bool
-    ) -> Transform | Estimator:
+    def _resolve_step(step: str | Transform | Estimator, *, final: bool) -> Transform | Estimator:
         if isinstance(step, (Transform, Estimator)):
             return step
         if not isinstance(step, str):

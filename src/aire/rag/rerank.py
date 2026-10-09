@@ -133,8 +133,7 @@ class HFCrossEncoderReranker:
             from aire.core.errors import ConfigurationError
 
             raise ConfigurationError(
-                "HFCrossEncoderReranker requires sentence-transformers: "
-                "pip install 'aire[eval]'",
+                "HFCrossEncoderReranker requires sentence-transformers: pip install 'aire[eval]'",
                 code="rag.cross_encoder_missing",
             ) from exc
         self._encoder = CrossEncoder(self.model_name)

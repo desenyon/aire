@@ -191,14 +191,10 @@ class RedisCachedModel(Model):
                 last_usage = chunk.usage
             yield chunk
         text = "".join(pieces)
-        result = GenerationResult.text_result(
-            text, model=self.inner.info.ref, usage=last_usage
-        )
+        result = GenerationResult.text_result(text, model=self.inner.info.ref, usage=last_usage)
         if finish:
             result = result.model_copy(update={"finish_reason": finish})
-        await self.backend.aset(
-            key, result.model_dump_json(), ttl_seconds=self.ttl_seconds
-        )
+        await self.backend.aset(key, result.model_dump_json(), ttl_seconds=self.ttl_seconds)
 
     async def health(self) -> HealthStatus:
         try:

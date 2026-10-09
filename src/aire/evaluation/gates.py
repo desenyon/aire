@@ -76,9 +76,7 @@ def _metric_map(report: Any) -> dict[str, float]:
 
 def check_gates(report: Any, gates: list[EvalGate] | list[dict[str, Any]]) -> GateReport:
     """Check an EvalReport (or metrics dict) against threshold gates."""
-    parsed = [
-        g if isinstance(g, EvalGate) else EvalGate.model_validate(g) for g in gates
-    ]
+    parsed = [g if isinstance(g, EvalGate) else EvalGate.model_validate(g) for g in gates]
     metrics = _metric_map(report)
     results: list[GateResult] = []
     missing: list[str] = []

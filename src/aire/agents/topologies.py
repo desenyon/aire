@@ -66,9 +66,7 @@ async def debate(
             transcripts.append({"round": r + 1, "agent": agent.name, "output": result.output})
             last = result.output
     if judge is None:
-        return TopologyResult(
-            output=last, mode="debate", rounds=rounds, transcripts=transcripts
-        )
+        return TopologyResult(output=last, mode="debate", rounds=rounds, transcripts=transcripts)
     brief = "\n".join(f"[{t['agent']} r{t['round']}]: {t['output']}" for t in transcripts)
     verdict = await judge.run(f"Judge this debate on: {goal}\n\n{brief}\n\nFinal answer:")
     return TopologyResult(
@@ -142,8 +140,7 @@ async def blackboard(
     # final synthesis via first agent
     synth = await agents[0].model.generate(
         GenerationRequest.of(
-            f"Produce the final answer from this blackboard for: {goal}\n\n"
-            + "\n".join(board)
+            f"Produce the final answer from this blackboard for: {goal}\n\n" + "\n".join(board)
         )
     )
     return TopologyResult(
