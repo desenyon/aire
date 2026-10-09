@@ -65,7 +65,7 @@ redis = ["redis>=5.0"]
 peft = ["peft>=0.10", "transformers>=4.38"]
 optuna = ["optuna>=3.5"]
 pypdf = ["pypdf>=4.0"]
-ocr = ["pypdf>=4.0", "pillow>=10.0", "pytesseract>=0.3.10", "pypdfium2>=4.0"]
+ocr = ["pypdf>=4.0", "pillow>=10.0", "pytesseract>=0.3.13", "pypdfium2>=4.0"]
 eval = ["sacrebleu>=2.4", "sentence-transformers>=2.7"]
 all = [
     "fastapi>=0.110",
@@ -88,7 +88,7 @@ all = [
     "transformers>=4.38",
     "optuna>=3.5",
     "pypdf>=4.0",
-    "pytesseract>=0.3.10",
+    "pytesseract>=0.3.13",
     "pypdfium2>=4.0",
     "sacrebleu>=2.4",
     "sentence-transformers>=2.7",
