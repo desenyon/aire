@@ -734,9 +734,7 @@ class _MLNamespace(_Namespace):
         ``transforms`` are prepended as named steps before the final estimator.
         """
         if transforms:
-            steps: list[tuple[str, Any]] = [
-                (f"t{i}", t) for i, t in enumerate(transforms)
-            ]
+            steps: list[tuple[str, Any]] = [(f"t{i}", t) for i, t in enumerate(transforms)]
             steps.append(("estimator", spec if not options else self.create(spec, **options)))
             pipe = self.pipeline(steps, target=target)
             await pipe.fit(dataset, target=target)
@@ -774,9 +772,7 @@ class _MLNamespace(_Namespace):
         out: dict[str, list[str]] = {
             "native": [
                 f"native:{n}"
-                for n in sorted(
-                    [*NATIVE_TRANSFORMS, "column_transformer", "feature_union"]
-                )
+                for n in sorted([*NATIVE_TRANSFORMS, "column_transformer", "feature_union"])
             ],
         }
         if available_backends().get("sklearn"):

@@ -66,9 +66,7 @@ def filter_hits(hits: list[ScoredChunk], acl: dict[str, Any] | None) -> list[Sco
     return [h for h in hits if matches_acl(h.chunk.metadata, acl)]
 
 
-def merge_filter(
-    base: dict[str, Any] | None, acl: dict[str, Any] | None
-) -> dict[str, Any] | None:
+def merge_filter(base: dict[str, Any] | None, acl: dict[str, Any] | None) -> dict[str, Any] | None:
     """Combine a store filter with ACL into one filter dict for adapters."""
     if not base and not acl:
         return None

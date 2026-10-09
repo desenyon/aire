@@ -7,6 +7,7 @@ reranker, prompt template, and the answering model.
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,9 +68,8 @@ class Knowledge:
         self._compressor: Any | None = None
         from aire.safety.guardrails import resolve_guardrails
 
-        self.guardrails = resolve_guardrails(
-            guardrails, safety=runtime.settings.safety
-        )
+        self.guardrails = resolve_guardrails(guardrails, safety=runtime.settings.safety)
+
     # -- ingestion -----------------------------------------------------------------
 
     async def _embedder(self) -> EmbeddingModel:
@@ -85,6 +85,7 @@ class Knowledge:
         *,
         chunker: Chunker | str | None = None,
         metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> IndexReport:
         """Load, chunk, embed and index a source. Returns an IndexReport."""
         started = time.perf_counter()
@@ -96,7 +97,12 @@ class Knowledge:
         if metadata:
             for doc in documents:
                 doc.metadata.update(metadata)
-        chunks = await self.ingest_documents(documents, chunker=chunker)
+        prepared = await self._prepare_documents(documents, chunker=chunker)
+        if replace:
+            chunks = await self.store.replace_all(prepared)
+        else:
+            chunks = await self.store.upsert(prepared)
+        self._retriever = None
         report = IndexReport(
             documents=len(documents),
             chunks=chunks,
@@ -111,6 +117,15 @@ class Knowledge:
         self, documents: list[Document], *, chunker: Chunker | str | None = None
     ) -> int:
         """Chunk, embed and upsert pre-built documents. Returns chunk count."""
+        chunks = await self._prepare_documents(documents, chunker=chunker)
+        count = await self.store.upsert(chunks)
+        self._retriever = None
+        return count
+
+    async def _prepare_documents(
+        self, documents: list[Document], *, chunker: Chunker | str | None = None
+    ) -> list[Chunk]:
+        """Finish fallible preparation before touching the current index."""
         active_chunker = (
             self.chunker
             if chunker is None
@@ -135,11 +150,16 @@ class Knowledge:
             )
         embedder = await self._embedder()
         vectors = await embedder.embed_texts([c.text for c in chunks])
+        dimension = embedder.dimension or (len(vectors[0]) if vectors else 0)
+        if (
+            len(vectors) != len(chunks)
+            or not dimension
+            or any(len(v) != dimension or not all(math.isfinite(x) for x in v) for v in vectors)
+        ):
+            raise RetrievalError("embedder returned invalid vectors", code="rag.invalid_embeddings")
         for chunk, vector in zip(chunks, vectors, strict=True):
             chunk.embedding = vector
-        await self.store.upsert(chunks)
-        self._retriever = None  # store contents changed; rebuild lazily
-        return len(chunks)
+        return chunks
 
     async def reindex_document(
         self,
@@ -147,17 +167,11 @@ class Knowledge:
         *,
         chunker: Chunker | str | None = None,
     ) -> int:
-        """Incremental update: delete prior chunks for ``document.id``, then ingest."""
-        if hasattr(self.store, "delete_by_document"):
-            deleted = await self.store.delete_by_document(document.id)
-            _ = deleted
-        else:
-            # fallback: keyword-scan delete
-            hits = await self.store.search_text("", k=1_000_000)
-            ids = [h.chunk.id for h in hits if h.chunk.document_id == document.id]
-            if ids:
-                await self.store.delete(ids)
-        return await self.ingest_documents([document], chunker=chunker)
+        """Prepare new chunks first, then replace the document in the store."""
+        chunks = await self._prepare_documents([document], chunker=chunker)
+        count = await self.store.replace_document(document.id, chunks)
+        self._retriever = None
+        return count
 
     # -- retrieval --------------------------------------------------------------------
 
@@ -257,9 +271,7 @@ class Knowledge:
             )
         else:
             context = "\n\n".join(f"[{i + 1}] {hit.chunk.text}" for i, hit in enumerate(hits))
-        prompt = (template or self.prompt_template).format(
-            context=context, question=question_text
-        )
+        prompt = (template or self.prompt_template).format(context=context, question=question_text)
         from aire.models.types import GenerationRequest
 
         request = GenerationRequest.of(prompt, **generate_kwargs)

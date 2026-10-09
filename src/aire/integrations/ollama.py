@@ -53,7 +53,24 @@ class OllamaModel(Model):
     def _payload(self, request: GenerationRequest) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self._name,
-            "messages": [{"role": m.role, "content": m.text_content} for m in request.messages],
+            "messages": [
+                {
+                    "role": m.role,
+                    "content": m.text_content,
+                    **(
+                        {
+                            "tool_calls": [
+                                {"function": {"name": c.name, "arguments": c.arguments}}
+                                for c in m.tool_calls
+                            ]
+                        }
+                        if m.tool_calls
+                        else {}
+                    ),
+                    **({"tool_name": m.name} if m.role == "tool" and m.name else {}),
+                }
+                for m in request.messages
+            ],
             "options": {},
         }
         options: dict[str, Any] = payload["options"]
@@ -108,7 +125,9 @@ class OllamaModel(Model):
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         payload = {**self._payload(request), "stream": True}
-        # Ollama streams newline-delimited JSON rather than SSE.
+        # Ollama streams newline-delimited JSON with complete tool arguments.
+        call_index = 0
+        saw_tools = False
         async with self._client.raw.stream("POST", "/api/chat", json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -121,7 +140,29 @@ class OllamaModel(Model):
                 message = data.get("message", {}) or {}
                 text = message.get("content", "")
                 done = data.get("done", False)
-                yield GenerationChunk(text=text, finish_reason="stop" if done else None)
+                calls = []
+                for tc in message.get("tool_calls") or []:
+                    function = tc.get("function") or {}
+                    calls.append(
+                        ToolCall.from_json(
+                            f"ollama-{call_index}",
+                            function.get("name", ""),
+                            function.get("arguments") or {},
+                        )
+                    )
+                    call_index += 1
+                saw_tools = saw_tools or bool(calls)
+                yield GenerationChunk(
+                    text=text,
+                    tool_calls=calls,
+                    finish_reason=("tool_calls" if saw_tools else "stop") if done else None,
+                    usage=Usage(
+                        input_tokens=data.get("prompt_eval_count", 0),
+                        output_tokens=data.get("eval_count", 0),
+                    )
+                    if done
+                    else None,
+                )
 
     async def health(self) -> HealthStatus:
         try:

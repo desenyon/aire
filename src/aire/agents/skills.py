@@ -82,9 +82,7 @@ class SkillRegistry:
             raise ConfigurationError(f"skills dir not found: {root}", code="skill.dir")
         for skill_json in sorted(root.glob("*/skill.json")):
             payload = json.loads(skill_json.read_text())
-            skill = Skill.model_validate(
-                {k: v for k, v in payload.items() if k != "tools"}
-            )
+            skill = Skill.model_validate({k: v for k, v in payload.items() if k != "tools"})
             pack_tools = _load_skill_tools(skill_json.parent, payload)
             self.register(skill, tools=pack_tools or None, replace=True)
             loaded.append(skill)

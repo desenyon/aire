@@ -43,8 +43,7 @@ class VideoPipeline:
         if self.model is None:
             loc = content.uri or content.metadata.get("path") or "inline"
             return VideoSummary(
-                summary=f"[offline stub] Video at {loc}; "
-                f"no model configured. Prompt was: {prompt}",
+                summary=f"[offline stub] Video at {loc}; no model configured. Prompt was: {prompt}",
                 frames_used=0,
                 model="stub",
                 metadata={"prompt": prompt, "stub": True},

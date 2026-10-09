@@ -14,6 +14,7 @@ from aire.models.types import (
     GenerationRequest,
     GenerationResult,
     ModelInfo,
+    ToolCall,
 )
 from aire.rag.store import cosine_similarity
 
@@ -72,25 +73,27 @@ class CachedModel(Model):
             if self.ttl_seconds is None or now - created < self.ttl_seconds:
                 self.hits += 1
                 yield GenerationChunk(
-                    text=result.text, finish_reason=result.finish_reason, usage=result.usage
+                    text=result.text,
+                    tool_calls=result.tool_calls,
+                    finish_reason=result.finish_reason,
+                    usage=result.usage,
                 )
                 return
             del self._cache[key]
         self.misses += 1
         pieces: list[str] = []
+        calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
         async for chunk in self.inner.stream(request):
-            if chunk.text:
-                pieces.append(chunk.text)
-            if chunk.finish_reason:
-                finish = chunk.finish_reason
-            if chunk.usage is not None:
-                last_usage = chunk.usage
+            calls.extend(chunk.tool_calls)
+            pieces.append(chunk.text)
+            finish = chunk.finish_reason or finish
+            last_usage = chunk.usage if chunk.usage is not None else last_usage
             yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
-            text, model=self.inner.info.ref, usage=last_usage
+            text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
         )
         if finish:
             result = result.model_copy(update={"finish_reason": finish})
@@ -113,6 +116,10 @@ class CachedModel(Model):
 
     def clear(self) -> None:
         self._cache.clear()
+
+
+def _has_tool_context(request: GenerationRequest) -> bool:
+    return bool(request.tools) or any(m.tool_calls or m.role == "tool" for m in request.messages)
 
 
 def _params_signature(request: GenerationRequest) -> str:
@@ -149,6 +156,9 @@ class SemanticCachedModel(Model):
         return self.inner.info
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
+        if _has_tool_context(request):
+            self.misses += 1
+            return await self.inner.generate(request)
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = _params_signature(request)
         vector = await self.embedder.embed_one(prompt)
@@ -170,6 +180,11 @@ class SemanticCachedModel(Model):
 
         Semantic + stream caching only stores after the stream completes.
         """
+        if _has_tool_context(request):
+            self.misses += 1
+            async for chunk in self.inner.stream(request):
+                yield chunk
+            return
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = _params_signature(request)
         vector = await self.embedder.embed_one(prompt)
@@ -179,24 +194,26 @@ class SemanticCachedModel(Model):
             if cosine_similarity(vector, cached_vector) >= self.threshold:
                 self.hits += 1
                 yield GenerationChunk(
-                    text=result.text, finish_reason=result.finish_reason, usage=result.usage
+                    text=result.text,
+                    tool_calls=result.tool_calls,
+                    finish_reason=result.finish_reason,
+                    usage=result.usage,
                 )
                 return
         self.misses += 1
         pieces: list[str] = []
+        calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
         async for chunk in self.inner.stream(request):
-            if chunk.text:
-                pieces.append(chunk.text)
-            if chunk.finish_reason:
-                finish = chunk.finish_reason
-            if chunk.usage is not None:
-                last_usage = chunk.usage
+            calls.extend(chunk.tool_calls)
+            pieces.append(chunk.text)
+            finish = chunk.finish_reason or finish
+            last_usage = chunk.usage if chunk.usage is not None else last_usage
             yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
-            text, model=self.inner.info.ref, usage=last_usage
+            text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
         )
         if finish:
             result = result.model_copy(update={"finish_reason": finish})

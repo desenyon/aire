@@ -58,37 +58,53 @@ class SQLiteVectorStore(LocalVectorStore):
                 embedding=json.loads(row[5]) if row[5] else None,
             )
 
+    def _write_chunks(self, chunks: list[Chunk]) -> None:
+        self._db.executemany(
+            "INSERT OR REPLACE INTO chunks"
+            "(id, document_id, idx, text, metadata, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    c.id,
+                    c.document_id,
+                    c.index,
+                    c.text,
+                    json.dumps(c.metadata),
+                    json.dumps(c.embedding) if c.embedding is not None else None,
+                )
+                for c in chunks
+            ],
+        )
+
     async def upsert(self, chunks: list[Chunk]) -> int:
-        count = await super().upsert(chunks)
         with self._lock, self._db:
-            self._db.executemany(
-                "INSERT OR REPLACE INTO chunks"
-                "(id, document_id, idx, text, metadata, embedding) VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        c.id,
-                        c.document_id,
-                        c.index,
-                        c.text,
-                        json.dumps(c.metadata),
-                        json.dumps(c.embedding) if c.embedding is not None else None,
-                    )
-                    for c in chunks
-                ],
-            )
-        return count
+            self._write_chunks(chunks)
+        return await super().upsert(chunks)
 
     async def delete(self, ids: list[str]) -> int:
-        removed = await super().delete(ids)
-        if removed:
-            with self._lock, self._db:
-                self._db.executemany("DELETE FROM chunks WHERE id = ?", [(i,) for i in ids])
-        return removed
+        with self._lock, self._db:
+            self._db.executemany("DELETE FROM chunks WHERE id = ?", [(i,) for i in ids])
+        return await super().delete(ids)
 
     async def clear(self) -> None:
-        await super().clear()
         with self._lock, self._db:
             self._db.execute("DELETE FROM chunks")
+        await super().clear()
+
+    async def replace_document(self, document_id: str, chunks: list[Chunk]) -> int:
+        from aire.core.errors import RetrievalError
+
+        if any(c.document_id != document_id for c in chunks):
+            raise RetrievalError("replacement chunks must belong to the requested document")
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
+            self._write_chunks(chunks)
+        return await super().replace_document(document_id, chunks)
+
+    async def replace_all(self, chunks: list[Chunk]) -> int:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM chunks")
+            self._write_chunks(chunks)
+        return await super().replace_all(chunks)
 
     async def aclose(self) -> None:
         import asyncio

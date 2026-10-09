@@ -306,9 +306,7 @@ class SklearnEstimator(Estimator):
                 score = float(self._model.score(x, y))
             except Exception:  # pragma: no cover - estimator variance
                 score = 0.0
-            metric = (
-                "train_accuracy" if self.task == TaskType.CLASSIFICATION else "train_r2"
-            )
+            metric = "train_accuracy" if self.task == TaskType.CLASSIFICATION else "train_r2"
             return {metric: score}
         return {"samples": float(len(x))}
 
@@ -322,9 +320,7 @@ class SklearnEstimator(Estimator):
                 f"{self.sklearn_name} has no predict(); use fit-time labels",
                 code="ml.no_predict",
             )
-        raise ConfigurationError(
-            f"{self.sklearn_name} cannot predict", code="ml.no_predict"
-        )
+        raise ConfigurationError(f"{self.sklearn_name} cannot predict", code="ml.no_predict")
 
     def _probabilities_sync(self, x: list[list[float]]) -> list[dict[str, float]] | None:
         if not hasattr(self._model, "predict_proba"):

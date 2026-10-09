@@ -11,4 +11,4 @@ Until **1.0**, aire may still evolve, but symbols re-exported from `aire` and co
 
 Deeper modules (`aire.rag.store`, provider adapters, …) are usable but not all frozen.
 
-See also [public_api.md](public_api.md) and the generated [API reference](api.md).
+See also [PUBLIC_API.md](PUBLIC_API.md) and the generated [API reference](api.md).

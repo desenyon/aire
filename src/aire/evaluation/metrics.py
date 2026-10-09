@@ -46,6 +46,7 @@ def _f1(precision: float, recall: float) -> float:
         return 0.0
     return 2 * precision * recall / (precision + recall)
 
+
 _REGISTRY: dict[str, MetricFn] = {}
 
 

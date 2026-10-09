@@ -27,7 +27,7 @@ class IncrementalIndex:
         return await self.knowledge.ingest(docs, metadata=metadata)
 
     async def update_document(self, document: Document | str | dict[str, Any]) -> IndexReport:
-        """Replace chunks for one document id (delete-then-ingest)."""
+        """Prepare replacement chunks before publishing an update for a document id."""
         doc = _coerce_documents([document])[0]
         started = time.perf_counter()
         chunks = await self.knowledge.reindex_document(doc)
@@ -76,9 +76,7 @@ class IncrementalIndex:
         clear: bool = True,
         metadata: dict[str, Any] | None = None,
     ) -> IndexReport:
-        if clear and hasattr(self.knowledge.store, "clear"):
-            await self.knowledge.store.clear()
-        return await self.knowledge.ingest(source, metadata=metadata)
+        return await self.knowledge.ingest(source, metadata=metadata, replace=clear)
 
     def describe(self) -> dict[str, Any]:
         store = self.knowledge.store

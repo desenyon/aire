@@ -22,7 +22,7 @@ print(answer.text, answer.citations)
 
 | Goal | Start here |
 |------|------------|
-| Public surface | [Public API](public_api.md) |
+| Public surface | [Public API](PUBLIC_API.md) |
 | Agents & tools | [Agents](agents.md) |
 | Retrieval | [RAG](rag.md) |
 | OpenAI-compat proxy | [Gateway](gateway.md) |

@@ -11,6 +11,8 @@ Configuration (by priority): explicit options → ``aire.yaml providers.openai``
 
 from __future__ import annotations
 
+import json
+import math
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +87,18 @@ class OpenAIModel(Model):
         payload: list[dict[str, Any]] = []
         for m in messages:
             entry: dict[str, Any] = {"role": m.role, "content": m.text_content}
+            if m.tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "id": c.id,
+                        "type": "function",
+                        "function": {
+                            "name": c.name,
+                            "arguments": json.dumps(c.arguments),
+                        },
+                    }
+                    for c in m.tool_calls
+                ]
             if m.name:
                 entry["name"] = m.name
             if m.tool_call_id:
@@ -174,24 +188,50 @@ class OpenAIModel(Model):
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         payload = self._request_payload(request, stream=True)
+        from aire.core.errors import ProviderError
+        from aire.models.streaming import ToolCallBuffer
+
+        pending: dict[int, ToolCallBuffer] = {}
         async for data in self._client.stream_sse("/chat/completions", payload):
+            usage_raw = data.get("usage")
+            usage = None
+            if usage_raw:
+                tokens = Usage(
+                    input_tokens=usage_raw.get("prompt_tokens", 0),
+                    output_tokens=usage_raw.get("completion_tokens", 0),
+                )
+                usage = tokens.model_copy(update={"cost_usd": self.info.cost.estimate(tokens)})
             choices = data.get("choices") or []
             if not choices:
+                if usage is not None:
+                    yield GenerationChunk(usage=usage)
                 continue
-            delta = choices[0].get("delta", {})
-            text = delta.get("content") or ""
-            finish = choices[0].get("finish_reason")
-            calls = [
-                ToolCall.from_json(
-                    tc.get("id", ""),
-                    tc.get("function", {}).get("name", ""),
-                    tc.get("function", {}).get("arguments", "{}"),
-                )
-                for tc in delta.get("tool_calls") or []
-                if tc.get("function", {}).get("name")
-            ]
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            for tc in delta.get("tool_calls") or []:
+                call = pending.setdefault(tc.get("index", 0), ToolCallBuffer())
+                call.id = tc.get("id") or call.id
+                function = tc.get("function") or {}
+                call.name += function.get("name") or ""
+                if function.get("arguments") is not None:
+                    call.fragments.append(function["arguments"])
+            finish = choice.get("finish_reason")
+            calls = []
+            if finish and pending:
+                calls = [pending[i].finish(self._provider) for i in sorted(pending)]
+                pending.clear()
             yield GenerationChunk(
-                text=text, tool_calls=calls, finish_reason=_finish(finish) if finish else None
+                text=delta.get("content") or "",
+                tool_calls=calls,
+                finish_reason=_finish(finish) if finish else None,
+                usage=usage,
+            )
+        if pending:
+            raise ProviderError(
+                self._provider,
+                "stream ended before tool calls completed",
+                code="provider.stream_incomplete",
+                retryable=False,
             )
 
     async def health(self) -> HealthStatus:
@@ -211,7 +251,11 @@ class OpenAIEmbedder(EmbeddingModel):
         self._name = name
         self._client = client
         self._provider = provider
-        self._dimension = 1536 if "small" in name or "ada" in name else 3072
+        self._dimension = {
+            "text-embedding-ada-002": 1536,
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072,
+        }.get(name, 0)
 
     @property
     def name(self) -> str:
@@ -230,11 +274,24 @@ class OpenAIEmbedder(EmbeddingModel):
         data = await with_retry(_call)
         rows = sorted(data.get("data", []), key=lambda r: r.get("index", 0))
         usage_raw = data.get("usage", {}) or {}
-        return EmbeddingResult(
+        result = EmbeddingResult(
             vectors=[row.get("embedding", []) for row in rows],
             model=self.name,
             usage=Usage(input_tokens=usage_raw.get("prompt_tokens", 0)),
         )
+        # Compatible endpoints serve arbitrary embedding models. Discover their
+        # width from a valid first batch instead of guessing from the model name.
+        if (
+            not self._dimension
+            and result.dimension
+            and len(result.vectors) == len(request.inputs)
+            and all(
+                len(vector) == result.dimension and all(math.isfinite(x) for x in vector)
+                for vector in result.vectors
+            )
+        ):
+            self._dimension = result.dimension
+        return result
 
 
 def _text(content: str) -> Any:

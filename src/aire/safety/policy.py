@@ -108,9 +108,7 @@ class PolicyEngine:
             action = "require_approval"
         else:
             action = self.default_action
-        self.decisions.append(
-            {"rule": "_fallback", "action": action, "tool": tool, "model": model}
-        )
+        self.decisions.append({"rule": "_fallback", "action": action, "tool": tool, "model": model})
         return action
 
     def assert_allowed(self, **kwargs: Any) -> None:

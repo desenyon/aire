@@ -42,8 +42,7 @@ def describe() -> dict[str, Any]:
         "kind": "ml.loss",
         "available": names(),
         "usage": (
-            'loss = AI.ml.loss.create("cross_entropy", label_smoothing=0.1); '
-            "loss(logits, targets)"
+            'loss = AI.ml.loss.create("cross_entropy", label_smoothing=0.1); loss(logits, targets)'
         ),
     }
 

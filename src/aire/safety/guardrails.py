@@ -112,8 +112,7 @@ class ModelClassifierGuardrail:
             from aire.core.errors import ConfigurationError
 
             raise ConfigurationError(
-                f"unknown model classifier kind {kind!r}; expected one of "
-                f"{sorted(_MODEL_PROMPTS)}",
+                f"unknown model classifier kind {kind!r}; expected one of {sorted(_MODEL_PROMPTS)}",
                 code="safety.unknown_classifier_kind",
             )
         self.model = model

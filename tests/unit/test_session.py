@@ -13,9 +13,7 @@ def test_save_load_hydrate(tmp_session_path: Path) -> None:
     session = DurableSession(tmp_session_path)
     session.state.goal = "finish the task"
     session.persist_messages([Message.text("user", "hi"), Message.text("assistant", "hello")])
-    session.append_step(
-        AgentStep(index=0, kind=StepKind.OBSERVATION, detail={"note": "step0"})
-    )
+    session.append_step(AgentStep(index=0, kind=StepKind.OBSERVATION, detail={"note": "step0"}))
     path = session.save()
     assert path.is_file()
 

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
+
+import pytest
+
+from aire.core.errors import ConfigurationError
 from aire.data.dataset import Dataset
 from aire.models.base import run_sync
 from aire.training.distill import HFDistillTrainer, soft_kl_loss
@@ -11,6 +16,10 @@ from aire.training.lora import create_lora
 
 
 def test_foundation_toy_kind() -> None:
+    if importlib.util.find_spec("torch") is None:
+        with pytest.raises(ConfigurationError, match="PyTorch is required"):
+            create_foundation("gpt2", n_layer=2, n_embd=64, n_head=2, vocab_size=128)
+        return
     fm = create_foundation("gpt2", n_layer=2, n_embd=64, n_head=2, vocab_size=128)
     desc = fm.describe()
     assert desc["kind"] == "foundation_toy_architecture"
@@ -25,8 +34,8 @@ def test_foundation_catalog_mentions_from_pretrained() -> None:
     assert "toy" in cat["honesty"]
 
 
-def test_lora_dry_run_and_resume_api() -> None:
-    trainer = create_lora("gpt2", dry_run=True, output_dir="./.tmp-lora-test")
+def test_lora_dry_run_and_resume_api(tmp_path) -> None:
+    trainer = create_lora("gpt2", dry_run=True, output_dir=str(tmp_path / "lora"))
     result = trainer.fit(["hello world", "another line"], epochs=2)
     assert result.epochs_completed == 2
     assert "resume" in trainer.describe()["methods"]

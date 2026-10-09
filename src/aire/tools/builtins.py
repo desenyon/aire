@@ -94,9 +94,7 @@ def _list_files(
     target = _confine(directory, sandbox_root)
     if not target.is_dir():
         raise ToolError(f"not a directory: {target}")
-    return sorted(
-        str(p.relative_to(root)) for p in target.glob(pattern) if p.is_file()
-    )[:500]
+    return sorted(str(p.relative_to(root)) for p in target.glob(pattern) if p.is_file())[:500]
 
 
 async def _http_get(url: str) -> str:

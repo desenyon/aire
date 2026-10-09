@@ -289,7 +289,9 @@ class Gateway:
     async def _semantic_lookup(
         self, public: str, request: GenerationRequest
     ) -> tuple[str, GenerationResult] | None:
-        embedder = await self._ensure_semantic_embedder()
+        from aire.optimization.cache import _has_tool_context
+
+        embedder = None if _has_tool_context(request) else await self._ensure_semantic_embedder()
         if embedder is None:
             return None
         from aire.optimization.cache import _params_signature
@@ -328,6 +330,10 @@ class Gateway:
     async def _semantic_store(
         self, public: str, request: GenerationRequest, result: GenerationResult
     ) -> None:
+        from aire.optimization.cache import _has_tool_context
+
+        if _has_tool_context(request) or result.tool_calls:
+            return
         embedder = await self._ensure_semantic_embedder()
         if embedder is None:
             return
@@ -368,8 +374,14 @@ class Gateway:
         cached = await self._semantic_lookup(public, request)
         if cached is not None:
             ref, result = cached
-            yield ref, GenerationChunk(
-                text=result.text, finish_reason="stop", usage=result.usage
+            yield (
+                ref,
+                GenerationChunk(
+                    text=result.text,
+                    tool_calls=result.tool_calls,
+                    finish_reason=result.finish_reason,
+                    usage=result.usage,
+                ),
             )
             return
 
@@ -610,9 +622,7 @@ def _register_chat_route(
     @app.post("/v1/chat/completions", dependencies=[Depends(guard)])
     async def chat_completions(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = await _guard_generation_request(
-            _build_generation_request(body), safety_chain
-        )
+        request = await _guard_generation_request(_build_generation_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
                 _sse_stream(gateway, public, request, metrics),
@@ -643,9 +653,7 @@ def _register_anthropic_route(
     @app.post("/v1/messages", dependencies=[Depends(guard)])
     async def anthropic_messages(body: dict[str, Any]) -> Any:
         public = _require_model_name(body)
-        request = await _guard_generation_request(
-            _build_anthropic_request(body), safety_chain
-        )
+        request = await _guard_generation_request(_build_anthropic_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
                 _anthropic_sse_stream(gateway, public, request, metrics),
@@ -853,6 +861,7 @@ def _content_text(content: Any) -> str:
 
 def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
     from aire.core.content import Message, TextContent
+    from aire.models.types import ToolCall
 
     messages = []
     for raw in body.get("messages") or []:
@@ -864,6 +873,12 @@ def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
                 content=[TextContent(text=_content_text(raw.get("content")))],
                 name=raw.get("name"),
                 tool_call_id=raw.get("tool_call_id"),
+                tool_calls=[
+                    ToolCall.from_json(
+                        c["id"], c["function"]["name"], c["function"].get("arguments", "{}")
+                    )
+                    for c in raw.get("tool_calls") or []
+                ],
             )
         )
     tools = [
@@ -972,6 +987,7 @@ async def _sse_stream(
 
     started = time.perf_counter()
     emitted_role = False
+    tool_index = 0
     try:
         async for _resolved, chunk in gateway.stream(public, request):
             if not emitted_role:
@@ -984,13 +1000,14 @@ async def _sse_stream(
             if chunk.tool_calls:
                 delta["tool_calls"] = [
                     {
-                        "index": i,
+                        "index": tool_index + i,
                         "id": tc.id or f"call_{uuid.uuid4().hex[:8]}",
                         "type": "function",
                         "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
                     }
                     for i, tc in enumerate(chunk.tool_calls)
                 ]
+                tool_index += len(chunk.tool_calls)
             if delta or chunk.finish_reason:
                 yield _sse(_chunk(delta, chunk.finish_reason))
     except Exception as exc:
@@ -1048,9 +1065,7 @@ async def _guard_generation_request(
     return request.with_messages(messages)
 
 
-async def _guard_generation_result(
-    result: GenerationResult, chain: Any | None
-) -> GenerationResult:
+async def _guard_generation_result(result: GenerationResult, chain: Any | None) -> GenerationResult:
     if chain is None:
         return result
     from aire.core.content import TextContent
@@ -1171,7 +1186,20 @@ def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa
                             }
                         )
                     )
-        messages.append(Message(role=role, content=blocks))
+        from aire.models.types import ToolCall
+
+        calls = [
+            ToolCall(
+                id=str(b.data.get("id") or ""),
+                name=str(b.data.get("name") or ""),
+                arguments=b.data.get("input") or {},
+            )
+            for b in blocks
+            if isinstance(b, StructuredContent)
+            and isinstance(b.data, dict)
+            and b.data.get("type") == "tool_use"
+        ]
+        messages.append(Message(role=role, content=blocks, tool_calls=calls))
     tools: list[ToolDefinition] = []
     for raw_tool in body.get("tools") or []:
         if not isinstance(raw_tool, dict):

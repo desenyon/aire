@@ -20,9 +20,7 @@ class ContextCompressor(Protocol):
 class TruncateCompressor:
     """Greedy pack by score until ``max_chars`` (offline, deterministic)."""
 
-    async def compress(
-        self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000
-    ) -> str:
+    async def compress(self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000) -> str:
         _ = query
         parts: list[str] = []
         used = 0
@@ -44,9 +42,7 @@ class ExtractiveCompressor:
     Offline and deterministic — not model-based extractive summarization.
     """
 
-    async def compress(
-        self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000
-    ) -> str:
+    async def compress(self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000) -> str:
         from aire.rag.store import tokenize
 
         q_tokens = set(tokenize(query))
@@ -76,9 +72,7 @@ class ModelCompressor:
     def __init__(self, model: Model) -> None:
         self.model = model
 
-    async def compress(
-        self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000
-    ) -> str:
+    async def compress(self, query: str, hits: list[ScoredChunk], *, max_chars: int = 4000) -> str:
         raw = "\n\n".join(f"[{i + 1}] {h.chunk.text}" for i, h in enumerate(hits))
         if len(raw) <= max_chars:
             return raw

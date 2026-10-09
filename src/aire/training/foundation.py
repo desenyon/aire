@@ -102,17 +102,11 @@ class FoundationModel:
         model = transformers.AutoModelForCausalLM.from_pretrained(model_id)
         cfg_src = getattr(model, "config", None)
         n_layer = int(
-            getattr(cfg_src, "n_layer", None)
-            or getattr(cfg_src, "num_hidden_layers", 0)
-            or 0
+            getattr(cfg_src, "n_layer", None) or getattr(cfg_src, "num_hidden_layers", 0) or 0
         )
-        n_embd = int(
-            getattr(cfg_src, "n_embd", None) or getattr(cfg_src, "hidden_size", 0) or 0
-        )
+        n_embd = int(getattr(cfg_src, "n_embd", None) or getattr(cfg_src, "hidden_size", 0) or 0)
         n_head = int(
-            getattr(cfg_src, "n_head", None)
-            or getattr(cfg_src, "num_attention_heads", 0)
-            or 0
+            getattr(cfg_src, "n_head", None) or getattr(cfg_src, "num_attention_heads", 0) or 0
         )
         vocab = int(getattr(cfg_src, "vocab_size", 0) or getattr(tokenizer, "vocab_size", 0) or 0)
         seq = int(
@@ -147,11 +141,7 @@ class FoundationModel:
             if hasattr(self.architecture, "describe")
             else {"type": type(self.architecture).__name__}
         )
-        kind = (
-            "foundation_pretrained"
-            if self.pretrained
-            else "foundation_toy_architecture"
-        )
+        kind = "foundation_pretrained" if self.pretrained else "foundation_toy_architecture"
         honesty = (
             f"Hugging Face pretrained weights from {self.hf_model_id}"
             if self.pretrained

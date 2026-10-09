@@ -24,3 +24,9 @@ cd examples/<name> && python main.py
 | [`openapi_tools`](openapi_tools/) | OpenAPI → tools from dict |
 
 Docs index: [`docs/GUIDE.md`](../docs/GUIDE.md).
+
+## Reliability smoke (offline)
+
+Run `python examples/reliable_local/main.py` from the repository root. It uses a
+temporary directory and no network: SQLite index/replacement/reopen, RAG citations,
+scripted agent tools/session, file worker acknowledgement and workflow resume.

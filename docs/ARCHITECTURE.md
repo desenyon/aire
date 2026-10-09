@@ -60,3 +60,26 @@ AI.models.describe()
 1. **Declarative** — `AI.project(...)` / `AI.from_config("aire.yaml")`
 2. **Composable** — `AI.models.use(...)`, `AI.rag.create(...)`, `AI.agents.create(...)`
 3. **Low-level** — protocols and adapters directly
+
+## Reliability boundaries
+
+`Message.tool_calls` and `GenerationResult.tool_calls` share a provider-neutral
+`ToolCall` type in `core/tool_calls.py` (re-exported from `models.types`). Provider
+payload converters carry declarations across turns; streaming adapters buffer raw
+argument fragments until a complete call can be validated.
+
+`Knowledge._prepare_documents` performs loading/chunking/embedding preparation
+before store publication. `VectorStore.replace_document` is a best-effort adapter
+fallback; Local and SQLite override it. `replace_all` requires an atomic override.
+SQLite commits database writes before changing its in-memory search cache.
+
+Snapshot writers publish complete UTF-8 files with same-directory atomic replace.
+This protects readers from partial JSON, not from concurrent writer conflicts.
+Queue claims remain separate from results until acknowledgement. File workers use
+local filesystem renames, Redis workers use reliable list moves and Lua; both need
+explicit recovery after workers stop and idempotent side effects.
+
+Workflow checkpoints persist consumed/fired edges and pending waves alongside
+outputs and records. Skipped branches propagate to a fixed point. Resume retains
+visit budgets and does not infer success from an exhausted failed node. See
+[migration](migration.md) for old checkpoint and remote store limitations.
