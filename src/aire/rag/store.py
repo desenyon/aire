@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from aire.core.errors import RetrievalError
+from aire.core.serialization import write_json_file
 from aire.core.types import HealthStatus, Manifest
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -71,6 +72,32 @@ class VectorStore(abc.ABC):
         if ids:
             await self.delete(ids)
 
+    async def replace_document(self, document_id: str, chunks: list[Chunk]) -> int:
+        """Best-effort adapter fallback: upsert first, then delete old chunk IDs.
+
+        Local and SQLite stores override this with atomic replacement. Remote
+        adapters may leave both versions on delete failure. Empty text search
+        must enumerate the old document for this fallback to be complete.
+        """
+        old = await self.search_text("", k=1_000_000)
+        new_ids = {c.id for c in chunks}
+        obsolete = [
+            h.chunk.id
+            for h in old
+            if h.chunk.document_id == document_id and h.chunk.id not in new_ids
+        ]
+        count = await self.upsert(chunks)
+        if obsolete:
+            await self.delete(obsolete)
+        return count
+
+    async def replace_all(self, chunks: list[Chunk]) -> int:
+        """Replace a complete index; adapters must implement an atomic operation."""
+        raise RetrievalError(
+            f"{type(self).__name__} does not support atomic index replacement",
+            code="rag.atomic_replace_unsupported",
+        )
+
     async def health(self) -> HealthStatus:
         try:
             await self.count()
@@ -120,7 +147,7 @@ class LocalVectorStore(VectorStore):
             data = chunk.model_dump(mode="json")
             data["embedding"] = chunk.embedding  # embedding is excluded from model_dump
             serialized.append(data)
-        target.write_text(json.dumps({"chunks": serialized}))
+        write_json_file(target, {"chunks": serialized})
         self._path = target
         return target
 
@@ -129,6 +156,18 @@ class LocalVectorStore(VectorStore):
     async def upsert(self, chunks: list[Chunk]) -> int:
         for chunk in chunks:
             self._chunks[chunk.id] = chunk
+        return len(chunks)
+
+    async def replace_document(self, document_id: str, chunks: list[Chunk]) -> int:
+        if any(c.document_id != document_id for c in chunks):
+            raise RetrievalError("replacement chunks must belong to the requested document")
+        remaining = {cid: c for cid, c in self._chunks.items() if c.document_id != document_id}
+        remaining.update({c.id: c for c in chunks})
+        self._chunks = remaining
+        return len(chunks)
+
+    async def replace_all(self, chunks: list[Chunk]) -> int:
+        self._chunks = {c.id: c for c in chunks}
         return len(chunks)
 
     def _matches(self, chunk: Chunk, filter: dict[str, Any] | None) -> bool:
@@ -154,6 +193,8 @@ class LocalVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         scored = [
             ScoredChunk(chunk=c, score=cosine_similarity(vector, c.embedding or []))
             for c in self._chunks.values()
@@ -169,9 +210,11 @@ class LocalVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         query_terms = tokenize(query)
         if not query_terms:
-            candidates = list(self._chunks.values())
+            candidates = [c for c in self._chunks.values() if self._matches(c, filter)]
             return [ScoredChunk(chunk=c, score=0.0) for c in candidates[:k]]
         df: dict[str, int] = {}
         docs = {c.id: tokenize(c.text) for c in self._chunks.values() if self._matches(c, filter)}

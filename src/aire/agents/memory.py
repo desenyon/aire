@@ -39,6 +39,10 @@ class BufferMemory(Memory):
 
     async def recall(self, *, limit: int | None = None) -> list[Message]:
         messages = self._messages[-limit:] if limit else list(self._messages)
+        # A sliding window can cut a tool exchange in half. Drop orphan results
+        # at its boundary rather than send a provider an invalid conversation.
+        while messages and messages[0].role == "tool":
+            messages.pop(0)
         return messages
 
     async def clear(self) -> None:

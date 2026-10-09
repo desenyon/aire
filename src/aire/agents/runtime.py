@@ -157,13 +157,14 @@ class AgentExecutor:
         )
 
         if not result.tool_calls:
+            state.messages.append(result.message)
             state.output = result.text
             state.status = AgentStatus.COMPLETED
             self._append_step(state, StepKind.FINISH, chars=len(result.text))
             self._emit("agent.finished", {"run_id": state.id, "steps": len(state.steps)})
             return
 
-        state.messages.append(Message(role="assistant", content=result.content))
+        state.messages.append(result.message)
         if self.config.parallel_tools and len(result.tool_calls) > 1:
             await self._execute_tools_parallel(state, ctx, result.tool_calls)
         else:

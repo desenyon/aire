@@ -2,9 +2,9 @@
 
 Priority (highest first):
 1. Explicit Python arguments
-2. Project configuration file (``aire.yaml`` / ``aire.json`` / ``pyproject.toml``)
-3. Environment variables (``AIRE_`` prefix, ``__`` as nesting separator)
-4. User configuration (``~/.config/aire/config.yaml``)
+2. Environment variables (``AIRE_`` prefix, ``__`` as nesting separator)
+3. Project configuration file (``aire.yaml`` / ``aire.yml`` / ``aire.json``)
+4. User configuration (``~/.config/aire/config.yaml``), only without a project file
 5. Library defaults
 """
 

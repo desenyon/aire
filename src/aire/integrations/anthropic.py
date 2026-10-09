@@ -162,6 +162,12 @@ class AnthropicModel(Model):
                         "input": part.data.get("input") or {},
                     }
                 )
+        existing = {b.get("id") for b in blocks if b.get("type") == "tool_use"}
+        blocks.extend(
+            {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
+            for c in message.tool_calls
+            if c.id not in existing
+        )
         return blocks if blocks else message.text_content
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
@@ -199,16 +205,74 @@ class AnthropicModel(Model):
             raw={"provider_response_id": data.get("id")},
         )
 
-    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+    async def stream(  # noqa: C901 — explicit provider event state machine
+        self, request: GenerationRequest
+    ) -> AsyncIterator[GenerationChunk]:
         payload = self._payload(request, stream=True)
+        from aire.core.errors import ProviderError
+        from aire.models.streaming import ToolCallBuffer
+
+        pending: dict[int, ToolCallBuffer] = {}
+        input_tokens = output_tokens = 0
+        finish = "stop"
         async for event in self._client.stream_sse("/messages", payload):
             etype = event.get("type")
-            if etype == "content_block_delta":
-                delta = event.get("delta", {})
+            index = event.get("index", 0)
+            if etype == "message_start":
+                usage = event.get("message", {}).get("usage") or {}
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+            elif etype == "content_block_start":
+                block = event.get("content_block") or {}
+                if block.get("type") == "tool_use":
+                    pending[index] = ToolCallBuffer(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        initial=block.get("input") or {},
+                    )
+            elif etype == "content_block_delta":
+                delta = event.get("delta") or {}
                 if delta.get("type") == "text_delta":
                     yield GenerationChunk(text=delta.get("text", ""))
+                elif delta.get("type") == "input_json_delta":
+                    if index not in pending:
+                        raise ProviderError(
+                            "anthropic",
+                            "tool delta has no matching block",
+                            code="provider.stream_tool_invalid",
+                            retryable=False,
+                        )
+                    pending[index].fragments.append(delta.get("partial_json", ""))
+            elif etype == "content_block_stop" and index in pending:
+                yield GenerationChunk(tool_calls=[pending.pop(index).finish("anthropic")])
+            elif etype == "message_delta":
+                reason = event.get("delta", {}).get("stop_reason")
+                finish = {"tool_use": "tool_calls", "max_tokens": "length"}.get(reason, "stop")
+                output_tokens = (event.get("usage") or {}).get("output_tokens", output_tokens)
             elif etype == "message_stop":
-                yield GenerationChunk(finish_reason="stop")
+                if pending:
+                    raise ProviderError(
+                        "anthropic",
+                        "stream ended before tool calls completed",
+                        code="provider.stream_incomplete",
+                        retryable=False,
+                    )
+                tokens = Usage(input_tokens=input_tokens, output_tokens=output_tokens)
+                yield GenerationChunk(
+                    finish_reason=finish,
+                    usage=tokens.model_copy(update={"cost_usd": self.info.cost.estimate(tokens)}),
+                )
+            elif etype == "error":
+                raise ProviderError(
+                    "anthropic", "provider reported a stream error", code="provider.stream_error"
+                )
+        if pending:
+            raise ProviderError(
+                "anthropic",
+                "stream ended before tool calls completed",
+                code="provider.stream_incomplete",
+                retryable=False,
+            )
 
     async def health(self) -> HealthStatus:
         try:

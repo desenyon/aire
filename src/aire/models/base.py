@@ -42,7 +42,12 @@ class Model(abc.ABC):
         result = await self.generate(request)
         from aire.models.types import GenerationChunk
 
-        yield GenerationChunk(text=result.text, finish_reason=result.finish_reason)
+        yield GenerationChunk(
+            text=result.text,
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
+            usage=result.usage,
+        )
 
     async def health(self) -> HealthStatus:
         """Liveness probe. Default: attempt a minimal generation."""

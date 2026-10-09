@@ -70,9 +70,7 @@ class Agent:
 
     # -- execution -----------------------------------------------------------------
 
-    async def run(  # noqa: C901
-        self, input: str, *, use_planning: bool | None = None
-    ) -> AgentResult:
+    async def run(self, input: str, *, use_planning: bool | None = None) -> AgentResult:
         """Run the agent to a terminal state and persist memory (+ optional session).
 
         ``use_planning`` overrides ``config.planning``. When planning is on,
@@ -110,6 +108,7 @@ class Agent:
             self.session.state.status = "running"
             self.session.save()
 
+        turn_start = len(self.state.messages) if resumed else 0
         executor = self._executor()
         try:
             result = await executor.run(input, state=self.state)
@@ -117,19 +116,7 @@ class Agent:
             if self.session is not None:
                 self.session.fail(str(exc))
             raise
-        await self.memory.add(Message.text("user", input))
-        for message in self.state.messages:
-            if message.role == "tool":
-                await self.memory.add(message)
-        if result.output:
-            await self.memory.add(Message.text("assistant", result.output))
-        if self.session is not None:
-            self.session.persist_messages(self.state.messages)
-            for step in result.steps:
-                # Avoid duplicating steps already in session on resume
-                if not any(s.get("index") == step.index for s in self.session.state.steps):
-                    self.session.append_step(step)
-            self.session.complete(result)
+        await self._persist_turn(input, result, turn_start=turn_start)
         return result
 
     async def pause(self) -> None:
@@ -185,10 +172,18 @@ class Agent:
             error=event.error,
         )
 
-    async def _persist_turn(self, input: str, final: AgentResult | None) -> None:
+    async def _persist_turn(
+        self, input: str, final: AgentResult | None, *, turn_start: int = 0
+    ) -> None:
         await self.memory.add(Message.text("user", input))
-        for message in self.state.messages:
-            if message.role == "tool":
+        if not turn_start:
+            # The executor prepends recalled messages, then the current user turn.
+            turn_start = max(
+                (i + 1 for i, m in enumerate(self.state.messages) if m.role == "user"),
+                default=0,
+            )
+        for message in self.state.messages[turn_start:]:
+            if message.role == "tool" or message.tool_calls:
                 await self.memory.add(message)
         if final and final.output:
             await self.memory.add(Message.text("assistant", final.output))

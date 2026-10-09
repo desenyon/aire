@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from aire.agents.types import AgentResult, AgentState, AgentStatus, AgentStep
 from aire.core.content import Message
 from aire.core.errors import ConfigurationError
+from aire.core.serialization import write_json_file
 from aire.core.types import Usage, new_id
 
 
@@ -80,7 +81,7 @@ class DurableSession:
 
     def save(self) -> Path:
         self.state.updated_at = time.time()
-        self.path.write_text(json.dumps(self.state.model_dump(mode="json"), indent=2))
+        write_json_file(self.path, self.state)
         return self.path
 
     def append_step(self, step: AgentStep | dict[str, Any]) -> None:
@@ -107,9 +108,11 @@ class DurableSession:
         return self.hydrate_agent_state(input)
 
     def complete(self, result: AgentResult | dict[str, Any]) -> None:
-        self.state.status = "completed"
         self.state.result = (
             result.model_dump(mode="json") if isinstance(result, AgentResult) else dict(result)
+        )
+        self.state.status = (
+            "completed" if self.state.result.get("status", "completed") == "completed" else "failed"
         )
         self.save()
 

@@ -43,7 +43,7 @@ class SdkBridgeExporter:
 
     def _make_sdk_tracer(self) -> Any:
         try:
-            from opentelemetry import trace  # type: ignore[import-not-found]
+            from opentelemetry import trace
         except ImportError as exc:
             raise ConfigurationError(
                 "opentelemetry-api required for SDK bridge: "
@@ -67,7 +67,7 @@ class SdkBridgeExporter:
                     else:
                         span.set_attribute(key, str(value))
                 if record.status == "error":
-                    from opentelemetry.trace import (  # type: ignore[import-not-found]
+                    from opentelemetry.trace import (
                         Status,
                         StatusCode,
                     )

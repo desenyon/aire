@@ -6,12 +6,12 @@ of the library only ever sees these normalized types.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aire.core.content import Content, Message, TextContent, coerce_messages
+from aire.core.tool_calls import ToolCall as ToolCall
 from aire.core.types import Capability, Usage
 
 
@@ -23,27 +23,6 @@ class ToolDefinition(BaseModel):
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
-
-
-class ToolCall(BaseModel):
-    """A model's request to invoke a tool."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-    @classmethod
-    def from_json(cls, id: str, name: str, arguments: str | dict[str, Any]) -> ToolCall:
-        if isinstance(arguments, str):
-            try:
-                parsed = json.loads(arguments)
-            except json.JSONDecodeError:
-                parsed = {"_raw": arguments}
-        else:
-            parsed = arguments
-        return cls(id=id, name=name, arguments=parsed)
 
 
 class StructuredOutputSpec(BaseModel):
@@ -111,7 +90,7 @@ class GenerationResult(BaseModel):
 
     @property
     def message(self) -> Message:
-        return Message(role="assistant", content=self.content)
+        return Message(role="assistant", content=self.content, tool_calls=self.tool_calls)
 
     @classmethod
     def text_result(

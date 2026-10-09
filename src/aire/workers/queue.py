@@ -4,7 +4,7 @@
 rename (or ``O_EXCL`` lock file) on a single filesystem. Do not use it as a
 distributed queue across hosts or network mounts without a real broker.
 
-``RedisQueueWorker`` uses a Redis list (``LPUSH`` / ``BRPOP``) and requires
+``RedisQueueWorker`` uses a Redis list (``LPUSH`` / ``BRPOPLPUSH``) and requires
 ``aire[redis]``. SQS is not bundled — see :class:`SQSQueueWorker`.
 """
 
@@ -92,6 +92,19 @@ class InProcessWorker:
         }
 
 
+async def _execute_job(worker: InProcessWorker, job: Job) -> WorkerResult:
+    try:
+        result = await worker.submit(job.workflow, job.input)
+    except Exception as exc:
+        job.status = "failed"
+        job.error = f"{type(exc).__name__}: {exc}"
+        job.finished_at = time.time()
+        return WorkerResult(job=job)
+    result.job.id = job.id
+    result.job.created_at = job.created_at
+    return result
+
+
 def _claim_job_file(path: Path) -> Path | None:
     """Atomically claim a queued job for local-only workers.
 
@@ -149,22 +162,40 @@ class FileQueueWorker:
         return job
 
     async def drain(self, *, max_jobs: int = 10) -> list[WorkerResult]:
+        if max_jobs < 0:
+            raise ValueError("max_jobs must be nonnegative")
         results: list[WorkerResult] = []
         queued = sorted((self.directory / "queued").glob("*.json"))[:max_jobs]
         for path in queued:
             claimed = _claim_job_file(path)
             if claimed is None:
                 continue
-            try:
-                job = Job.model_validate(read_json_file(claimed))
-                result = await self.inner.submit(job.workflow, job.input)
-                result.job.id = job.id
-                dest_dir = "done" if result.job.status == "completed" else "failed"
-                write_json_file(self.directory / dest_dir / f"{job.id}.json", result.job)
-                results.append(result)
-            finally:
-                claimed.unlink(missing_ok=True)
+            # Validation, cancellation, or persistence failures leave the claim
+            # available for explicit recovery. Acknowledge only after saving.
+            job = Job.model_validate(read_json_file(claimed))
+            result = await _execute_job(self.inner, job)
+            dest_dir = "done" if result.job.status == "completed" else "failed"
+            write_json_file(self.directory / dest_dir / path.name, result.job)
+            claimed.unlink()
+            results.append(result)
         return results
+
+    def recover(self) -> int:
+        """Requeue retained claims after stopping all workers for this directory.
+
+        Completed/failed result files are acknowledgements and are not replayed.
+        A crash after a side effect but before saving may replay that side effect;
+        workflow nodes should be idempotent. Never call with active workers.
+        """
+        recovered = 0
+        for claimed in sorted((self.directory / "queued").glob("*.json.claimed")):
+            target = claimed.with_suffix("")
+            if any((self.directory / d / target.name).exists() for d in ("done", "failed")):
+                claimed.unlink()
+            elif not target.exists():
+                claimed.rename(target)
+                recovered += 1
+        return recovered
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -172,6 +203,7 @@ class FileQueueWorker:
             "local_only": True,
             "directory": str(self.directory),
             "queued": len(list((self.directory / "queued").glob("*.json"))),
+            "claimed": len(list((self.directory / "queued").glob("*.json.claimed"))),
             "workflows": sorted(self.inner.workflows),
             "claim": "atomic rename / O_EXCL lock",
         }
@@ -190,7 +222,7 @@ def _require_redis() -> Any:
 
 
 class RedisQueueWorker:
-    """Distributed job queue backed by a Redis list (``LPUSH`` / ``BRPOP``).
+    """Distributed job queue backed by a Redis list (``LPUSH`` / ``BRPOPLPUSH``).
 
     Requires ``pip install 'aire[redis]'``. Job payloads are JSON-serialized
     :class:`Job` objects.
@@ -204,11 +236,14 @@ class RedisQueueWorker:
         workflows: dict[str, Workflow] | None = None,
         client: Any | None = None,
     ) -> None:
-        redis_mod = _require_redis()
         self.url = url
         self.key = key
         self.inner = InProcessWorker(workflows)
-        self._client = client or redis_mod.Redis.from_url(url, decode_responses=True)
+        self._client = (
+            client
+            if client is not None
+            else _require_redis().Redis.from_url(url, decode_responses=True)
+        )
 
     def register(self, name: str, workflow: Workflow) -> None:
         self.inner.register(name, workflow)
@@ -220,17 +255,41 @@ class RedisQueueWorker:
         return job
 
     async def process_one(self, *, block_seconds: float = 1.0) -> WorkerResult | None:
-        """Block up to ``block_seconds`` for one job via ``BRPOP``."""
+        """Atomically move a queued job to processing, then save and acknowledge.
+
+        Cancellation leaves the claimed payload in ``<key>:processing``. The
+        blocking Redis call runs in a thread and may finish after cancellation.
+        Recover only once workers and their blocking calls have stopped.
+        """
         block = max(1, int(block_seconds))
-        popped = await asyncio.to_thread(self._client.brpop, self.key, block)
-        if popped is None:
+        raw = await asyncio.to_thread(
+            self._client.brpoplpush, self.key, self.key + ":processing", block
+        )
+        if raw is None:
             return None
-        _key, raw = popped
         job = Job.model_validate(json.loads(raw))
-        result = await self.inner.submit(job.workflow, job.input)
-        result.job.id = job.id
-        result.job.created_at = job.created_at
+        result = await _execute_job(self.inner, job)
+        await asyncio.to_thread(self._acknowledge, raw, result.job)
         return result
+
+    def _acknowledge(self, raw: str | bytes, job: Job) -> None:
+        self._client.eval(
+            "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); "
+            "return redis.call('LREM', KEYS[2], 1, ARGV[3])",
+            2,
+            self.key + ":results",
+            self.key + ":processing",
+            job.id,
+            job.model_dump_json(),
+            raw,
+        )
+
+    def recover(self) -> int:
+        """Move retained processing jobs back to the queue with all workers stopped."""
+        recovered = 0
+        while self._client.rpoplpush(self.key + ":processing", self.key) is not None:
+            recovered += 1
+        return recovered
 
     async def drain(self, *, max_jobs: int = 10, block_seconds: float = 1.0) -> list[WorkerResult]:
         results: list[WorkerResult] = []
@@ -252,7 +311,9 @@ class RedisQueueWorker:
             "key": self.key,
             "queued": depth,
             "workflows": sorted(self.inner.workflows),
-            "transport": "redis list LPUSH/BRPOP",
+            "transport": "redis list LPUSH/BRPOPLPUSH with transactional acknowledgement",
+            "processing_key": self.key + ":processing",
+            "results_key": self.key + ":results",
         }
 
 

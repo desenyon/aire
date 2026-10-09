@@ -15,6 +15,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from aire.core.errors import DataError
+from aire.core.tool_calls import ToolCall
 
 
 class ContentBase(BaseModel):
@@ -115,6 +116,7 @@ class Message(BaseModel):
     content: list[Content] = Field(default_factory=list)
     name: str | None = None
     tool_call_id: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
 
     @classmethod
     def text(cls, role: Literal["system", "user", "assistant", "tool"], text: str) -> Message:

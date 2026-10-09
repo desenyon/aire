@@ -8,8 +8,12 @@ the library (see SECURITY_MODEL.md).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import IO, Any, TypeVar
 
 import yaml
 from pydantic import BaseModel
@@ -41,7 +45,7 @@ def dump_dict(model: BaseModel) -> dict[str, Any]:
 def read_json_file(path: str | Path) -> Any:
     p = Path(path)
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise DataError(f"file not found: {p}", context={"path": str(p)}) from None
     except json.JSONDecodeError as exc:
@@ -51,18 +55,49 @@ def read_json_file(path: str | Path) -> Any:
 def write_json_file(path: str | Path, data: Any, *, indent: int = 2) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(data, BaseModel):
-        p.write_text(data.model_dump_json(indent=indent))
-    else:
-        p.write_text(json.dumps(data, indent=indent, default=str))
+    payload = (
+        data.model_dump_json(indent=indent)
+        if isinstance(data, BaseModel)
+        else json.dumps(data, indent=indent, default=str)
+    )
+    with _atomic_writer(p) as fh:
+        fh.write(payload)
     return p
+
+
+@contextmanager
+def _atomic_writer(path: Path) -> Iterator[IO[str]]:
+    """Publish a complete UTF-8 snapshot with same-directory atomic replace.
+
+    Writers are last-writer-wins; this is not a cross-process transaction/lock.
+    The temporary file is private and flushed to disk before publication.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temporary = Path(fh.name)
+            yield fh.file
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def read_yaml_file(path: str | Path) -> Any:
     """Load YAML using safe_load only — never constructs arbitrary objects."""
     p = Path(path)
     try:
-        return yaml.safe_load(p.read_text())
+        return yaml.safe_load(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise DataError(f"file not found: {p}", context={"path": str(p)}) from None
     except yaml.YAMLError as exc:
@@ -92,7 +127,7 @@ def iter_jsonl(path: str | Path) -> Any:
 def write_jsonl(path: str | Path, records: Any) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w") as fh:
+    with _atomic_writer(p) as fh:
         for record in records:
             if isinstance(record, BaseModel):
                 fh.write(record.model_dump_json() + "\n")

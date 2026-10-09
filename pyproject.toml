@@ -223,3 +223,7 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "opentelemetry", "opentelemetry.*"]
+ignore_missing_imports = true

@@ -49,6 +49,8 @@ class Workflow:
         checkpoint_path: str | Path | None = None,
         approver: ApproverFn | None = None,
     ) -> None:
+        if max_visits < 1:
+            raise WorkflowError("max_visits must be positive")
         self.name = name
         self.max_visits = max_visits
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
@@ -114,10 +116,9 @@ class Workflow:
 
     async def run(self, input: Any = None, *, state: WorkflowState | None = None) -> WorkflowResult:
         """Execute the workflow to completion (optionally resuming from ``state``)."""
-        async for _ in self.run_stream(input, state=state):
+        wf_state = state if state is not None else WorkflowState(input=input)
+        async for _ in self.run_stream(input, state=wf_state):
             pass
-        assert self._last_state is not None
-        wf_state = self._last_state
         return WorkflowResult(
             output=_terminal_output(self, wf_state) if not wf_state.error else None,
             outputs=wf_state.outputs,
@@ -127,13 +128,17 @@ class Workflow:
             run_id=wf_state.id,
         )
 
-    async def run_stream(
+    async def run_stream(  # noqa: C901 — scheduling and cancellation share one state machine
         self, input: Any = None, *, state: WorkflowState | None = None
     ) -> AsyncIterator[WorkflowEvent]:
         """Execute, yielding an event after every node transition."""
         wf_state = state or WorkflowState(input=input)
         context: dict[str, Any] = {"workflow": self.name, "run_id": wf_state.id}
-        status, visits, fired, consumed, ready = self._init_scheduling(wf_state, state)
+        status: dict[str, NodeStatus] = {}
+        visits: dict[str, int] = {}
+        fired: dict[tuple[str, str], int] = {}
+        consumed: dict[tuple[str, str], int] = {}
+        ready: set[str] = set()
 
         def _finish_node(
             name: str,
@@ -142,38 +147,54 @@ class Workflow:
             error: str | None = None,
             duration_ms: float = 0.0,
         ) -> WorkflowEvent:
-            return self._finish_node(
+            event = self._finish_node(
                 wf_state, status, fired, name, node_status, output, error, duration_ms
             )
+            wf_state.pending = [n for n in wf_state.pending if n != name]
+            self._save_scheduling(wf_state, fired, consumed)
+            self._checkpoint(wf_state)
+            return event
 
         try:
-            while ready:
-                # Launch all ready nodes concurrently.
+            if not self._nodes:
+                raise WorkflowError("workflow has no nodes")
+            status, visits, fired, consumed, ready = self._init_scheduling(wf_state, state)
+            while True:
+                # Propagate skipped chains to a fixed point before scheduling joins.
+                while skipped := self._skip_unreachable(status, visits, fired):
+                    for name in skipped:
+                        yield _finish_node(name, NodeStatus.SKIPPED)
+                ready |= self._schedule_next(status, visits, fired, consumed, ready)
+                if not ready:
+                    self._check_stalled(status)
+                    break
+                # Save the whole wave before executing any side effects.
                 current, ready = sorted(ready), set()
+                wf_state.pending = current
+                self._save_scheduling(wf_state, fired, consumed)
+                self._checkpoint(wf_state)
                 tasks = {
                     name: asyncio.create_task(self._run_node(name, wf_state, context, status))
                     for name in current
                 }
-                for name in tasks:
-                    yield WorkflowEvent(kind="node_started", node=name)
                 failures: list[str] = []
-                async for event in self._collect_wave(tasks, visits, _finish_node, failures):
-                    yield event
-                if failures and wf_state.error is None:
-                    wf_state.error = "; ".join(failures)
+                try:
+                    for name in tasks:
+                        yield WorkflowEvent(kind="node_started", node=name)
+                    async for event in self._collect_wave(tasks, visits, _finish_node, failures):
+                        yield event
+                finally:
+                    for task in tasks.values():
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks.values(), return_exceptions=True)
+                if failures or wf_state.error:
+                    wf_state.error = wf_state.error or "; ".join(failures)
                     break
-                # Schedule next wave, then mark unreachable nodes skipped.
-                ready |= self._schedule_next(status, visits, fired, consumed, ready)
-                skipped = self._skip_unreachable(status, visits, fired)
-                for name in skipped:
-                    yield _finish_node(name, NodeStatus.SKIPPED)
-                if not ready and not skipped:
-                    self._check_stalled(status)
             wf_state.completed = wf_state.error is None
         except WorkflowError as exc:
             wf_state.error = exc.message
             wf_state.completed = False
-            yield WorkflowEvent(kind="workflow_failed", data={"error": exc.message})
         self._checkpoint(wf_state)
         self._last_state = wf_state
         yield WorkflowEvent(
@@ -240,15 +261,27 @@ class Workflow:
         duration_ms: float = 0.0,
     ) -> WorkflowEvent:
         """Record a terminal node transition and fire its matching out-edges."""
+        targets: list[str] = []
+        if node_status == NodeStatus.COMPLETED:
+            try:
+                targets = [
+                    target
+                    for target, condition in self._successors(name)
+                    if condition is None or condition(output)
+                ]
+            except Exception as exc:
+                node_status = NodeStatus.FAILED
+                error = f"edge condition after {name!r} failed: {exc}"
+                wf_state.error = error
         status[name] = node_status
         wf_state.record(name, node_status, duration_ms=duration_ms, error=error)
         if node_status == NodeStatus.COMPLETED:
             wf_state.outputs[name] = output
-            for target, condition in self._successors(name):
-                if condition is None or condition(output):
-                    edge = (name, target)
-                    fired[edge] = fired.get(edge, 0) + 1
-        self._checkpoint(wf_state)
+            for target in targets:
+                edge = (name, target)
+                fired[edge] = fired.get(edge, 0) + 1
+        else:
+            wf_state.outputs.pop(name, None)
         kind = {
             NodeStatus.COMPLETED: "node_completed",
             NodeStatus.FAILED: "node_failed",
@@ -291,14 +324,47 @@ class Workflow:
         ready: set[str] = set()
         resuming = state is not None and bool(state.records)
         if resuming:
-            status = self._prepare_resume(wf_state, status, fired, consumed)
+            failed = {n for n, value in status.items() if value == NodeStatus.FAILED}
+            exhausted = sorted(n for n in failed if visits.get(n, 0) >= self.max_visits)
+            if exhausted:
+                raise WorkflowError(f"visit budget exhausted for failed nodes: {exhausted}")
+            if wf_state.scheduler_version == 1:
+                fired = {
+                    (s, t): count
+                    for s, targets in wf_state.edge_firings.items()
+                    for t, count in targets.items()
+                }
+                consumed = {
+                    (s, t): count
+                    for s, targets in wf_state.edge_consumed.items()
+                    for t, count in targets.items()
+                }
+                ready = set(wf_state.pending) | failed
+                unknown = ready - self._nodes.keys()
+                if unknown:
+                    raise WorkflowError(f"checkpoint references unknown nodes: {sorted(unknown)}")
+                status = {n: value for n, value in status.items() if n not in failed}
+                wf_state.error = None
+                wf_state.completed = False
+            else:
+                status = self._prepare_resume(wf_state, status, fired, consumed)
         if self._entry is not None and status.get(self._entry) not in _TERMINAL:
             ready.add(self._entry)
-        elif resuming:
-            # The entry is terminal: seed the first wave from reconstructed
-            # edge firings — otherwise nothing would ever run.
-            ready |= self._schedule_next(status, visits, fired, consumed, ready)
         return status, visits, fired, consumed, ready
+
+    @staticmethod
+    def _save_scheduling(
+        wf_state: WorkflowState,
+        fired: dict[tuple[str, str], int],
+        consumed: dict[tuple[str, str], int],
+    ) -> None:
+        wf_state.scheduler_version = 1
+        wf_state.edge_firings = {}
+        wf_state.edge_consumed = {}
+        for (source, target), count in fired.items():
+            wf_state.edge_firings.setdefault(source, {})[target] = count
+        for (source, target), count in consumed.items():
+            wf_state.edge_consumed.setdefault(source, {})[target] = count
 
     def _prepare_resume(
         self,
@@ -365,7 +431,7 @@ class Workflow:
         an in-edge (e.g. a conditional branch that was not taken)."""
         skipped: list[str] = []
         for name in self._nodes:
-            if visits.get(name, 0) > 0:
+            if visits.get(name, 0) > 0 or status.get(name) in _TERMINAL:
                 continue
             preds = self._predecessors(name)
             if (
