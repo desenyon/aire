@@ -57,7 +57,7 @@ lightgbm = ["lightgbm>=4.0"]
 catboost = ["catboost>=1.2"]
 polars = ["polars>=0.20"]
 training = ["torch>=2.2"]
-vision = ["pillow>=10.0"]
+vision = ["pillow>=12.3.0"]
 # 0.3 platform extras (all lazy)
 pgvector = ["psycopg[binary]>=3.1"]
 neo4j = ["neo4j>=5.14"]
@@ -65,7 +65,7 @@ redis = ["redis>=5.0"]
 peft = ["peft>=0.10", "transformers>=4.38"]
 optuna = ["optuna>=3.5"]
 pypdf = ["pypdf>=4.0"]
-ocr = ["pypdf>=4.0", "pillow>=10.0", "pytesseract>=0.3.10", "pypdfium2>=4.0"]
+ocr = ["pypdf>=4.0", "pillow>=12.3.0", "pytesseract>=0.3.10", "pypdfium2>=4.0"]
 eval = ["sacrebleu>=2.4", "sentence-transformers>=2.7"]
 all = [
     "fastapi>=0.110",
@@ -74,7 +74,7 @@ all = [
     "datasets>=2.18",
     "scikit-learn>=1.4",
     "pandas>=2.0",
-    "pillow>=10.0",
+    "pillow>=12.3.0",
     "torch>=2.2",
     "keras>=3.0",
     "xgboost>=2.0",
