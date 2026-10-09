@@ -43,6 +43,21 @@ jobs:
       - name: Tests
         run: pytest -q -m "not live"
 
+      - name: Offline integration smoke
+        run: python examples/reliable_local/main.py
+
+      - name: Install documentation and build tools
+        if: matrix.python-version == '3.12'
+        run: pip install -e ".[docs]" build
+
+      - name: Strict documentation build
+        if: matrix.python-version == '3.12'
+        run: mkdocs build --strict
+
+      - name: Build wheel and source distribution
+        if: matrix.python-version == '3.12'
+        run: python -m build
+
       - name: Dependency audit
         continue-on-error: true
         run: |

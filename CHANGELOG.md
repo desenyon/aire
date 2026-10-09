@@ -4,6 +4,41 @@ All notable changes to aire are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Reliability and recovery
+
+- Preserve normalized assistant tool declarations in messages, agent history,
+  sessions, gateway translation and provider payloads. Keep complete calls/usage
+  in fallback streams and exact cache replay; bypass semantic model caching for
+  tool contexts.
+- Assemble interleaved OpenAI and Anthropic stream arguments before publishing
+  tool calls; surface invalid/incomplete calls as structured errors. Retain
+  Ollama streamed tool calls and terminal usage.
+- Apply Local/SQLite metadata and ACL filters to tokenless queries before limits.
+  Prepare and validate embeddings before index replacement. Add atomic local and
+  SQLite document/full-index replacement, and commit SQLite changes before cache
+  mutation. Unsupported full replacement fails without clearing remote stores.
+- Publish JSON/JSONL snapshots via private same-directory temporary files and
+  atomic replacement, including local vector snapshots and agent sessions.
+- Retain file/Redis queue claims until result persistence succeeds; preserve job
+  identity and creation time, record unknown-workflow failures, and expose explicit
+  recovery. Redis uses processing/result keys and a Lua acknowledgement.
+- Propagate skipped workflow chains before scheduling joins; persist pending nodes
+  and edge counters, respect failed-node visit budgets on resume, cancel unfinished
+  streamed tasks, and keep concurrent run results separate.
+
+### Validation and documentation
+
+- Add deterministic offline regression coverage for protocols, failure injection,
+  persistence, filtering, queue acknowledgement/recovery and workflow resume.
+- Add `examples/reliable_local/main.py`, an offline smoke covering real local
+  subsystem integration, plus CI docs and packaging checks.
+- Repair baseline formatting, optional dependency typing/test assumptions, and
+  case-sensitive documentation links. Expand README and migration documentation
+  with executable examples and explicit transactional/recovery limitations.
+
+
 ## [0.3.5] — 2026-07-29
 
 Honesty + depth release after 0.3.4: close P0 false-advertising bugs, wire dead

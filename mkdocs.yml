@@ -38,8 +38,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Product: product.md
-  - Architecture: architecture.md
-  - Public API: public_api.md
+  - Architecture: ARCHITECTURE.md
+  - Public API: PUBLIC_API.md
   - API freeze: api_freeze.md
   - Compatibility: compatibility.md
   - Migration: migration.md
