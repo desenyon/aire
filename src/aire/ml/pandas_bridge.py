@@ -3,7 +3,7 @@
 The bridge is how aire plugs into the existing ML ecosystem: pull a DataFrame
 from anywhere (SQL, parquet, Spark export, ...), turn it into a Dataset for
 training/evaluation, and push predictions back out as a DataFrame.
-Requires ``pip install aire[ml]`` (pandas).
+Requires ``pip install aire-ai[ml]`` (pandas).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from aire.ml.types import Prediction
 def _require_pandas() -> Any:
     if importlib.util.find_spec("pandas") is None:
         raise ConfigurationError(
-            "pandas is required for the DataFrame bridge: pip install 'aire[ml]'",
+            "pandas is required for the DataFrame bridge: pip install 'aire-ai[ml]'",
             code="ml.pandas_missing",
             context={"backend": "pandas"},
         )

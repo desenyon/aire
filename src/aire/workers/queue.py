@@ -5,7 +5,7 @@ rename (or ``O_EXCL`` lock file) on a single filesystem. Do not use it as a
 distributed queue across hosts or network mounts without a real broker.
 
 ``RedisQueueWorker`` uses a Redis list (``LPUSH`` / ``BRPOPLPUSH``) and requires
-``aire[redis]``. SQS is not bundled — see :class:`SQSQueueWorker`.
+``aire-ai[redis]``. SQS is not bundled — see :class:`SQSQueueWorker`.
 """
 
 from __future__ import annotations
@@ -212,9 +212,9 @@ class FileQueueWorker:
 def _require_redis() -> Any:
     if importlib.util.find_spec("redis") is None:
         raise ConfigurationError(
-            "redis is required for RedisQueueWorker: pip install 'aire[redis]'",
+            "redis is required for RedisQueueWorker: pip install 'aire-ai[redis]'",
             code="workers.redis_missing",
-            context={"extra": "aire[redis]", "package": "redis"},
+            context={"extra": "aire-ai[redis]", "package": "redis"},
         )
     import redis  # type: ignore[import-not-found]
 
@@ -224,7 +224,7 @@ def _require_redis() -> Any:
 class RedisQueueWorker:
     """Distributed job queue backed by a Redis list (``LPUSH`` / ``BRPOPLPUSH``).
 
-    Requires ``pip install 'aire[redis]'``. Job payloads are JSON-serialized
+    Requires ``pip install 'aire-ai[redis]'``. Job payloads are JSON-serialized
     :class:`Job` objects.
     """
 

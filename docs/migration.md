@@ -101,7 +101,7 @@ Honesty + depth release. Most public names remain; behaviour becomes stricter.
 |--------|--------|
 | Guardrails auto-wire on `Knowledge.ask` / `create_gateway` | Pass `guardrails=False` to opt out; tune via `SafetyConfig` |
 | `bleu` metric | Now BLEU-4 + brevity penalty; old F1 approx is `bleu_approx` |
-| `cross_encoder` reranker | Defaults to HF CrossEncoder (`aire[eval]`); pass `model=` LLM for old scorer, or use `reranker="model"` |
+| `cross_encoder` reranker | Defaults to HF CrossEncoder (`aire-ai[eval]`); pass `model=` LLM for old scorer, or use `reranker="model"` |
 | `embedding_similarity` / `nli_faithfulness` / `model_judge` | Raise `ConfigurationError` when judge/embedder missing (no silent 0.0) |
 | Gateway images | Returns **501** without image capability |
 | Workers | `create_worker("redis")` available; `"sqs"` raises until boto3 is bundled |

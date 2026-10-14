@@ -3,7 +3,7 @@
 Supports ``torch:mlp``, custom ``module_factory``, or ``architecture=`` from
 ``AI.ml.arch``. Training knobs: optim/loss/scheduler/callbacks, validation
 split, AMP, ``torch.compile``, gradient clipping, checkpointing, DataLoader.
-Requires ``pip install aire[torch]``.
+Requires ``pip install aire-ai[torch]``.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 def _require_torch() -> Any:
     if importlib.util.find_spec("torch") is None:
         raise ConfigurationError(
-            "PyTorch is required for torch:* estimators: pip install 'aire[torch]'",
+            "PyTorch is required for torch:* estimators: pip install 'aire-ai[torch]'",
             code="ml.torch_missing",
             context={"backend": "torch"},
         )

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from fastapi import Depends, FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
 else:
-    try:  # optional dependency: aire[serve]
+    try:  # optional dependency: aire-ai[serve]
         from fastapi import Depends, FastAPI, HTTPException, Request
         from fastapi.responses import JSONResponse
     except ImportError:  # pragma: no cover - exercised only without the extra
@@ -44,10 +44,10 @@ def create_app(
     rate_limit_per_minute: int | None = None,
     metrics: Metrics | None = None,
 ) -> Any:
-    """Build a FastAPI app serving ``target``. Requires ``pip install aire[serve]``."""
+    """Build a FastAPI app serving ``target``. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
         raise ConfigurationError(
-            "fastapi is required for deployment: pip install 'aire[serve]'",
+            "fastapi is required for deployment: pip install 'aire-ai[serve]'",
             code="deploy.fastapi_missing",
         )
 

@@ -209,7 +209,7 @@ class Assistant:
         return run_sync(self.evaluate_async(dataset, **kwargs))
 
     def deploy(self, **options: Any) -> Any:
-        """Wrap the assistant in a production FastAPI app (requires aire[serve])."""
+        """Wrap the assistant in a production FastAPI app (requires aire-ai[serve])."""
         import warnings
 
         if not self._indexed:

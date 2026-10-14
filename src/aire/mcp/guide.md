@@ -52,7 +52,7 @@ chunks = AI.data.chunk(ds, strategy="recursive", size=512)
 ```
 
 HTML files/URLs are converted to clean text automatically; parquet/excel need
-`aire[ml]` (pandas).
+`aire-ai[ml]` (pandas).
 
 `Dataset` iterates `Record(text, metadata)`; `record.metadata` carries
 everything downstream (chunk offsets, labels, features).
@@ -118,10 +118,10 @@ result = await team.run("Write a market brief on EV batteries")
 
 ```python
 est = await AI.ml.fit("simple:centroid", dataset)  # offline native
-est = await AI.ml.fit("sklearn:random_forest", dataset)  # needs aire[ml]
+est = await AI.ml.fit("sklearn:random_forest", dataset)  # needs aire-ai[ml]
 est = await AI.ml.fit("torch:mlp", dataset, hidden=(64, 32), optimizer="adamw")
-est = await AI.ml.fit("keras:mlp", dataset)  # aire[keras]
-est = await AI.ml.fit("xgboost:classifier", dataset)  # aire[xgboost]
+est = await AI.ml.fit("keras:mlp", dataset)  # aire-ai[keras]
+est = await AI.ml.fit("xgboost:classifier", dataset)  # aire-ai[xgboost]
 pipe = AI.ml.pipeline([("scale", "native:standard_scaler"), ("clf", "simple:centroid")])
 await pipe.fit(dataset)
 await est.evaluate(dataset)

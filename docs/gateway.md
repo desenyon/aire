@@ -1,6 +1,6 @@
 # Gateway
 
-OpenAI-compatible HTTP gateway over aire model refs. Requires `aire[serve]` (FastAPI + uvicorn).
+OpenAI-compatible HTTP gateway over aire model refs. Requires `aire-ai[serve]` (FastAPI + uvicorn).
 
 ## Create (do not have to bind)
 

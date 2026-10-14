@@ -68,7 +68,7 @@ def build_target() -> Any:
             knowledge = AI.rag.create(store=store)
             _log.info("Knowledge wired to PgVectorStore via AIRE_DATABASE_URL")
             return knowledge
-        except Exception as exc:  # pragma: no cover - depends on aire[pgvector]
+        except Exception as exc:  # pragma: no cover - depends on aire-ai[pgvector]
             _log.warning(
                 "AIRE_DATABASE_URL set but PgVectorStore unavailable: %s",
                 exc,
@@ -82,7 +82,7 @@ def build_target() -> Any:
         try:
             model = AI.models.cache(model, backend="redis", url=redis_url)
             _log.info("model cache wired to AIRE_REDIS_URL")
-        except Exception as exc:  # pragma: no cover - depends on aire[redis]
+        except Exception as exc:  # pragma: no cover - depends on aire-ai[redis]
             _log.warning("AIRE_REDIS_URL set but redis cache unavailable: %s", exc)
 
     return model
@@ -128,7 +128,7 @@ def generate_artifacts(
     """Write Dockerfile, entrypoint, app scaffold, env template and lock file."""
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
-    requirements = ["aire[serve]>=0.1.0", *(extra_requirements or [])]
+    requirements = ["aire-ai[serve]>=0.1.0", *(extra_requirements or [])]
     files: list[str] = []
     for name, content in {
         "Dockerfile": _DOCKERFILE,

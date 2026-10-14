@@ -82,10 +82,10 @@ def create_ui_app(  # noqa: C901
     runtime: Any | None = None,
     title: str = "aire UI",
 ) -> Any:
-    """FastAPI app serving a minimal ops dashboard. Requires ``aire[serve]``."""
+    """FastAPI app serving a minimal ops dashboard. Requires ``aire-ai[serve]``."""
     if importlib.util.find_spec("fastapi") is None:
         raise ConfigurationError(
-            "fastapi required for aire UI: pip install 'aire[serve]'",
+            "fastapi required for aire UI: pip install 'aire-ai[serve]'",
             code="ui.fastapi_missing",
         )
     from fastapi import FastAPI
@@ -144,7 +144,7 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "ui",
         "available": importlib.util.find_spec("fastapi") is not None,
-        "install": "pip install 'aire[serve]'",
+        "install": "pip install 'aire-ai[serve]'",
         "factory": "aire.ui.create_ui_app",
         "endpoints": ["/api/traces", "/api/costs", "/api/metrics", "/api/events", "/api/manifest"],
     }

@@ -1,7 +1,7 @@
 """Hyperparameter search over TrainingConfig / trainer factories.
 
 Offline default: discrete + continuous random search (no Optuna required).
-When ``aire[optuna]`` is installed, :func:`optuna_search` delegates to Optuna.
+When ``aire-ai[optuna]`` is installed, :func:`optuna_search` delegates to Optuna.
 """
 
 from __future__ import annotations
@@ -159,10 +159,10 @@ def optuna_search(
     """Optuna-backed search when installed; else ConfigurationError with hint."""
     if importlib.util.find_spec("optuna") is None:
         raise ConfigurationError(
-            "optuna is required for optuna_search: pip install 'aire[optuna]' "
+            "optuna is required for optuna_search: pip install 'aire-ai[optuna]' "
             "(or use random_search which needs no extras)",
             code="training.optuna_missing",
-            context={"extra": "aire[optuna]", "fallback": "aire.training.hpo.random_search"},
+            context={"extra": "aire-ai[optuna]", "fallback": "aire.training.hpo.random_search"},
         )
     import optuna  # type: ignore[import-not-found]
 
@@ -204,5 +204,5 @@ def describe() -> dict[str, Any]:
             "random": True,
             "optuna": importlib.util.find_spec("optuna") is not None,
         },
-        "install_optuna": "pip install 'aire[optuna]'",
+        "install_optuna": "pip install 'aire-ai[optuna]'",
     }

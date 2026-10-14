@@ -229,7 +229,7 @@ def builtin_prompts() -> list[MCPPrompt]:
                 "AI.ml.grid_search for selection, then est.save(path). Check "
                 "AI.ml.catalog() and AI.ml.backends() first; use simple:* when "
                 "sklearn/torch are not installed. For neural stacks "
-                "(aire[torch]): AI.ml.arch.compose(layers=[...]) or "
+                "(aire-ai[torch]): AI.ml.arch.compose(layers=[...]) or "
                 "AI.ml.arch.available() / register_attention / register_ffn; "
                 "train with AI.ml.optim + AI.ml.loss."
             ),

@@ -1,4 +1,4 @@
-"""Redis cache backend for exact-match generation caching (lazy ``aire[redis]``)."""
+"""Redis cache backend for exact-match generation caching (lazy ``aire-ai[redis]``)."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from aire.optimization.cache import cache_key
 def _require_redis() -> Any:
     if importlib.util.find_spec("redis") is None:
         raise ConfigurationError(
-            "redis is required for RedisCachedModel: pip install 'aire[redis]'",
+            "redis is required for RedisCachedModel: pip install 'aire-ai[redis]'",
             code="optimization.redis_missing",
-            context={"extra": "aire[redis]", "package": "redis"},
+            context={"extra": "aire-ai[redis]", "package": "redis"},
         )
     import redis  # type: ignore[import-not-found]
 
@@ -242,5 +242,5 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "redis_cache",
         "available": importlib.util.find_spec("redis") is not None,
-        "install": "pip install 'aire[redis]'",
+        "install": "pip install 'aire-ai[redis]'",
     }

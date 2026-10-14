@@ -1,7 +1,7 @@
 """scikit-learn backend (``sklearn:<estimator>`` refs), lazily imported.
 
 Short-name zoo + dotted-path escape hatch for *any* sklearn class.
-Requires ``pip install aire[ml]``.
+Requires ``pip install aire-ai[ml]``.
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ _SKLEARN_TRANSFORMS: dict[str, tuple[str, str]] = {
 def _require_sklearn() -> None:
     if importlib.util.find_spec("sklearn") is None:
         raise ConfigurationError(
-            "scikit-learn is required for sklearn:* estimators: pip install 'aire[ml]'",
+            "scikit-learn is required for sklearn:* estimators: pip install 'aire-ai[ml]'",
             code="ml.sklearn_missing",
             context={"backend": "sklearn"},
         )

@@ -142,7 +142,7 @@ def serve(
     try:
         import uvicorn
     except ImportError:
-        typer.secho("uvicorn required: pip install 'aire[serve]'", fg=typer.colors.RED, err=True)
+        typer.secho("uvicorn required: pip install 'aire-ai[serve]'", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from None
     import importlib.util
 
@@ -213,7 +213,7 @@ def gateway(
     try:
         import uvicorn
     except ImportError:
-        typer.secho("uvicorn required: pip install 'aire[serve]'", fg=typer.colors.RED, err=True)
+        typer.secho("uvicorn required: pip install 'aire-ai[serve]'", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from None
     from aire.ai import AI
 

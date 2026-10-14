@@ -15,7 +15,7 @@ from aire.rag.types import Chunk, ScoredChunk
 def _require_psycopg() -> Any:
     if importlib.util.find_spec("psycopg") is None:
         raise ConfigurationError(
-            "psycopg is required for pgvector: pip install 'aire[pgvector]'",
+            "psycopg is required for pgvector: pip install 'aire-ai[pgvector]'",
             code="rag.pgvector_missing",
         )
     import psycopg  # type: ignore[import-not-found]

@@ -280,9 +280,9 @@ def generate_scale_pack(
     if include_base_artifacts:
         extras: list[str] = []
         if cfg.with_redis:
-            extras.append("aire[redis]>=0.1.0")
+            extras.append("aire-ai[redis]>=0.1.0")
         if cfg.with_postgres:
-            extras.append("aire[pgvector]>=0.1.0")
+            extras.append("aire-ai[pgvector]>=0.1.0")
         base = generate_artifacts(target, project=cfg.project, extra_requirements=extras or None)
         files.extend(base.files)
     files.append(str(generate_compose(target, cfg)))

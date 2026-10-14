@@ -1,7 +1,7 @@
 """Train ``arch.compose`` stacks with FunctionTrainer / causal LM loop.
 
 Offline-capable: without torch, uses a pure-Python toy LM step. With
-``aire[torch]`` / ``aire[training]``, runs a batched causal LM cross-entropy
+``aire-ai[torch]`` / ``aire-ai[training]``, runs a batched causal LM cross-entropy
 loop with optional eval split and checkpoint directory.
 """
 
@@ -19,9 +19,9 @@ from aire.training.trainer import Checkpoint, FunctionTrainer, TrainingConfig, T
 def _require_torch() -> Any:
     if importlib.util.find_spec("torch") is None:
         raise ConfigurationError(
-            "torch is required for LMTrainer GPU/CPU loops: pip install 'aire[training]'",
+            "torch is required for LMTrainer GPU/CPU loops: pip install 'aire-ai[training]'",
             code="training.torch_missing",
-            context={"extra": "aire[training]", "fallback": "LMTrainer(backend='toy')"},
+            context={"extra": "aire-ai[training]", "fallback": "LMTrainer(backend='toy')"},
         )
     import torch
 

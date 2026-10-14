@@ -218,7 +218,7 @@ class HFDistillTrainer:
             or importlib.util.find_spec("torch") is None
         ):
             raise ConfigurationError(
-                "HFDistillTrainer requires transformers+torch: pip install 'aire[peft]'",
+                "HFDistillTrainer requires transformers+torch: pip install 'aire-ai[peft]'",
                 code="training.hf_distill_missing",
             )
         import torch

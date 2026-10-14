@@ -30,9 +30,9 @@ class LoRAConfig(BaseModel):
 def _require_peft() -> tuple[Any, Any]:
     if importlib.util.find_spec("peft") is None or importlib.util.find_spec("transformers") is None:
         raise ConfigurationError(
-            "PEFT/transformers required for LoRA: pip install 'aire[peft]'",
+            "PEFT/transformers required for LoRA: pip install 'aire-ai[peft]'",
             code="training.peft_missing",
-            context={"extra": "aire[peft]", "packages": ["peft", "transformers"]},
+            context={"extra": "aire-ai[peft]", "packages": ["peft", "transformers"]},
         )
     import peft  # type: ignore[import-not-found]
     import transformers  # type: ignore[import-not-found]
@@ -255,7 +255,7 @@ class LoRATrainer:
             "kind": "lora_trainer",
             "model": self.model_name,
             "available": available,
-            "install": "pip install 'aire[peft]'",
+            "install": "pip install 'aire-ai[peft]'",
             "config": self.config.model_dump(),
             "prepared": self._peft_model is not None,
             "methods": ["prepare", "fit", "afit", "resume", "save", "describe"],

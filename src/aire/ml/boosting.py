@@ -15,7 +15,7 @@ from aire.ml.types import TaskType
 def _require(pkg: str, extra: str) -> Any:
     if importlib.util.find_spec(pkg) is None:
         raise ConfigurationError(
-            f"{pkg} is required: pip install 'aire[{extra}]'",
+            f"{pkg} is required: pip install 'aire-ai[{extra}]'",
             code=f"ml.{pkg}_missing",
             context={"backend": pkg},
         )

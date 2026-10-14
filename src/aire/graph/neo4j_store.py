@@ -1,4 +1,4 @@
-"""Lazy Neo4j GraphStore adapter (``aire[neo4j]``).
+"""Lazy Neo4j GraphStore adapter (``aire-ai[neo4j]``).
 
 Uses the official ``neo4j`` driver when installed; raises
 :class:`~aire.core.errors.ConfigurationError` with an install hint otherwise.
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 def _require_neo4j() -> Any:
     if importlib.util.find_spec("neo4j") is None:
         raise ConfigurationError(
-            "neo4j is required for Neo4jGraphStore: pip install 'aire[neo4j]'",
+            "neo4j is required for Neo4jGraphStore: pip install 'aire-ai[neo4j]'",
             code="graph.neo4j_missing",
-            context={"extra": "aire[neo4j]", "package": "neo4j"},
+            context={"extra": "aire-ai[neo4j]", "package": "neo4j"},
         )
     import neo4j  # type: ignore[import-not-found]
 
@@ -261,6 +261,6 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "neo4j_graph_store",
         "available": available,
-        "install": "pip install 'aire[neo4j]'",
+        "install": "pip install 'aire-ai[neo4j]'",
         "ref": "neo4j:<name>",
     }

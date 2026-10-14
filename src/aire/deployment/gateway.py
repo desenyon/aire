@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from fastapi import Depends, FastAPI, Request
     from fastapi.responses import JSONResponse, Response, StreamingResponse
 else:
-    try:  # optional dependency: aire[serve]
+    try:  # optional dependency: aire-ai[serve]
         from fastapi import Depends, FastAPI, Request
         from fastapi.responses import JSONResponse, Response, StreamingResponse
     except ImportError:  # pragma: no cover - exercised only without the extra
@@ -500,10 +500,10 @@ def create_gateway(
     semantic_cache_redis_url: str | None = None,
     guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
 ) -> Any:
-    """Build an OpenAI-compatible gateway app. Requires ``pip install aire[serve]``."""
+    """Build an OpenAI-compatible gateway app. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
         raise ConfigurationError(
-            "fastapi is required for the gateway: pip install 'aire[serve]'",
+            "fastapi is required for the gateway: pip install 'aire-ai[serve]'",
             code="deploy.fastapi_missing",
         )
     if runtime is None:

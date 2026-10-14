@@ -110,7 +110,7 @@ class ModelReranker:
 class HFCrossEncoderReranker:
     """Real HuggingFace CrossEncoder reranker via ``sentence-transformers``.
 
-    Requires ``pip install 'aire[eval]'``. Default model:
+    Requires ``pip install 'aire-ai[eval]'``. Default model:
     ``cross-encoder/ms-marco-MiniLM-L-6-v2``.
     """
 
@@ -133,7 +133,8 @@ class HFCrossEncoderReranker:
             from aire.core.errors import ConfigurationError
 
             raise ConfigurationError(
-                "HFCrossEncoderReranker requires sentence-transformers: pip install 'aire[eval]'",
+                "HFCrossEncoderReranker requires sentence-transformers: "
+                "pip install 'aire-ai[eval]'",
                 code="rag.cross_encoder_missing",
             ) from exc
         self._encoder = CrossEncoder(self.model_name)

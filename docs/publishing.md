@@ -64,7 +64,7 @@ publisher setup above.
 
 ```bash
 pip install aire-ai==0.3.5
-python -c "from aire import AI, __version__; print(__version__, AI.describe()['kind'])"
+python -c "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
 ```
 
 Project page (after first upload): https://pypi.org/project/aire-ai/

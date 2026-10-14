@@ -1,7 +1,7 @@
 """Keras 3 backend — full compile/fit/callback surface behind aire Estimator.
 
 ``keras:mlp`` or wrap any model via ``model_factory``. Works with any Keras 3
-backend (tensorflow / torch / jax). Requires ``pip install aire[keras]``.
+backend (tensorflow / torch / jax). Requires ``pip install aire-ai[keras]``.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from aire.ml.types import TaskType
 def _require_keras() -> Any:
     if importlib.util.find_spec("keras") is None:
         raise ConfigurationError(
-            "Keras is required for keras:* estimators: pip install 'aire[keras]'",
+            "Keras is required for keras:* estimators: pip install 'aire-ai[keras]'",
             code="ml.keras_missing",
             context={"backend": "keras"},
         )

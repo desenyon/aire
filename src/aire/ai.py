@@ -437,7 +437,7 @@ class _ObserveNamespace(_Namespace):
 
 class _DeployNamespace(_Namespace):
     def api(self, target: Any, **options: Any) -> Any:
-        """Wrap a target in a production FastAPI app (requires aire[serve])."""
+        """Wrap a target in a production FastAPI app (requires aire-ai[serve])."""
         from aire.deployment.fastapi_app import create_app
 
         return create_app(target, **options)
@@ -497,7 +497,7 @@ class _WorkflowNamespace(_Namespace):
 
 class _GatewayNamespace(_Namespace):
     def create(self, **options: Any) -> Any:
-        """Build an OpenAI-compatible gateway app (requires aire[serve]).
+        """Build an OpenAI-compatible gateway app (requires aire-ai[serve]).
 
         Unset options fall back to the ``gateway:`` section of aire.yaml.
         """
@@ -529,7 +529,7 @@ class _GatewayNamespace(_Namespace):
             from aire.core.errors import ConfigurationError
 
             raise ConfigurationError(
-                "uvicorn required: pip install 'aire[serve]'",
+                "uvicorn required: pip install 'aire-ai[serve]'",
                 code="deploy.uvicorn_missing",
                 cause=exc,
             ) from exc
@@ -1300,7 +1300,7 @@ class _WorkersNamespace(_Namespace):
             "kind": "workers",
             "backends": ["in_process", "file", "redis", "sqs"],
             "notes": [
-                "redis requires aire[redis]",
+                "redis requires aire-ai[redis]",
                 "sqs is not bundled (ConfigurationError with install hint)",
             ],
         }
@@ -1638,7 +1638,7 @@ class AI:
 
     @classmethod
     def ui(cls, **options: Any) -> Any:
-        """Minimal local FastAPI UI for traces/costs (requires aire[serve])."""
+        """Minimal local FastAPI UI for traces/costs (requires aire-ai[serve])."""
         from aire.ui import create_ui_app
 
         return create_ui_app(runtime=default_runtime(), **options)
