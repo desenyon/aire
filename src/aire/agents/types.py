@@ -17,6 +17,7 @@ class AgentStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     BUDGET_EXCEEDED = "budget_exceeded"
     MAX_STEPS = "max_steps"
     AWAITING_APPROVAL = "awaiting_approval"

@@ -93,6 +93,17 @@ class ExecutionContext:
 
     # -- control --------------------------------------------------------------------
 
+    def check_available(self) -> None:
+        """Check controls before starting another model/tool operation."""
+        self.check_cancelled()
+        self.budget.check(self.usage, self.steps, self.started)
+        for label, used, limit in (
+            ("token", self.usage.total_tokens, self.budget.max_tokens),
+            ("cost", self.usage.cost_usd, self.budget.max_cost_usd),
+        ):
+            if limit is not None and used >= limit:
+                raise BudgetExceededError(f"{label} budget exhausted ({used} >= {limit})")
+
     def record_usage(self, usage: Usage) -> None:
         self.usage = self.usage + usage
         self.budget.check(self.usage, self.steps, self.started)

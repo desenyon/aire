@@ -31,7 +31,7 @@ from aire.agents.types import (
 )
 from aire.core.content import Message
 from aire.core.context import Budget, ExecutionContext
-from aire.core.errors import BudgetExceededError
+from aire.core.errors import BudgetExceededError, TimeoutError
 from aire.core.types import Usage
 from aire.models.base import Model
 from aire.models.types import GenerationRequest, ToolCall
@@ -93,14 +93,7 @@ class AgentExecutor:
         state: AgentState | None = None,
     ) -> AgentResult:
         """Execute the state machine until a terminal state. Fully resumable via ``state``."""
-        ctx = context or ExecutionContext(
-            permissions=set(self.config.permissions),
-            budget=Budget(
-                max_tokens=self.config.token_budget,
-                max_cost_usd=self.config.cost_budget_usd,
-                max_steps=self.config.max_steps,
-            ),
-        )
+        ctx = self.execution_context(context)
         agent_state = state or AgentState(input=input)
         if not agent_state.messages:
             if self.config.system_prompt:
@@ -111,15 +104,7 @@ class AgentExecutor:
         agent_state.status = AgentStatus.RUNNING
 
         while agent_state.status == AgentStatus.RUNNING:
-            try:
-                ctx.tick()
-            except BudgetExceededError as exc:
-                agent_state.status = (
-                    AgentStatus.MAX_STEPS if "step" in exc.message else AgentStatus.BUDGET_EXCEEDED
-                )
-                agent_state.error = exc.message
-                break
-            await self._transition(agent_state, ctx)
+            await self.advance(agent_state, ctx)
 
         return AgentResult(
             output=agent_state.output or "",
@@ -129,6 +114,35 @@ class AgentExecutor:
             run_id=agent_state.id,
             error=agent_state.error,
         )
+
+    def execution_context(self, context: ExecutionContext | None = None) -> ExecutionContext:
+        return context or ExecutionContext(
+            permissions=set(self.config.permissions),
+            budget=Budget(
+                max_tokens=self.config.token_budget,
+                max_cost_usd=self.config.cost_budget_usd,
+                max_steps=self.config.max_steps,
+            ),
+        )
+
+    async def advance(self, state: AgentState, ctx: ExecutionContext) -> None:
+        """One controlled transition shared by normal and streamed runs."""
+        try:
+            ctx.check_available()
+            ctx.tick()
+            with ctx:
+                await self._transition(state, ctx)
+        except BudgetExceededError as exc:
+            state.status = (
+                AgentStatus.MAX_STEPS if "step" in exc.message else AgentStatus.BUDGET_EXCEEDED
+            )
+            state.error = exc.message
+        except TimeoutError as exc:
+            state.status = AgentStatus.CANCELLED if ctx.cancelled else AgentStatus.FAILED
+            state.error = exc.message
+        except Exception as exc:
+            state.status = AgentStatus.FAILED
+            state.error = f"{type(exc).__name__}: {exc}"
 
     # -- state machine ----------------------------------------------------------------
 
@@ -141,6 +155,7 @@ class AgentExecutor:
         )
         self._emit("agent.model_call", {"run_id": state.id, "messages": len(state.messages)})
         result = await self.model.generate(request)
+        ctx.check_cancelled()
         state.usage = state.usage + result.usage
         try:
             ctx.record_usage(result.usage)
@@ -201,6 +216,7 @@ class AgentExecutor:
         """Run independent tool bodies concurrently; append observations in call order."""
 
         async def _body(call: ToolCall) -> tuple[ToolCall, str, dict[str, Any]]:
+            ctx.check_available()
             detail: dict[str, Any] = {"tool": call.name}
             if not self.tools.has(call.name):
                 return (
@@ -235,6 +251,7 @@ class AgentExecutor:
                     )
             self._emit("agent.tool_call", {"run_id": state.id, "tool": call.name})
             try:
+                ctx.check_available()
                 outcome = await tool.execute(call.arguments, context=ctx)
             except Exception as exc:
                 return (
@@ -294,6 +311,7 @@ class AgentExecutor:
                 return
 
         self._emit("agent.tool_call", {"run_id": state.id, "tool": call.name})
+        ctx.check_available()
         outcome = await tool.execute(call.arguments, context=ctx)
         self._append_step(
             state,

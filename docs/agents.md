@@ -89,3 +89,20 @@ Pass `policy=` into `Agent` / builder. Default approval levels on the agent also
 ## Streaming
 
 `agent.run_stream(input)` / `AI.agents.run_stream(agent, input)` yield `AgentEvent`s. With tools present, some stream helpers may collapse to a one-shot run — see honesty notes.
+
+## Execution controls
+
+Normal runs and step-event streams share the same controlled transition. A zero
+or exhausted budget prevents the next provider/tool operation. A cancelled
+execution context returns `cancelled`; a provider exception returns `failed` with
+its error. Token streams check the same budget and cancellation controls and
+close their provider iterator when the caller closes the stream. Token-only
+streams report failures by raising, because they do not return an AgentResult.
+Provider token/cost usage is measured after a response or cumulative stream usage
+report; a positive budget is not a guarantee of a hard prebilling spending cap.
+
+Synchronous tool bodies run in a worker thread. A timeout stops waiting and is
+not retried, but Python cannot forcibly stop that thread: an already-started
+side effect may still finish. Use an isolated process/service for hard termination,
+and make effectful operations idempotent. Async tool bodies support cooperative
+cancellation. Tool timeouts are not evidence that a side effect did not happen.

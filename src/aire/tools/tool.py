@@ -173,7 +173,9 @@ class Tool:
         )
 
     async def _invoke(self, kwargs: dict[str, Any]) -> Any:
-        result = self.fn(**kwargs)
+        if inspect.iscoroutinefunction(self.fn):
+            return await self.fn(**kwargs)
+        result = await asyncio.to_thread(self.fn, **kwargs)
         if inspect.isawaitable(result):
             return await result
         return result
