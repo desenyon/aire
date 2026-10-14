@@ -6,6 +6,14 @@ All notable changes to aire are documented here. The format follows
 
 ## Unreleased
 
+### Packaging and audit
+
+- Correct generated deployment and scale-pack requirements, optional-extra errors,
+  examples and installation guidance to use the `aire-ai` distribution.
+- Correct the publishing verification command to use the public facade manifest.
+- Add generated-requirement regression tests and an evidence-based capability
+  completion audit/master plan; replace stale all-complete backlog claims.
+
 ### Reliability and recovery
 
 - Preserve normalized assistant tool declarations in messages, agent history,

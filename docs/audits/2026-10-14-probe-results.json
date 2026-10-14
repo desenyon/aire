@@ -1,0 +1,44 @@
+{
+  "audit_date": "2026-10-14",
+  "baseline_sha": "70b4633e94183961347b7acef5be06b938bb22dc",
+  "note": "Probe after package-name repair; remaining runtime behavior is unchanged from baseline.",
+  "observed": {
+    "deployment_requirements": "aire-ai[serve]>=0.1.0",
+    "sync_tool_timeout": {
+      "ok": true,
+      "elapsed_ms": 41
+    },
+    "cancelled_agent": "completed",
+    "agent_zero_budget": "budget_exceeded",
+    "stream_zero_budget": "hello",
+    "stream_cache_mutation": 999999,
+    "semantic_role_collision_hits": 1,
+    "qdrant_upsert": {
+      "points": [
+        {
+          "id": 7160855669653487451,
+          "vector": [
+            1.0
+          ],
+          "payload": {
+            "aire_id": "stable",
+            "text": "old",
+            "metadata": {}
+          }
+        }
+      ]
+    },
+    "qdrant_delete_500_return": 1,
+    "qdrant_delete_request": {
+      "points": [
+        "stable"
+      ]
+    },
+    "qdrant_document_roundtrip": "",
+    "gateway_output_guard": {
+      "normal_status": 400,
+      "stream_status": 200,
+      "stream_leaks_blocked_text": true
+    }
+  }
+}
