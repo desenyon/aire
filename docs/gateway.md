@@ -37,3 +37,17 @@ AI.gateway.serve(models=["mock:echo"], port=4000)
 AI.gateway.endpoints()   # known local + hosted OpenAI-compat endpoints
 AI.gateway.describe()
 ```
+
+### Output checks while streaming
+
+When guardrails are enabled, the gateway buffers a completion and checks the
+entire output before emitting text. This prevents a restricted value split across
+provider chunks from escaping. Both OpenAI and Anthropic SSE routes use this rule;
+a blocked output or interrupted provider stream emits an error without partial
+text. Buffering increases time to first text. `guardrails=False` enables native
+incremental streaming when the application explicitly chooses that behavior.
+
+Semantic caching compares only eligible text requests within the same exact
+conversation history, system instructions, generation parameters and request
+metadata. Requests containing tools or media bypass semantic caching. Put caller
+or tenant identifiers in request metadata when using caches across identities.

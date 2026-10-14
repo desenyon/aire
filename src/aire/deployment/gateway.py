@@ -25,7 +25,7 @@ import json
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from aire._version import __version__
@@ -369,7 +369,7 @@ class Gateway:
 
     async def stream(
         self, public: str, request: GenerationRequest
-    ) -> AsyncIterator[tuple[str, GenerationChunk]]:
+    ) -> AsyncGenerator[tuple[str, GenerationChunk], None]:
         """Stream chunks; semantic-cache hits replay as a single chunk stream."""
         cached = await self._semantic_lookup(public, request)
         if cached is not None:
@@ -625,7 +625,7 @@ def _register_chat_route(
         request = await _guard_generation_request(_build_generation_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
-                _sse_stream(gateway, public, request, metrics),
+                _sse_stream(gateway, public, request, metrics, safety_chain),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -656,7 +656,7 @@ def _register_anthropic_route(
         request = await _guard_generation_request(_build_anthropic_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
-                _anthropic_sse_stream(gateway, public, request, metrics),
+                _anthropic_sse_stream(gateway, public, request, metrics, safety_chain),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -969,8 +969,55 @@ def _sse(payload: dict[str, Any] | str) -> str:
     return f"data: {data}\n\n"
 
 
+async def _checked_stream(
+    gateway: Gateway, public: str, request: GenerationRequest, safety_chain: Any | None
+) -> AsyncIterator[tuple[str, GenerationChunk]]:
+    """Buffer guarded output until the full text passes the output policy.
+
+    Chunk-local validation cannot detect secrets spanning chunk boundaries.
+    Closing/cancelling the consumer closes the upstream stream as well.
+    """
+    from aire.core.types import Usage
+
+    stream = gateway.stream(public, request)
+    async with contextlib.aclosing(stream):
+        if safety_chain is None:
+            async for item in stream:
+                yield item
+            return
+        text: list[str] = []
+        calls = []
+        usage = Usage()
+        finish = "stop"
+        resolved = public
+        async for resolved_ref, chunk in stream:
+            resolved = resolved_ref
+            text.append(chunk.text)
+            calls.extend(chunk.tool_calls)
+            if chunk.usage is not None:
+                usage = chunk.usage
+            finish = chunk.finish_reason or finish
+        result = GenerationResult.text_result(
+            "".join(text), model=resolved, usage=usage, tool_calls=calls
+        ).model_copy(update={"finish_reason": finish})
+        result = await _guard_generation_result(result, safety_chain)
+        yield (
+            resolved,
+            GenerationChunk(
+                text=result.text,
+                tool_calls=result.tool_calls,
+                usage=result.usage,
+                finish_reason=result.finish_reason,
+            ),
+        )
+
+
 async def _sse_stream(
-    gateway: Gateway, public: str, request: GenerationRequest, metrics: Metrics | None
+    gateway: Gateway,
+    public: str,
+    request: GenerationRequest,
+    metrics: Metrics | None,
+    safety_chain: Any | None = None,
 ) -> AsyncIterator[str]:
     stream_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
@@ -989,7 +1036,8 @@ async def _sse_stream(
     emitted_role = False
     tool_index = 0
     try:
-        async for _resolved, chunk in gateway.stream(public, request):
+        async for _resolved, chunk in _checked_stream(gateway, public, request, safety_chain):
+            resolved = _resolved
             if not emitted_role:
                 yield _sse(_chunk({"role": "assistant"}))
                 yield _sse({"aire": {"resolved_model": resolved}})
@@ -1294,7 +1342,11 @@ def _anthropic_content_blocks(content: Any) -> list[Any]:  # noqa: C901
 
 
 async def _anthropic_sse_stream(
-    gateway: Gateway, public: str, request: GenerationRequest, metrics: Metrics | None
+    gateway: Gateway,
+    public: str,
+    request: GenerationRequest,
+    metrics: Metrics | None,
+    safety_chain: Any | None = None,
 ) -> AsyncIterator[str]:
     """Anthropic-compatible SSE stream for ``/v1/messages?stream``."""
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
@@ -1323,7 +1375,7 @@ async def _anthropic_sse_stream(
                 "content_block": {"type": "text", "text": ""},
             }
         )
-        async for resolved_ref, chunk in gateway.stream(public, request):
+        async for resolved_ref, chunk in _checked_stream(gateway, public, request, safety_chain):
             resolved = resolved_ref
             if chunk.usage is not None:
                 output_tokens = max(output_tokens, chunk.usage.output_tokens)

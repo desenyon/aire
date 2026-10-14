@@ -7,6 +7,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from aire.core.content import TextContent
 from aire.core.types import HealthStatus
 from aire.models.base import EmbeddingModel, Model
 from aire.models.types import (
@@ -20,7 +21,7 @@ from aire.rag.store import cosine_similarity
 
 
 def _request_key(request: GenerationRequest, model_ref: str) -> str:
-    payload = request.model_dump_json(exclude={"metadata"})
+    payload = request.model_dump_json()
     return hashlib.sha256(f"{model_ref}|{payload}".encode()).hexdigest()
 
 
@@ -74,7 +75,7 @@ class CachedModel(Model):
                 self.hits += 1
                 yield GenerationChunk(
                     text=result.text,
-                    tool_calls=result.tool_calls,
+                    tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
                     usage=result.usage,
                 )
@@ -119,14 +120,31 @@ class CachedModel(Model):
 
 
 def _has_tool_context(request: GenerationRequest) -> bool:
-    return bool(request.tools) or any(m.tool_calls or m.role == "tool" for m in request.messages)
+    return (
+        bool(request.tools)
+        or not request.messages
+        or request.messages[-1].role != "user"
+        or any(
+            m.tool_calls
+            or m.role == "tool"
+            or any(not isinstance(c, TextContent) for c in m.content)
+            for m in request.messages
+        )
+    )
 
 
 def _params_signature(request: GenerationRequest) -> str:
     """Exact signature of generation-affecting parameters (everything but the
     messages/metadata). Semantic hits require this to match — a structured
     output request must never be served a plain-text cache entry."""
-    payload = request.model_dump_json(exclude={"messages", "metadata"}, exclude_none=True)
+    # Only the final user text is eligible for semantic comparison. Preserve
+    # all preceding instructions/history and caller namespaces exactly.
+    payload_data = request.model_dump(mode="json", exclude_none=True)
+    if payload_data.get("messages"):
+        payload_data["messages"][-1]["content"] = []
+    import json
+
+    payload = json.dumps(payload_data, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -195,7 +213,7 @@ class SemanticCachedModel(Model):
                 self.hits += 1
                 yield GenerationChunk(
                     text=result.text,
-                    tool_calls=result.tool_calls,
+                    tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
                     usage=result.usage,
                 )
