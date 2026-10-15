@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -51,6 +52,10 @@ class GateReport(BaseModel):
 
 
 def _metric_map(report: Any) -> dict[str, float]:
+    from aire.evaluation.types import EvalReport
+
+    if isinstance(report, EvalReport):
+        return _metric_map(report.summary())
     if isinstance(report, dict):
         metrics = report.get("metrics") or report
         if isinstance(metrics, dict):
@@ -93,8 +98,8 @@ def check_gates(report: Any, gates: list[EvalGate] | list[dict[str, Any]]) -> Ga
             )
             continue
         value = metrics[gate.metric]
-        ok = True
-        reasons: list[str] = []
+        ok = math.isfinite(value)
+        reasons: list[str] = [] if ok else ["nonfinite metric"]
         if gate.min is not None and value < gate.min:
             ok = False
             reasons.append(f"{value} < min {gate.min}")

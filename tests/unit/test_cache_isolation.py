@@ -104,3 +104,44 @@ def test_gateway_semantic_cache_keeps_context_boundaries(change):
             assert gateway.semantic_hits == 0
 
     run_sync(check())
+
+
+def test_stream_miss_mutation_does_not_poison_capture():
+    async def check():
+        model = EchoModel()
+        model.scripted_tool_calls = [ToolCall(id="one", name="read", arguments={"x": 1})]
+        cache = CachedModel(model)
+        request = GenerationRequest.of("hello")
+        async for chunk in cache.stream(request):
+            for call in chunk.tool_calls:
+                call.arguments["x"] = 2
+        assert (await cache.generate(request)).tool_calls[0].arguments["x"] == 1
+
+    run_sync(check())
+
+
+@pytest.mark.parametrize("semantic", [False, True])
+def test_cache_replay_does_not_bill_original_generation_again(semantic):
+    from aire.core.types import Usage
+    from aire.models.types import GenerationResult
+
+    class Billed(EchoModel):
+        async def generate(self, request):
+            return GenerationResult.text_result(
+                "answer",
+                model="test:billed",
+                usage=Usage(input_tokens=3, output_tokens=2, cost_usd=0.1),
+            )
+
+    async def check():
+        model = Billed()
+        cached = SemanticCachedModel(model, HashingEmbedder()) if semantic else CachedModel(model)
+        request = GenerationRequest.of("same")
+        assert (await cached.generate(request)).usage.cost_usd == 0.1
+        replay = await cached.generate(request)
+        assert replay.usage.cost_usd == 0
+        assert replay.usage.total_tokens == 0
+        chunks = [c async for c in cached.stream(request)]
+        assert chunks[0].usage.cost_usd == 0
+
+    run_sync(check())

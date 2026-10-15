@@ -25,7 +25,7 @@ import json
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from aire._version import __version__
@@ -289,7 +289,7 @@ class Gateway:
     async def _semantic_lookup(
         self, public: str, request: GenerationRequest
     ) -> tuple[str, GenerationResult] | None:
-        from aire.optimization.cache import _has_tool_context
+        from aire.optimization.cache import _has_tool_context, replay_result
 
         embedder = None if _has_tool_context(request) else await self._ensure_semantic_embedder()
         if embedder is None:
@@ -312,7 +312,9 @@ class Gateway:
                     for item in payload:
                         if cosine_similarity(vector, item["vector"]) >= self.semantic_threshold:
                             self.semantic_hits += 1
-                            return item["ref"], GenerationResult.model_validate(item["result"])
+                            return item["ref"], replay_result(
+                                GenerationResult.model_validate(item["result"])
+                            )
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     pass
             self.semantic_misses += 1
@@ -323,7 +325,7 @@ class Gateway:
                 continue
             if cosine_similarity(vector, cached_vec) >= self.semantic_threshold:
                 self.semantic_hits += 1
-                return cached_ref, result.model_copy(deep=True)
+                return cached_ref, replay_result(result)
         self.semantic_misses += 1
         return None
 
@@ -499,6 +501,7 @@ def create_gateway(
     semantic_embedder: str | EmbeddingModel | None = None,
     semantic_cache_redis_url: str | None = None,
     guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
+    close_runtime: bool = False,
 ) -> Any:
     """Build an OpenAI-compatible gateway app. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
@@ -537,7 +540,18 @@ def create_gateway(
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
     log = _make_request_logger(request_log)
-    app = FastAPI(title=title, version=__version__)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Any) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if gateway._semantic_redis_backend is not None:
+                await gateway._semantic_redis_backend.aclose()
+            if close_runtime:
+                await runtime.aclose()
+
+    app = FastAPI(title=title, version=__version__, lifespan=lifespan)
 
     @app.exception_handler(AireError)
     async def _aire_error_handler(request: Request, exc: AireError) -> Any:
@@ -555,6 +569,22 @@ def create_gateway(
 
 
 def _register_meta_routes(app: Any, gateway: Gateway, guard: Any) -> None:
+    @app.get("/ready")
+    async def ready() -> Any:
+        import asyncio
+
+        available = not gateway._runtime._closed
+        for public in gateway.chat_routes:
+            try:
+                chain = await asyncio.wait_for(gateway._chat_chain(public), timeout=5)
+                statuses = await asyncio.wait_for(
+                    asyncio.gather(*(model.health() for _, model in chain)), timeout=5
+                )
+                available = available and any(status.ok for status in statuses)
+            except Exception:
+                available = False
+        return JSONResponse(status_code=200 if available else 503, content={"ready": available})
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return _health_payload(gateway)
@@ -859,8 +889,65 @@ def _content_text(content: Any) -> str:
     return ""
 
 
+def _validated_request(
+    body: dict[str, Any], parser: Callable[[dict[str, Any]], GenerationRequest]
+) -> GenerationRequest:
+    try:
+        messages = body.get("messages")
+        if (
+            not isinstance(messages, list)
+            or not messages
+            or any(not isinstance(m, dict) for m in messages)
+        ):
+            raise ValueError("messages must be a nonempty array of objects")
+        for key in ("max_tokens", "max_completion_tokens"):
+            value = body.get(key)
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ValueError(f"{key} must be a positive integer")
+        if "stream" in body and type(body["stream"]) is not bool:
+            raise ValueError("stream must be a boolean")
+        return parser(body)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ConfigurationError("invalid generation request", code="gateway.bad_request") from exc
+
+
+def _openai_content(raw: Any) -> list[Any]:
+    import base64
+
+    from aire.core.content import AudioContent, ImageContent, TextContent
+
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [TextContent(text=raw)]
+    if not isinstance(raw, list):
+        raise ValueError("content must be text or an array")
+    blocks: list[Any] = []
+    for part in raw:
+        kind = part["type"]
+        if kind == "text":
+            blocks.append(TextContent(text=part["text"]))
+        elif kind == "image_url":
+            blocks.append(ImageContent(uri=part["image_url"]["url"]))
+        elif kind == "input_audio":
+            audio = part["input_audio"]
+            blocks.append(
+                AudioContent(
+                    data=base64.b64decode(audio["data"], validate=True),
+                    media_type="audio/" + audio["format"],
+                )
+            )
+        else:
+            raise ValueError("unsupported content block")
+    return blocks
+
+
 def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
-    from aire.core.content import Message, TextContent
+    return _validated_request(body, _parse_generation_request)
+
+
+def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
+    from aire.core.content import Message
     from aire.models.types import ToolCall
 
     messages = []
@@ -870,7 +957,7 @@ def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
         messages.append(
             Message(
                 role=raw.get("role", "user"),
-                content=[TextContent(text=_content_text(raw.get("content")))],
+                content=_openai_content(raw.get("content")),
                 name=raw.get("name"),
                 tool_call_id=raw.get("tool_call_id"),
                 tool_calls=[
@@ -896,12 +983,13 @@ def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
     return GenerationRequest(
         messages=messages,
         temperature=body.get("temperature"),
-        max_tokens=body.get("max_tokens"),
+        max_tokens=body.get("max_completion_tokens", body.get("max_tokens")),
         stop=stop,
         tools=tools or None,
         tool_choice=body.get("tool_choice") if isinstance(body.get("tool_choice"), str) else None,
         response_format=_response_format(body.get("response_format")),
         seed=body.get("seed"),
+        metadata=body.get("metadata") or {},
     )
 
 
@@ -1103,11 +1191,13 @@ async def _guard_generation_request(
             messages.append(message)
             continue
         messages.append(
-            Message(
-                role=message.role,
-                content=[TextContent(text=scrubbed)],
-                name=message.name,
-                tool_call_id=message.tool_call_id,
+            message.model_copy(
+                update={
+                    "content": [
+                        TextContent(text=scrubbed),
+                        *(block for block in message.content if not isinstance(block, TextContent)),
+                    ]
+                }
             )
         )
     return request.with_messages(messages)
@@ -1182,7 +1272,11 @@ def _maybe_span(runtime: Runtime, name: str, attributes: dict[str, Any]) -> Any:
 # -- anthropic-compatible endpoint --------------------------------------------------------
 
 
-def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa: C901
+def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:
+    return _validated_request(body, _parse_anthropic_request)
+
+
+def _parse_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa: C901
     """Translate an Anthropic /v1/messages body into a GenerationRequest.
 
     Supports text and image content blocks (base64 / url), tools, tool_choice,
@@ -1216,7 +1310,7 @@ def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa
                 )
             continue
         if role not in ("user", "assistant"):
-            role = "user"
+            raise ValueError("invalid Anthropic message role")
         blocks = _anthropic_content_blocks(content)
         if not blocks:
             blocks = [TextContent(text=_content_text(content))]

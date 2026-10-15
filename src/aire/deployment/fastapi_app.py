@@ -55,6 +55,7 @@ def create_app(
     rate_limit_per_minute: int | None = None,
     metrics: Metrics | None = None,
     close_target: bool = False,
+    shared_agent_session: bool = False,
 ) -> Any:
     """Build a FastAPI app serving ``target``. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
@@ -86,13 +87,13 @@ def create_app(
 
     _register_meta_routes(app, target, metrics, guard)
     if _is_team(target):
-        _register_team_routes(app, target, guard, metrics)
+        _register_team_routes(app, target, guard, metrics, shared_agent_session)
     elif isinstance(target, Model):
         _register_model_routes(app, target, guard, metrics)
     elif _is_knowledge(target):
         _register_knowledge_routes(app, target, guard, metrics)
     else:  # Agent
-        _register_agent_routes(app, target, guard, metrics)
+        _register_agent_routes(app, target, guard, metrics, shared_agent_session)
     return app
 
 
@@ -202,14 +203,36 @@ def _register_knowledge_routes(app: Any, target: Any, guard: Any, metrics: Metri
         }
 
 
-def _register_agent_routes(app: Any, target: Any, guard: Any, metrics: Metrics | None) -> None:
+def _isolated_agent(target: Any) -> Any:
+    from aire.agents.agent import Agent
+
+    return Agent(
+        target.model,
+        tools=target.registry,
+        config=target.config.model_copy(deep=True),
+        runtime=target.runtime,
+        approver=target.approver,
+        policy=target.policy,
+        name=target.name,
+    )
+
+
+def _register_agent_routes(
+    app: Any, target: Any, guard: Any, metrics: Metrics | None, shared: bool
+) -> None:
+    lock = asyncio.Lock()
+
     @app.post("/v1/run", dependencies=[Depends(guard)])
     async def run(body: dict[str, Any]) -> dict[str, Any]:
         input_text = body.get("input")
         if not isinstance(input_text, str) or not input_text:
             raise HTTPException(status_code=400, detail="'input' (string) is required")
         started = time.perf_counter()
-        result = await target.run(input_text)
+        if shared:
+            async with lock:
+                result = await target.run(input_text)
+        else:
+            result = await _isolated_agent(target).run(input_text)
         if metrics is not None:
             metrics.observe_latency("run", (time.perf_counter() - started) * 1000.0)
             metrics.record_cost(result.usage.cost_usd, model=_target_name(target))
@@ -222,14 +245,30 @@ def _register_agent_routes(app: Any, target: Any, guard: Any, metrics: Metrics |
         }
 
 
-def _register_team_routes(app: Any, target: Any, guard: Any, metrics: Metrics | None) -> None:
+def _register_team_routes(
+    app: Any, target: Any, guard: Any, metrics: Metrics | None, shared: bool
+) -> None:
+    from aire.agents.team import Team
+
+    lock = asyncio.Lock()
+
     @app.post("/v1/team/run", dependencies=[Depends(guard)])
     async def team_run(body: dict[str, Any]) -> dict[str, Any]:
         task = body.get("task") or body.get("input")
         if not isinstance(task, str) or not task:
             raise HTTPException(status_code=400, detail="'task' (string) is required")
         started = time.perf_counter()
-        result = await target.run(task)
+        if shared:
+            async with lock:
+                result = await target.run(task)
+        else:
+            isolated = Team(
+                {name: _isolated_agent(agent) for name, agent in target.members.items()},
+                target.supervisor,
+                max_rounds=target.max_rounds,
+                prompt_template=target.prompt_template,
+            )
+            result = await isolated.run(task)
         if metrics is not None:
             metrics.observe_latency("team.run", (time.perf_counter() - started) * 1000.0)
             metrics.record_cost(result.usage.cost_usd, model=_target_name(target))

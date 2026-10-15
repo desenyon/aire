@@ -24,8 +24,8 @@ def _to_otlp_span(record: SpanRecord) -> dict[str, Any]:
         "spanId": record.span_id,
         "name": record.name,
         "kind": 1,  # SPAN_KIND_INTERNAL
-        "startTimeUnixNano": int(record.start_time * _NANOS),
-        "endTimeUnixNano": int(record.end_time * _NANOS),
+        "startTimeUnixNano": str(int(record.start_time * _NANOS)),
+        "endTimeUnixNano": str(int(record.end_time * _NANOS)),
         "attributes": [
             {"key": key, "value": _otlp_value(value)} for key, value in record.attributes.items()
         ],
@@ -36,7 +36,7 @@ def _to_otlp_span(record: SpanRecord) -> dict[str, Any]:
     if record.error:
         span["events"] = [
             {
-                "timeUnixNano": int(record.end_time * _NANOS),
+                "timeUnixNano": str(int(record.end_time * _NANOS)),
                 "name": "exception",
                 "attributes": [
                     {"key": "exception.message", "value": {"stringValue": record.error}}

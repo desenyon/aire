@@ -11,8 +11,14 @@ from typing import Any
 from aire.core.errors import ConfigurationError
 from aire.core.types import HealthStatus
 from aire.models.base import Model
-from aire.models.types import GenerationChunk, GenerationRequest, GenerationResult, ModelInfo
-from aire.optimization.cache import cache_key
+from aire.models.types import (
+    GenerationChunk,
+    GenerationRequest,
+    GenerationResult,
+    ModelInfo,
+    ToolCall,
+)
+from aire.optimization.cache import cache_key, replay_result
 
 
 def _require_redis() -> Any:
@@ -22,7 +28,7 @@ def _require_redis() -> Any:
             code="optimization.redis_missing",
             context={"extra": "aire-ai[redis]", "package": "redis"},
         )
-    import redis  # type: ignore[import-not-found]
+    import redis
 
     return redis
 
@@ -44,6 +50,7 @@ class RedisCacheBackend:
         redis = _require_redis()
         self.prefix = prefix
         self.url = url
+        self._owns_client = client is None
         self._async = False
         if client is not None:
             self._client = client
@@ -57,6 +64,15 @@ class RedisCacheBackend:
                 self._async = True
             else:
                 self._client = redis.Redis.from_url(url, decode_responses=True)
+
+    async def aclose(self) -> None:
+        if not self._owns_client:
+            return
+        close = getattr(self._client, "aclose", None) or self._client.close
+        if self._async:
+            await close()
+        else:
+            await asyncio.to_thread(close)
 
     async def aget(self, key: str) -> str | None:
         full = self.prefix + key
@@ -157,7 +173,7 @@ class RedisCachedModel(Model):
         raw = await self.backend.aget(key)
         if raw is not None:
             self.hits += 1
-            return GenerationResult.model_validate_json(raw)
+            return replay_result(GenerationResult.model_validate_json(raw))
         self.misses += 1
         result = await self.inner.generate(request)
         await self.backend.aset(
@@ -173,16 +189,21 @@ class RedisCachedModel(Model):
         raw = await self.backend.aget(key)
         if raw is not None:
             self.hits += 1
-            result = GenerationResult.model_validate_json(raw)
+            result = replay_result(GenerationResult.model_validate_json(raw))
             yield GenerationChunk(
-                text=result.text, finish_reason=result.finish_reason, usage=result.usage
+                text=result.text,
+                tool_calls=result.tool_calls,
+                finish_reason=result.finish_reason,
+                usage=result.usage,
             )
             return
         self.misses += 1
         pieces: list[str] = []
+        calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
         async for chunk in self.inner.stream(request):
+            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
             if chunk.text:
                 pieces.append(chunk.text)
             if chunk.finish_reason:
@@ -191,7 +212,9 @@ class RedisCachedModel(Model):
                 last_usage = chunk.usage
             yield chunk
         text = "".join(pieces)
-        result = GenerationResult.text_result(text, model=self.inner.info.ref, usage=last_usage)
+        result = GenerationResult.text_result(
+            text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
+        )
         if finish:
             result = result.model_copy(update={"finish_reason": finish})
         await self.backend.aset(key, result.model_dump_json(), ttl_seconds=self.ttl_seconds)

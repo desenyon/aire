@@ -84,3 +84,27 @@ def test_stream_redacts_email_spanning_chunks(path):
         assert "person@" not in response.text
         assert "[PII]" in response.text
     run_sync(runtime.aclose())
+
+
+def test_input_redaction_preserves_tool_declarations_and_media():
+    from aire.core.content import ImageContent, Message, TextContent
+    from aire.deployment.gateway import _guard_generation_request
+    from aire.models.types import ToolCall
+    from aire.safety.guardrails import GuardrailChain, PIIGuardrail
+
+    async def check():
+        call = ToolCall(id="call", name="lookup", arguments={"q": "x"})
+        image = ImageContent(uri="https://example.com/a.png")
+        message = Message(
+            role="assistant",
+            content=[TextContent(text="person@example.com"), image],
+            tool_calls=[call],
+        )
+        guarded = await _guard_generation_request(
+            GenerationRequest(messages=[message]), GuardrailChain([PIIGuardrail(action="redact")])
+        )
+        assert guarded.messages[0].tool_calls == [call]
+        assert image in guarded.messages[0].content
+        assert "person@example.com" not in guarded.messages[0].text_content
+
+    run_sync(check())

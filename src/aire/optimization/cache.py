@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from aire.core.content import TextContent
-from aire.core.types import HealthStatus
+from aire.core.types import HealthStatus, Usage
 from aire.models.base import EmbeddingModel, Model
 from aire.models.types import (
     GenerationChunk,
@@ -50,7 +50,7 @@ class CachedModel(Model):
             if self.ttl_seconds is None or now - created < self.ttl_seconds:
                 self.hits += 1
                 # Deep copy: callers must never mutate another caller's result.
-                return result.model_copy(deep=True)
+                return replay_result(result)
             del self._cache[key]
         self.misses += 1
         result = await self.inner.generate(request)
@@ -77,7 +77,7 @@ class CachedModel(Model):
                     text=result.text,
                     tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
-                    usage=result.usage,
+                    usage=Usage(),
                 )
                 return
             del self._cache[key]
@@ -87,7 +87,7 @@ class CachedModel(Model):
         finish: str | None = None
         last_usage = None
         async for chunk in self.inner.stream(request):
-            calls.extend(chunk.tool_calls)
+            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
             pieces.append(chunk.text)
             finish = chunk.finish_reason or finish
             last_usage = chunk.usage if chunk.usage is not None else last_usage
@@ -185,7 +185,7 @@ class SemanticCachedModel(Model):
                 continue
             if cosine_similarity(vector, cached_vector) >= self.threshold:
                 self.hits += 1
-                return result.model_copy(deep=True)
+                return replay_result(result)
         self.misses += 1
         result = await self.inner.generate(request)
         if len(self._entries) >= self.max_entries:
@@ -215,7 +215,7 @@ class SemanticCachedModel(Model):
                     text=result.text,
                     tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
-                    usage=result.usage,
+                    usage=Usage(),
                 )
                 return
         self.misses += 1
@@ -224,7 +224,7 @@ class SemanticCachedModel(Model):
         finish: str | None = None
         last_usage = None
         async for chunk in self.inner.stream(request):
-            calls.extend(chunk.tool_calls)
+            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
             pieces.append(chunk.text)
             finish = chunk.finish_reason or finish
             last_usage = chunk.usage if chunk.usage is not None else last_usage
@@ -259,3 +259,18 @@ class SemanticCachedModel(Model):
 def cache_key(request: GenerationRequest, model_ref: str) -> str:
     """Public helper: the exact cache key for a request."""
     return _request_key(request, model_ref)
+
+
+def replay_result(result: GenerationResult) -> GenerationResult:
+    """Replay content without charging an already completed generation again."""
+    replay = result.model_copy(deep=True)
+    return replay.model_copy(
+        update={
+            "usage": Usage(),
+            "raw": {
+                **(replay.raw or {}),
+                "cache_hit": True,
+                "source_usage": result.usage.model_dump(),
+            },
+        }
+    )

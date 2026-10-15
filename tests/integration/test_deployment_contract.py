@@ -65,3 +65,33 @@ def test_app_closes_only_explicitly_owned_runtime():
         pass
     assert runtime._closed
     run_sync(runtime.aclose())
+
+
+def test_gateway_owns_runtime_only_when_requested():
+    from aire.core.config import Settings
+    from aire.core.runtime import Runtime
+    from aire.deployment.gateway import create_gateway
+
+    runtime = Runtime(Settings())
+    with TestClient(create_gateway(runtime, models=["mock:echo"])) as client:
+        assert client.get("/ready").status_code == 200
+    assert not runtime._closed
+    with TestClient(create_gateway(runtime, models=["mock:echo"], close_runtime=True)):
+        pass
+    assert runtime._closed
+
+
+def test_service_agent_requests_do_not_share_conversation():
+    from aire.agents.agent import Agent
+    from aire.models.types import GenerationResult
+
+    class Recorder(EchoModel):
+        async def generate(self, request):
+            users = [m.text_content for m in request.messages if m.role == "user"]
+            return GenerationResult.text_result("|".join(users), model="test:recorder")
+
+    agent = Agent(Recorder())
+    with TestClient(create_app(agent)) as client:
+        assert client.post("/v1/run", json={"input": "alice"}).json()["output"] == "alice"
+        assert client.post("/v1/run", json={"input": "bob"}).json()["output"] == "bob"
+    assert not agent.state.messages
