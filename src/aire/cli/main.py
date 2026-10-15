@@ -420,6 +420,9 @@ def scaffold(
 ) -> None:
     """Scaffold a recipe-based project snippet into a directory."""
     root = directory / name
+    if root.exists() and any(root.iterdir()):
+        typer.secho(f"directory {root} is not empty", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     root.mkdir(parents=True, exist_ok=True)
     kind_key = kind.strip().lower()
     templates: dict[str, str] = {
@@ -427,8 +430,12 @@ def scaffold(
             "from aire import AI\n\n"
             "stack = AI.recipe('rag')\n"
             "knowledge = stack['knowledge']\n"
-            "# knowledge.index('./docs')\n"
-            "# print(knowledge.ask('What is this?').text)\n"
+            "from aire.models.base import run_sync\n"
+            "from aire.rag.types import Document\n"
+            "run_sync(knowledge.ingest([Document(text='Aire uses short lived tokens.')]))\n"
+            "answer = run_sync(knowledge.ask('What does Aire use?'))\n"
+            "assert answer.citations\n"
+            "print(answer.text)\n"
         ),
         "agent": (
             "from aire import AI\n\n"
@@ -439,7 +446,11 @@ def scaffold(
         "finetune": (
             "from aire import AI\n\n"
             "stack = AI.recipe('finetune', backend='lm')\n"
-            "print(stack['trainer'].describe())\n"
+            "from aire.models.base import run_sync\n"
+            "from aire.data.dataset import Dataset\n"
+            "result = run_sync(stack['trainer'].fit(Dataset.from_texts(['small local example'])))\n"
+            "assert result.epochs_completed > 0\n"
+            "print('offline toy LM result:', result.model_dump())\n"
         ),
         "gateway": (
             "from aire import AI\n\n"
@@ -451,7 +462,10 @@ def scaffold(
             "wf = AI.workflow('demo')\n"
             "AI.workflows.hitl_node(wf, 'approve', lambda x, ctx: x)\n"
             "wf.approver = AI.workflows.interactive_approver(auto={'approve': True})\n"
-            "print(wf)\n"
+            "from aire.models.base import run_sync\n"
+            "result = run_sync(wf.run('approved'))\n"
+            "assert result.ok\n"
+            "print(result.output)\n"
         ),
     }
     if kind_key not in templates:

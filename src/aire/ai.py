@@ -348,10 +348,6 @@ class _AgentsNamespace(_Namespace):
 
 
 class _ObserveNamespace(_Namespace):
-    def __init__(self, runtime: Runtime | None = None) -> None:
-        super().__init__(runtime)
-        self._metrics: Metrics | None = None
-
     def tracer(self) -> Tracer:
         """The runtime tracer (created and attached on first access)."""
         runtime = self._rt()
@@ -371,11 +367,12 @@ class _ObserveNamespace(_Namespace):
 
     @property
     def metrics(self) -> Metrics:
-        if self._metrics is None:
+        runtime = self._rt()
+        if runtime._observability_metrics is None:
             from aire.observability.metrics import Metrics
 
-            self._metrics = Metrics()
-        return self._metrics
+            runtime._observability_metrics = Metrics()
+        return runtime._observability_metrics
 
     def traces(
         self,
@@ -1648,35 +1645,39 @@ class AI:
     @classmethod
     def describe(cls) -> dict[str, Any]:
         """Machine-readable description of the whole library surface — for agents."""
-        from aire._version import __version__
+        return _library_manifest(default_runtime())
 
-        return {
-            "library": "aire",
-            "version": __version__,
-            "runtime": default_runtime().describe(),
-            "namespaces": [
-                "models",
-                "data",
-                "rag",
-                "graph",
-                "memory",
-                "mcp",
-                "agents",
-                "skills",
-                "workflows",
-                "training",
-                "ml",
-                "observe",
-                "deploy",
-                "gateway",
-                "safety",
-                "schedule",
-                "workers",
-                "recipes",
-                "locks",
-                "vision",
-                "audio",
-                "docs",
-                "synthetic",
-            ],
-        }
+
+def _library_manifest(runtime: Runtime) -> dict[str, Any]:
+    from aire._version import __version__
+
+    return {
+        "library": "aire",
+        "version": __version__,
+        "runtime": runtime.describe(),
+        "namespaces": [
+            "models",
+            "data",
+            "rag",
+            "graph",
+            "memory",
+            "mcp",
+            "agents",
+            "skills",
+            "workflows",
+            "training",
+            "ml",
+            "observe",
+            "deploy",
+            "gateway",
+            "safety",
+            "schedule",
+            "workers",
+            "recipes",
+            "locks",
+            "vision",
+            "audio",
+            "docs",
+            "synthetic",
+        ],
+    }

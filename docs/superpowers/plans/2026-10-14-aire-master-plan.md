@@ -193,7 +193,7 @@ must match implemented handlers and errors.
 
 **Files:** new `docs/capabilities.md`, `README.md`, `GAPS.md`, `docs/{honesty,product,PUBLIC_API,cli,GUIDE,compatibility}.md`,
 `src/aire/ai.py`, `src/aire/cli/main.py`, examples, `mkdocs.yml`; new CLI tests.
-**Interfaces:** Preserve all 24 `AI.describe()['namespaces']` entries and frozen exports.
+**Interfaces:** Preserve all 23 `AI.describe()['namespaces']` entries and frozen exports.
 A single capability matrix records operations, maturity, limits, evidence and ownership.
 
 - [ ] Inventory every documented operation and link its test/example; classify supported, experimental, intentionally unsupported or unverified. Bugs stay open.

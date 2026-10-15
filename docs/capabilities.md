@@ -37,6 +37,13 @@ gate → HTTP deployment in `test_product_flow.py`. `aire init` → `aire serve`
 indexes its configured sources during app startup. Frozen 0.3 exports remain
 covered by `test_api_freeze.py`.
 
+The separate `AI.ui` local operations dashboard binds traces, costs, metrics,
+events and its manifest to the supplied Runtime. Its HTTP contract is tested in
+`test_product_flow.py`; metrics are shared within one runtime and isolated across
+runtimes. It is an optional local inspection UI, not a hosted administration
+service. All five CLI scaffold recipes execute their named local outcome;
+scaffolding refuses to overwrite a nonempty project directory.
+
 ## Verified local profiles
 
 QA on macOS arm64 / Python 3.13 uses bounded CPU threads

@@ -92,9 +92,10 @@ def create_ui_app(  # noqa: C901
     from fastapi.responses import HTMLResponse
 
     from aire._version import __version__
-    from aire.ai import AI, default_runtime
+    from aire.ai import _library_manifest, _ObserveNamespace, default_runtime
 
     rt = runtime or default_runtime()
+    observe = _ObserveNamespace(rt)
     app = FastAPI(title=title, version=__version__)
 
     @app.get("/", response_class=HTMLResponse)
@@ -103,15 +104,15 @@ def create_ui_app(  # noqa: C901
 
     @app.get("/api/traces")
     async def traces(name: str | None = None, limit: int = 50) -> dict[str, Any]:
-        return {"traces": AI.observe.traces(name=name, limit=limit)}
+        return {"traces": observe.traces(name=name, limit=limit)}
 
     @app.get("/api/costs")
     async def costs() -> dict[str, Any]:
-        return {"costs": AI.observe.costs()}
+        return {"costs": observe.costs()}
 
     @app.get("/api/metrics")
     async def metrics() -> dict[str, Any]:
-        m = AI.observe.metrics
+        m = observe.metrics
         if hasattr(m, "snapshot"):
             snapshot = m.snapshot()
         elif hasattr(m, "describe"):
@@ -122,7 +123,7 @@ def create_ui_app(  # noqa: C901
 
     @app.get("/api/events")
     async def events(pattern: str | None = None) -> dict[str, Any]:
-        return {"events": AI.observe.events(pattern)}
+        return {"events": observe.events(pattern)}
 
     @app.get("/api/manifest")
     async def manifest() -> dict[str, Any]:
@@ -130,7 +131,7 @@ def create_ui_app(  # noqa: C901
             "library": "aire",
             "version": __version__,
             "runtime": rt.describe() if hasattr(rt, "describe") else {},
-            "ai": AI.describe(),
+            "ai": _library_manifest(rt),
         }
 
     @app.get("/health")

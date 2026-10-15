@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -96,3 +97,95 @@ def test_graphrag_ingest_query_and_communities():
                 await graph.store.aclose()
 
     run_sync(check())
+
+
+def test_cli_evaluation_manifest_and_scale_artifacts(tmp_path):
+    import json
+
+    runner = CliRunner()
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text('{"input":"hello","expected":"hello"}\n')
+    output = tmp_path / "report.json"
+    result = runner.invoke(
+        app,
+        [
+            "evaluate",
+            str(cases),
+            "--model",
+            "mock:echo",
+            "--metrics",
+            "exact_match",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.exception
+    assert json.loads(output.read_text())["results"][0]["metrics"][0]["score"] == 1
+    inspected = runner.invoke(app, ["inspect", "all"])
+    assert inspected.exit_code == 0
+    assert {"models", "tools", "plugins", "config"} <= json.loads(inspected.stdout).keys()
+    target = tmp_path / "deployment"
+    deployed = runner.invoke(app, ["deploy", "scale", str(target)])
+    assert deployed.exit_code == 0, deployed.exception
+    assert (target / "requirements.in").is_file()
+    assert runner.invoke(app, ["evaluate", str(tmp_path / "absent.jsonl")]).exit_code != 0
+
+
+def test_scaffold_preserves_existing_files(tmp_path):
+    runner = CliRunner()
+    target = tmp_path / "existing"
+    target.mkdir()
+    (target / "main.py").write_text("# my program\n")
+    result = runner.invoke(app, ["scaffold", "agent", "--name", "existing", "--dir", str(tmp_path)])
+    assert result.exit_code != 0
+    assert (target / "main.py").read_text() == "# my program\n"
+
+
+@pytest.mark.parametrize("kind", ["rag", "agent", "finetune", "gateway", "workflow"])
+def test_each_scaffold_recipe_executes_its_named_outcome(tmp_path, kind):
+    import runpy
+
+    runner = CliRunner()
+    created = runner.invoke(app, ["scaffold", kind, "--name", kind, "--dir", str(tmp_path)])
+    assert created.exit_code == 0, created.exception
+    values = runpy.run_path(str(tmp_path / kind / "main.py"))
+    if kind == "rag":
+        assert values["answer"].citations
+    elif kind == "finetune":
+        assert values["result"].epochs_completed > 0
+    elif kind == "workflow":
+        assert values["result"].ok
+    elif kind == "agent":
+        assert values["agent"].state.messages
+    else:
+        with TestClient(values["app"]) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "mock:echo",
+                    "messages": [{"role": "user", "content": "recipe request"}],
+                },
+            )
+            assert response.status_code == 200
+
+
+def test_ui_uses_supplied_runtime_for_all_operational_data():
+    from aire.ai import _ObserveNamespace
+    from aire.ui import create_ui_app
+
+    runtime = Runtime(Settings(project="ui-tenant"))
+    observe = _ObserveNamespace(runtime)
+    observe.metrics.record_cost(2.5, model="qa:model")
+    with observe.tracer().span("tenant-only-trace"):
+        pass
+    runtime.events.emit("tenant.event", data={"value": "owned"})
+    with TestClient(create_ui_app(runtime=runtime)) as client:
+        assert client.get("/api/traces").json()["traces"][0]["name"] == "tenant-only-trace"
+        assert client.get("/api/costs").json()["costs"]["total_usd"] == 2.5
+        assert client.get("/api/metrics").json()["metrics"]["counters"]
+        assert client.get("/api/events").json()["events"]
+        manifest = client.get("/api/manifest").json()
+        assert manifest["runtime"]["project"] == "ui-tenant"
+        assert manifest["ai"]["runtime"]["project"] == "ui-tenant"
+    assert _ObserveNamespace(runtime).metrics is observe.metrics
+    run_sync(runtime.aclose())

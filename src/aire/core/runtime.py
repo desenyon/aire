@@ -17,6 +17,7 @@ from aire.core.plugins import PluginManager
 from aire.core.registry import Registries, Registry
 
 if TYPE_CHECKING:
+    from aire.observability.metrics import Metrics
     from aire.observability.tracing import Tracer
 
 logger = get_logger(__name__)
@@ -37,6 +38,7 @@ class Runtime:
         self.resources = ResourceManager()
         self.plugins = PluginManager()
         self.tracer: Tracer | None = None
+        self._observability_metrics: Metrics | None = None
         self._closed = False
         _register_builtin_providers(self)
         if discover_plugins:
