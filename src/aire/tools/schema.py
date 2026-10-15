@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import GenericAlias
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -77,27 +77,11 @@ def schema_model(
     for key, raw in schema.get("properties", {}).items():
         prop = resolve_schema(raw, root)
         annotation = _schema_type(f"{name}_{key}", prop, root, depth + 1)
-        options = {
-            target: prop[source]
-            for source, target in (
-                ("minimum", "ge"),
-                ("maximum", "le"),
-                ("exclusiveMinimum", "gt"),
-                ("exclusiveMaximum", "lt"),
-                ("minLength", "min_length"),
-                ("maxLength", "max_length"),
-                ("minItems", "min_length"),
-                ("maxItems", "max_length"),
-                ("pattern", "pattern"),
-            )
-            if source in prop
-        }
         fields[key] = (
             annotation,
             Field(
                 default=... if key in required else prop.get("default"),
                 description=prop.get("description"),
-                **options,
             ),
         )
     return create_model(
@@ -111,6 +95,38 @@ def schema_model(
 
 def _schema_type(name: str, schema: dict[str, Any], root: dict[str, Any], depth: int) -> Any:
     schema = resolve_schema(schema, root)
+    annotation = _schema_base_type(name, schema, root, depth)
+    kind = schema.get("type")
+    keywords = {
+        "string": (
+            ("minLength", "min_length"),
+            ("maxLength", "max_length"),
+            ("pattern", "pattern"),
+        ),
+        "array": (("minItems", "min_length"), ("maxItems", "max_length")),
+        "integer": (
+            ("minimum", "ge"),
+            ("maximum", "le"),
+            ("exclusiveMinimum", "gt"),
+            ("exclusiveMaximum", "lt"),
+        ),
+        "number": (
+            ("minimum", "ge"),
+            ("maximum", "le"),
+            ("exclusiveMinimum", "gt"),
+            ("exclusiveMaximum", "lt"),
+        ),
+    }
+    # Union constraints belong on applicable branches, never on a null branch.
+    if schema.get("nullable") or "anyOf" in schema or isinstance(kind, list):
+        return annotation
+    options = {
+        target: schema[source] for source, target in keywords.get(str(kind), ()) if source in schema
+    }
+    return Annotated[annotation, Field(**options)] if options else annotation
+
+
+def _schema_base_type(name: str, schema: dict[str, Any], root: dict[str, Any], depth: int) -> Any:
     if depth > 12:
         raise ConfigurationError(
             "recursive/deep tool schema is unsupported", code="tool.schema_depth"
@@ -126,7 +142,10 @@ def _schema_type(name: str, schema: dict[str, Any], root: dict[str, Any], depth:
     if schema.get("nullable"):
         return _union_type(name, [{**schema, "nullable": False}, {"type": "null"}], root, depth)
     if "anyOf" in schema:
-        return _union_type(name, schema["anyOf"], root, depth)
+        shared = {key: value for key, value in schema.items() if key != "anyOf"}
+        return _union_type(
+            name, [{**shared, **variant} for variant in schema["anyOf"]], root, depth
+        )
     kind = schema.get("type", "object" if "properties" in schema else None)
     if isinstance(kind, list):
         return _union_type(name, [{**schema, "type": variant} for variant in kind], root, depth)

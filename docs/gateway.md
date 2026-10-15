@@ -51,6 +51,12 @@ Semantic caching compares only eligible text requests within the same exact
 conversation history, system instructions, generation parameters and request
 metadata. Requests containing tools or media bypass semantic caching. Put caller
 or tenant identifiers in request metadata when using caches across identities.
+Persistent entries also fingerprint the ordered route, routing policy and embedder
+identity/dimension, and reject a resolved model outside the current route. Set
+`semantic_cache_namespace="deployment-or-tenant-version"` on `create_gateway`
+when provider endpoints, custom embedder behavior or other application configuration
+changes without changing those model identities. Matching configuration can share
+Redis entries across gateway instances; old-format entries expire without replay.
 
 `/health` is liveness; `/ready` probes exposed chat-model routes and returns 503
 when no healthy candidate is available or the runtime is closed. Gateway shutdown

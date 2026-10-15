@@ -21,6 +21,7 @@ The request ``model`` field accepts an exposed alias, an exposed ref, or (when
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import time
 import uuid
@@ -99,6 +100,7 @@ class Gateway:
         semantic_threshold: float = 0.95,
         semantic_embedder: str | EmbeddingModel | None = None,
         semantic_cache_redis_url: str | None = None,
+        semantic_cache_namespace: str = "default",
     ) -> None:
         if routing not in ("first", "round_robin"):
             raise ConfigurationError(
@@ -126,6 +128,7 @@ class Gateway:
         )
         self._semantic_entries: list[tuple[str, list[float], str, GenerationResult]] = []
         self._semantic_redis_url = semantic_cache_redis_url
+        self._semantic_cache_namespace = semantic_cache_namespace
         self._semantic_redis_backend: Any = None
         self.semantic_hits = 0
         self.semantic_misses = 0
@@ -296,11 +299,11 @@ class Gateway:
         embedder = None if _has_tool_context(request) else await self._ensure_semantic_embedder()
         if embedder is None:
             return None
-        from aire.optimization.cache import _params_signature
         from aire.rag.store import cosine_similarity
 
         prompt = "\n".join(m.text_content for m in request.messages)
-        signature = f"{public}|{_params_signature(request)}"
+        signature = self._semantic_signature(public, request, embedder)
+        valid_refs = self._semantic_refs(public)
         vector = await embedder.embed_one(prompt)
 
         redis = await self._get_semantic_redis()
@@ -312,7 +315,10 @@ class Gateway:
                 try:
                     payload = json.loads(raw)
                     for item in payload:
-                        if cosine_similarity(vector, item["vector"]) >= self.semantic_threshold:
+                        if (
+                            item["ref"] in valid_refs
+                            and cosine_similarity(vector, item["vector"]) >= self.semantic_threshold
+                        ):
                             self.semantic_hits += 1
                             return item["ref"], replay_result(
                                 GenerationResult.model_validate(item["result"])
@@ -323,13 +329,46 @@ class Gateway:
             return None
 
         for cached_sig, cached_vec, cached_ref, result in self._semantic_entries:
-            if cached_sig != signature:
+            if cached_sig != signature or cached_ref not in valid_refs:
                 continue
             if cosine_similarity(vector, cached_vec) >= self.semantic_threshold:
                 self.semantic_hits += 1
                 return cached_ref, replay_result(result)
         self.semantic_misses += 1
         return None
+
+    def _semantic_refs(self, public: str) -> set[str]:
+        candidates = self._refs_for(public, self.chat_routes, "chat")
+        refs = set(candidates)
+        if self.objective is not None:
+            router = self._routers.get(public)
+            refs.add(router.info.ref if router is not None else "router:" + "+".join(candidates))
+        return refs
+
+    def _semantic_signature(
+        self, public: str, request: GenerationRequest, embedder: EmbeddingModel
+    ) -> str:
+        from aire.optimization.cache import _params_signature
+
+        identity = {
+            "version": 2,
+            "namespace": self._semantic_cache_namespace,
+            "public": public,
+            "refs": self._refs_for(public, self.chat_routes, "chat"),
+            "routing": self.routing,
+            "objective": self.objective,
+            "fallback": self.fallback,
+            "embedder": {
+                "class": f"{type(embedder).__module__}.{type(embedder).__qualname__}",
+                "name": embedder.name,
+                "dimension": embedder.dimension,
+                "ref": self._semantic_embedder_spec
+                if isinstance(self._semantic_embedder_spec, str)
+                else None,
+            },
+        }
+        fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        return f"{fingerprint}|{_params_signature(request)}"
 
     async def _semantic_store(
         self,
@@ -346,10 +385,8 @@ class Gateway:
         embedder = await self._ensure_semantic_embedder()
         if embedder is None:
             return
-        from aire.optimization.cache import _params_signature
-
         prompt = "\n".join(m.text_content for m in request.messages)
-        signature = f"{public}|{_params_signature(request)}"
+        signature = self._semantic_signature(public, request, embedder)
         vector = await embedder.embed_one(prompt)
 
         redis = await self._get_semantic_redis()
@@ -517,6 +554,7 @@ def create_gateway(
     semantic_threshold: float = 0.95,
     semantic_embedder: str | EmbeddingModel | None = None,
     semantic_cache_redis_url: str | None = None,
+    semantic_cache_namespace: str = "default",
     guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
     close_runtime: bool = False,
 ) -> Any:
@@ -554,6 +592,7 @@ def create_gateway(
         semantic_threshold=semantic_threshold,
         semantic_embedder=semantic_embedder,
         semantic_cache_redis_url=redis_url if semantic_cache else None,
+        semantic_cache_namespace=semantic_cache_namespace,
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
     log = _make_request_logger(request_log)

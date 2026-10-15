@@ -20,6 +20,9 @@ All notable changes to aire are documented here. The format follows
   overlap; test interrupted Redis claims and repeated recovery.
 - Repair real estimator persistence, tiny LoRA/distillation/LM execution, OCR and
   video frame conversion; distinguish CPU, transport-only, dry-run and GPU evidence.
+- Stop tool retries after context cancellation/deadline, retain constraints inside
+  imported array/union schemas, and isolate persistent gateway caches by route,
+  embedder and deployment namespace.
 - Complete MCP HTTP callbacks/deadlines/cancellation and nested OpenAPI validation;
   report unsupported schemas and skill import failures explicitly.
 - Resolve configured analytics, support real evaluation reports and failed-case
