@@ -57,7 +57,7 @@ class PgVectorStore(VectorStore):
         self._ensure()
 
     def _connect(self) -> Any:
-        return self.psycopg.connect(self.dsn)
+        return self.psycopg.connect(self.dsn, connect_timeout=5)
 
     def _ensure(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
@@ -367,6 +367,11 @@ class PgVectorStore(VectorStore):
             return int(cur.rowcount or 0)
 
     async def count(self) -> int:
+        import asyncio
+
+        return await asyncio.to_thread(self._count)
+
+    def _count(self) -> int:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {self.table}")
             return int(cur.fetchone()[0])

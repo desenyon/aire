@@ -42,6 +42,8 @@ nav:
   - Public API: PUBLIC_API.md
   - API freeze: api_freeze.md
   - Compatibility: compatibility.md
+  - Capability contracts: capabilities.md
+  - Release QA: audits/2026-10-14-release-qa.md
   - Capability master plan: superpowers/plans/2026-10-14-aire-master-plan.md
   - Capability design: superpowers/specs/2026-10-14-capability-completion-design.md
   - Repository audit: audits/2026-10-14-repository-audit.md

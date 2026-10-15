@@ -1,17 +1,26 @@
-"""Build an OpenAI-compat gateway app offline (no long bind)."""
+"""Send an actual in-process HTTP request through the offline gateway."""
 
-from aire import AI
+from fastapi.testclient import TestClient
+
+from aire.core.config import Settings
+from aire.core.runtime import Runtime
+from aire.deployment.gateway import create_gateway
 
 
 def main() -> None:
-    app = AI.gateway.create(models=["mock:echo"], aliases={"echo": "mock:echo"})
-    # Construct only — do not uvicorn.run for a long-lived server in this example.
-    title = getattr(app, "title", type(app).__name__)
-    routes = [getattr(r, "path", str(r)) for r in getattr(app, "routes", [])]
-    print("gateway app:", title)
-    print("route count:", len(routes))
-    print("sample routes:", routes[:8])
-    print("describe:", AI.gateway.describe()["kind"])
+    runtime = Runtime(Settings())
+    app = create_gateway(runtime, aliases={"echo": "mock:echo"}, close_runtime=True)
+    with TestClient(app) as client:
+        assert client.get("/ready").status_code == 200
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "echo", "messages": [{"role": "user", "content": "gateway request"}]},
+        )
+        assert response.status_code == 200
+        text = response.json()["choices"][0]["message"]["content"]
+        assert text == "gateway request"
+        print("Gateway HTTP request passed:", text)
+    assert runtime._closed
 
 
 if __name__ == "__main__":

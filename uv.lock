@@ -454,7 +454,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'training'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'all'", specifier = ">=4.38" },
     { name = "transformers", marker = "extra == 'peft'", specifier = ">=4.38" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.16" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.29" },

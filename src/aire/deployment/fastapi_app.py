@@ -38,6 +38,7 @@ else:
 if TYPE_CHECKING:
     from aire.agents.agent import Agent
     from aire.agents.team import Team
+    from aire.knowledge_assistant import Assistant
     from aire.observability.metrics import Metrics
     from aire.rag.pipeline import Knowledge
 
@@ -48,7 +49,7 @@ class AskRequest(BaseModel):
 
 
 def create_app(
-    target: Agent | Knowledge | Model | Team,
+    target: Agent | Knowledge | Model | Team | Assistant,
     *,
     title: str = "aire service",
     auth_token: str | None = None,
@@ -64,16 +65,18 @@ def create_app(
             code="deploy.fastapi_missing",
         )
 
-    @asynccontextmanager
-    async def lifespan(app: Any) -> Any:
-        yield
-        if close_target:
-            resource = getattr(target, "runtime", None) or target
-            close = getattr(resource, "aclose", None)
-            if close is not None:
-                await close()
+    from aire.agents.agent import Agent
+    from aire.knowledge_assistant import Assistant
 
-    app = FastAPI(title=title, version=__version__, lifespan=lifespan)
+    assistant = target if isinstance(target, Assistant) else None
+    if assistant is not None:
+        target = assistant.knowledge()
+    if not (isinstance(target, (Model, Agent)) or _is_team(target) or _is_knowledge(target)):
+        raise ConfigurationError("unsupported deployment target", code="deploy.target_invalid")
+
+    app = FastAPI(
+        title=title, version=__version__, lifespan=_target_lifespan(target, assistant, close_target)
+    )
 
     @app.exception_handler(ValidationError)
     async def invalid_request(request: Request, exc: ValidationError) -> Any:
@@ -95,6 +98,23 @@ def create_app(
     else:  # Agent
         _register_agent_routes(app, target, guard, metrics, shared_agent_session)
     return app
+
+
+def _target_lifespan(target: Any, assistant: Any, close_target: bool) -> Any:
+    @asynccontextmanager
+    async def lifespan(app: Any) -> Any:
+        try:
+            if assistant is not None and not assistant._indexed:
+                await assistant.index_async()
+            yield
+        finally:
+            if close_target:
+                resource = getattr(target, "runtime", None) or target
+                close = getattr(resource, "aclose", None)
+                if close is not None:
+                    await close()
+
+    return lifespan
 
 
 def _make_guard(*, auth_token: str | None, rate_limit_per_minute: int | None) -> Any:
@@ -124,21 +144,7 @@ def _register_meta_routes(app: Any, target: Any, metrics: Metrics | None, guard:
 
     @app.get("/ready")
     async def ready() -> Any:
-        available = _runtime_present(target)
-        runtime = getattr(target, "runtime", None)
-        if runtime is not None and getattr(runtime, "_closed", False):
-            available = False
-        components = [target, getattr(target, "store", None), getattr(target, "model", None)]
-        for component in components:
-            probe = getattr(component, "health", None)
-            if callable(probe):
-                try:
-                    result = probe()
-                    if inspect.isawaitable(result):
-                        result = await asyncio.wait_for(result, timeout=5)
-                    available = available and bool(result.ok)
-                except Exception:
-                    available = False
+        available = await _probe_target(target)
         return JSONResponse(
             status_code=200 if available else 503,
             content={
@@ -155,6 +161,27 @@ def _register_meta_routes(app: Any, target: Any, metrics: Metrics | None, guard:
     @app.get("/metrics", dependencies=[Depends(guard)])
     async def metrics_endpoint() -> dict[str, Any]:
         return metrics.snapshot() if metrics is not None else {"counters": {}, "latencies": {}}
+
+
+async def _probe_target(target: Any) -> bool:
+    available = _runtime_present(target)
+    runtime = getattr(target, "runtime", None)
+    if runtime is not None and getattr(runtime, "_closed", False):
+        available = False
+    components = [target, getattr(target, "store", None), getattr(target, "model", None)]
+    if _is_team(target):
+        components.extend(member.model for member in target.members.values())
+    for component in components:
+        probe = getattr(component, "health", None)
+        if callable(probe):
+            try:
+                result = probe()
+                if inspect.isawaitable(result):
+                    result = await asyncio.wait_for(result, timeout=5)
+                available = available and bool(result.ok)
+            except Exception:
+                available = False
+    return available
 
 
 def _register_model_routes(app: Any, target: Model, guard: Any, metrics: Metrics | None) -> None:
@@ -296,11 +323,11 @@ def _runtime_present(target: Any) -> bool:
     """True when the target (or nested agent/knowledge) exposes a runtime."""
     if getattr(target, "runtime", None) is not None:
         return True
-    if isinstance(target, Model):
-        return True  # models are usable without a shared Runtime
+    if isinstance(target, Model) or isinstance(getattr(target, "model", None), Model):
+        return True  # models and agents can work without a shared Runtime
     if _is_team(target):
         members = getattr(target, "members", {}) or {}
-        return any(getattr(m, "runtime", None) is not None for m in members.values())
+        return bool(members)
     return False
 
 

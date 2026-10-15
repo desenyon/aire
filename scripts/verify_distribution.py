@@ -3,6 +3,8 @@
 Usage: python scripts/verify_distribution.py dist/aire_ai-*.whl
 Requires uv on PATH; uses a disposable virtual environment and no provider services.
 """
+
+# ruff: noqa: S603
 from __future__ import annotations
 
 import pathlib
@@ -11,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-SMOKE = '''
+SMOKE = """
 import asyncio
 import importlib.metadata as m
 import sys
@@ -27,9 +29,10 @@ assert AI.describe()["library"] == "aire"
 runtime = Runtime(Settings(), discover_plugins=True)
 assert {"mock", "openai", "anthropic"} <= set(runtime.plugins.describe())
 asyncio.run(runtime.aclose())
-assert not set(sys.modules) & {"torch", "tensorflow", "keras", "sklearn", "pandas", "fastapi", "numpy"}
+optional = {"torch", "tensorflow", "keras", "sklearn", "pandas", "fastapi", "numpy"}
+assert not set(sys.modules) & optional
 print("wheel contract passed", __version__)
-'''
+"""
 
 
 def main() -> None:
@@ -39,13 +42,13 @@ def main() -> None:
         raise SystemExit("uv and a built wheel path are required")
     with tempfile.TemporaryDirectory(prefix="aire-wheel-") as directory:
         environment = pathlib.Path(directory) / "environment"
-        subprocess.run([uv, "venv", str(environment), "--python", sys.executable],check=True)
+        subprocess.run([uv, "venv", str(environment), "--python", sys.executable], check=True)
         python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        subprocess.run([uv, "pip", "install", "--python", str(python), str(wheel)],check=True)
-        subprocess.run([str(python), "-I", "-c", SMOKE],cwd=directory,check=True)
+        subprocess.run([uv, "pip", "install", "--python", str(python), str(wheel)], check=True)
+        subprocess.run([str(python), "-I", "-c", SMOKE], cwd=directory, check=True)
         cli = python.with_name("aire.exe" if sys.platform == "win32" else "aire")
-        subprocess.run([str(cli), "doctor"],cwd=directory,check=True,capture_output=True)
-        subprocess.run([uv, "pip", "check", "--python", str(python)],check=True)
+        subprocess.run([str(cli), "doctor"], cwd=directory, check=True, capture_output=True)
+        subprocess.run([uv, "pip", "check", "--python", str(python)], check=True)
 
 
 if __name__ == "__main__":

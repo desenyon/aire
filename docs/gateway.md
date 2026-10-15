@@ -51,3 +51,10 @@ Semantic caching compares only eligible text requests within the same exact
 conversation history, system instructions, generation parameters and request
 metadata. Requests containing tools or media bypass semantic caching. Put caller
 or tenant identifiers in request metadata when using caches across identities.
+
+`/health` is liveness; `/ready` probes exposed chat-model routes and returns 503
+when no healthy candidate is available or the runtime is closed. Gateway shutdown
+closes its own semantic Redis client. Use `close_runtime=True` only when the app
+owns the supplied runtime; externally managed runtimes remain open by default.
+OpenAI image URLs and input-audio blocks are preserved. Unsupported content blocks
+and malformed generation requests return a structured 400 instead of being dropped.

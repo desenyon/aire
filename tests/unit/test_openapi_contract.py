@@ -75,7 +75,9 @@ def test_openapi_path_query_and_body_reach_transport(monkeypatch):
     assert result.ok, result.error
     assert requests[0].url.path == "/api/items/a b"
     assert requests[0].url.params["limit"] == "2"
-    assert requests[0].read() == b'{"name":"new","tags":[1]}'
+    import json
+
+    assert json.loads(requests[0].read()) == {"name": "new", "tags": [1]}
 
 
 def test_operation_cannot_override_base_origin():
