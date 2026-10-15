@@ -57,7 +57,18 @@ class Estimator(abc.ABC):
     def _prepare(
         self, dataset: Dataset, target: str | None
     ) -> tuple[list[list[float]], list[Any], list[str]]:
-        rows = [extract_features(record) for record in dataset]
+        rows = [
+            extract_features(
+                record.model_copy(
+                    update={
+                        "metadata": {
+                            key: value for key, value in record.metadata.items() if key != target
+                        }
+                    }
+                )
+            )
+            for record in dataset
+        ]
         names, x = vectorize(rows)
         y: list[Any] = []
         ids: list[str] = []

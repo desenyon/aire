@@ -73,7 +73,7 @@ def _require_pypdf() -> Any:
             code="docs.pypdf_missing",
             context={"extra": "aire-ai[pypdf]", "package": "pypdf"},
         )
-    import pypdf  # type: ignore[import-not-found]
+    import pypdf
 
     return pypdf
 
@@ -160,8 +160,8 @@ def _ocr_page_index(pdf_path: Path, page_index: int, *, lang: str) -> str:
             code="docs.ocr_missing",
             context={"extra": "aire-ai[ocr]", "missing": missing},
         )
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
-    import pytesseract  # type: ignore[import-not-found]
+    import pypdfium2 as pdfium
+    import pytesseract
 
     doc = pdfium.PdfDocument(str(pdf_path))
     try:

@@ -11,7 +11,6 @@ import importlib.util
 from typing import Any
 
 from aire.core.errors import ConfigurationError
-from aire.core.types import Manifest
 from aire.ml.estimator import Estimator
 from aire.ml.types import TaskType
 
@@ -377,28 +376,26 @@ class SklearnEstimator(Estimator):
         return None
 
     def _state(self) -> dict[str, Any]:
-        raise ConfigurationError(
-            "sklearn models cannot be serialized by aire (no-pickle policy); "
-            "persist estimator.model with skops.io or joblib instead",
-            code="ml.persistence_delegated",
-        )
+        import base64
+        import importlib
+
+        try:
+            io = importlib.import_module("skops.io")
+        except ImportError as exc:
+            raise ConfigurationError(
+                "safe persistence requires aire-ai[ml]", code="ml.skops_missing"
+            ) from exc
+        return {"format": "skops", "model": base64.b64encode(io.dumps(self._model)).decode("ascii")}
 
     def _restore(self, state: dict[str, Any]) -> None:
-        raise ConfigurationError(
-            "sklearn models cannot be deserialized by aire (no-pickle policy); "
-            "load with skops.io or joblib instead",
-            code="ml.persistence_delegated",
-        )
+        import base64
+        import importlib
 
-    def describe(self) -> Manifest:
-        manifest = super().describe()
-        manifest.extra["hyperparameters"] = {
-            k: v
-            for k, v in self._model.get_params().items()
-            if isinstance(v, (int, float, str, bool))
-        }
-        manifest.extra["partial_fit"] = hasattr(self._model, "partial_fit")
-        return manifest
+        if state.get("format") != "skops":
+            raise ConfigurationError("unsupported sklearn persistence format", code="ml.format")
+        io = importlib.import_module("skops.io")
+        # skops rejects untrusted types by default; never auto-trust payload types.
+        self._model = io.loads(base64.b64decode(state["model"]))
 
 
 def register(runtime: Any) -> None:

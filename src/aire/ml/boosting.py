@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import importlib.util
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from aire.core.errors import ConfigurationError
@@ -20,6 +23,22 @@ def _require(pkg: str, extra: str) -> Any:
             context={"backend": pkg},
         )
     return importlib.import_module(pkg)
+
+
+def _native_state(model: Any, suffix: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / f"model.{suffix}"
+        model.save_model(str(path))
+        return {"format": suffix, "model": base64.b64encode(path.read_bytes()).decode("ascii")}
+
+
+def _restore_native(model: Any, state: dict[str, Any], suffix: str) -> None:
+    if state.get("format") != suffix:
+        raise ConfigurationError("unsupported model persistence format", code="ml.format")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / f"model.{suffix}"
+        path.write_bytes(base64.b64decode(state["model"]))
+        model.load_model(str(path))
 
 
 class XGBoostEstimator(Estimator):
@@ -71,16 +90,10 @@ class XGBoostEstimator(Estimator):
         ]
 
     def _state(self) -> dict[str, Any]:
-        raise ConfigurationError(
-            "xgboost persistence delegated to estimator.model.save_model()",
-            code="ml.persistence_delegated",
-        )
+        return _native_state(self._model, "ubj")
 
     def _restore(self, state: dict[str, Any]) -> None:
-        raise ConfigurationError(
-            "xgboost persistence delegated to estimator.model.load_model()",
-            code="ml.persistence_delegated",
-        )
+        _restore_native(self._model, state, "ubj")
 
     @property
     def model(self) -> Any:
@@ -118,6 +131,7 @@ class LightGBMEstimator(Estimator):
         cls = lgb.LGBMRegressor if resolved_task == TaskType.REGRESSION else lgb.LGBMClassifier
         params = {"n_estimators": 50, "max_depth": 3, "verbosity": -1, **hyperparameters}
         self._model = cls(**params)
+        self._restored_classes: list[Any] | None = None
 
     def backend_name(self) -> str:
         return f"lightgbm:{self.name}"
@@ -130,9 +144,32 @@ class LightGBMEstimator(Estimator):
 
     def _predict_sync(self, x: list[list[float]]) -> list[float | str]:
         preds = self._model.predict(x)
+        if self._restored_classes is not None and self._restored_classes:
+            return [
+                self._restored_classes[
+                    int(max(range(len(row)), key=lambda i: row[i]))
+                    if hasattr(row, "__len__")
+                    else int(row > 0.5)
+                ]
+                for row in preds
+            ]
         return [v.item() if hasattr(v, "item") else v for v in preds]
 
     def _probabilities_sync(self, x: list[list[float]]) -> list[dict[str, float]] | None:
+        if self._restored_classes:
+            rows = self._model.predict(x)
+            return [
+                dict(
+                    zip(
+                        (str(c) for c in self._restored_classes),
+                        (float(v) for v in row)
+                        if hasattr(row, "__len__")
+                        else [1 - float(row), float(row)],
+                        strict=True,
+                    )
+                )
+                for row in rows
+            ]
         if not hasattr(self._model, "predict_proba"):
             return None
         classes = [str(c) for c in self._model.classes_]
@@ -142,16 +179,19 @@ class LightGBMEstimator(Estimator):
         ]
 
     def _state(self) -> dict[str, Any]:
-        raise ConfigurationError(
-            "lightgbm persistence delegated to estimator.model.booster_.save_model()",
-            code="ml.persistence_delegated",
+        booster = self._model if self._restored_classes is not None else self._model.booster_
+        classes = (
+            self._restored_classes
+            if self._restored_classes is not None
+            else (self._model.classes_.tolist() if self.task == TaskType.CLASSIFICATION else [])
         )
+        return {"format": "lightgbm", "model": booster.model_to_string(), "classes": classes}
 
     def _restore(self, state: dict[str, Any]) -> None:
-        raise ConfigurationError(
-            "lightgbm persistence delegated to lightgbm.Booster(model_file=...)",
-            code="ml.persistence_delegated",
-        )
+        if state.get("format") != "lightgbm":
+            raise ConfigurationError("unsupported model persistence format", code="ml.format")
+        self._model = _require("lightgbm", "lightgbm").Booster(model_str=state["model"])
+        self._restored_classes = list(state.get("classes", []))
 
     @property
     def model(self) -> Any:
@@ -228,16 +268,10 @@ class CatBoostEstimator(Estimator):
         ]
 
     def _state(self) -> dict[str, Any]:
-        raise ConfigurationError(
-            "catboost persistence delegated to estimator.model.save_model()",
-            code="ml.persistence_delegated",
-        )
+        return _native_state(self._model, "cbm")
 
     def _restore(self, state: dict[str, Any]) -> None:
-        raise ConfigurationError(
-            "catboost persistence delegated to CatBoost().load_model()",
-            code="ml.persistence_delegated",
-        )
+        _restore_native(self._model, state, "cbm")
 
     @property
     def model(self) -> Any:

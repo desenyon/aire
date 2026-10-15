@@ -39,6 +39,25 @@ class VideoPipeline:
         prompt: str = "Summarize this video.",
         max_frames: int = 4,
     ) -> VideoSummary:
+        import tempfile
+
+        if max_frames <= 0 or max_frames > 128:
+            raise ConfigurationError(
+                "max_frames must be between 1 and 128", code="vision.video_frames"
+            )
+        with tempfile.TemporaryDirectory(prefix="aire-frames-") as frame_directory:
+            return await self._summarize(
+                video, prompt=prompt, max_frames=max_frames, frame_directory=frame_directory
+            )
+
+    async def _summarize(
+        self,
+        video: str | Path | VideoContent,
+        *,
+        prompt: str,
+        max_frames: int,
+        frame_directory: str,
+    ) -> VideoSummary:
         content = _to_video(video)
         if self.model is None:
             loc = content.uri or content.metadata.get("path") or "inline"
@@ -49,7 +68,9 @@ class VideoPipeline:
                 metadata={"prompt": prompt, "stub": True},
             )
         info = self.model.info
-        frames, frame_backend = _sample_frame_uris(content, max_frames=max_frames)
+        frames, frame_backend = _sample_frame_uris(
+            content, max_frames=max_frames, frame_directory=frame_directory
+        )
 
         # Preferred path: real frame images + vision model.
         if info.supports(Capability.VISION_INPUT) and frame_backend == "ffmpeg":
@@ -71,9 +92,7 @@ class VideoPipeline:
                 )
 
         # Native video content block if the provider accepts it.
-        if info.supports(Capability.VISION_INPUT) or "video" in {
-            str(c).lower() for c in info.capabilities
-        }:
+        if "video" in info.input_kinds:
             request = GenerationRequest(
                 messages=[
                     Message(
@@ -100,7 +119,7 @@ class VideoPipeline:
             metadata={
                 "mode": "text_fallback",
                 "frame_backend": frame_backend,
-                "stub": frame_backend == "synthetic",
+                "stub": True,
             },
         )
 
@@ -128,20 +147,27 @@ def _to_video(video: str | Path | VideoContent) -> VideoContent:
             f"video not found: {path}",
             code="vision.video_not_found",
         )
-    return VideoContent.from_file(value, source=str(path))
+    return VideoContent.from_file(value).model_copy(
+        update={"metadata": {"path": str(path.resolve())}}
+    )
 
 
-def _sample_frame_uris(video: VideoContent, *, max_frames: int) -> tuple[list[str], str]:
+def _sample_frame_uris(
+    video: VideoContent, *, max_frames: int, frame_directory: str
+) -> tuple[list[str], str]:
     """Sample frame refs. Uses ffmpeg when available; else synthetic labels."""
     import shutil
     import subprocess
-    import tempfile
 
     base = video.uri or str(video.metadata.get("path") or "video")
     path = video.metadata.get("path") or (base if not str(base).startswith("http") else None)
+    if not path and video.data:
+        inline = Path(frame_directory) / "input.mp4"
+        inline.write_bytes(video.data)
+        path = str(inline)
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg and path and Path(str(path)).is_file():
-        out_dir = Path(tempfile.mkdtemp(prefix="aire-frames-"))
+        out_dir = Path(frame_directory)
         pattern = str(out_dir / "frame_%03d.jpg")
         try:
             subprocess.run(  # noqa: S603

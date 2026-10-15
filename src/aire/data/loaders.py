@@ -196,7 +196,7 @@ def _load_tabular(path: Path, suffix: str, *, text_field: str, name: str) -> Dat
             code="data.pandas_missing",
             context={"path": str(path)},
         )
-    import pandas  # type: ignore[import-untyped]
+    import pandas
 
     try:
         frame = pandas.read_parquet(path) if suffix == ".parquet" else pandas.read_excel(path)

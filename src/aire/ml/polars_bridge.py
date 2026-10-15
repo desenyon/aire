@@ -17,7 +17,7 @@ def _require_polars() -> Any:
             "polars is required: pip install 'aire-ai[polars]'",
             code="ml.polars_missing",
         )
-    import polars  # type: ignore[import-not-found]
+    import polars
 
     return polars
 

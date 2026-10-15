@@ -94,7 +94,7 @@ class FoundationModel:
                 code="training.hf_missing",
                 context={"extra": "aire-ai[peft]", "model_id": model_id},
             )
-        import transformers  # type: ignore[import-not-found]
+        import transformers
 
         tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
         if tokenizer.pad_token is None:

@@ -24,7 +24,7 @@ def _require_pandas() -> Any:
             code="ml.pandas_missing",
             context={"backend": "pandas"},
         )
-    import pandas  # type: ignore[import-untyped]
+    import pandas
 
     return pandas
 

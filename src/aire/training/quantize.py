@@ -80,7 +80,7 @@ class Quantizer:
                 code="training.quant_missing",
                 context={"extra": "aire-ai[peft]", "packages": ["transformers", "bitsandbytes"]},
             )
-        import transformers  # type: ignore[import-not-found]
+        import transformers
 
         kwargs: dict[str, Any] = {}
         if self.config.load_in_4bit:

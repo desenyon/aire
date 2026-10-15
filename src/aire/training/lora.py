@@ -34,8 +34,8 @@ def _require_peft() -> tuple[Any, Any]:
             code="training.peft_missing",
             context={"extra": "aire-ai[peft]", "packages": ["peft", "transformers"]},
         )
-    import peft  # type: ignore[import-not-found]
-    import transformers  # type: ignore[import-not-found]
+    import peft
+    import transformers
 
     return peft, transformers
 
@@ -153,7 +153,7 @@ class LoRATrainer:
 
         eval_dataset: Any = None
         if importlib.util.find_spec("datasets") is not None:
-            import datasets as hf_datasets  # type: ignore[import-not-found]
+            import datasets as hf_datasets
 
             hf_ds = hf_datasets.Dataset.from_dict({"text": texts})
             if 0.0 < eval_ratio < 1.0 and len(texts) >= 2:
@@ -171,7 +171,14 @@ class LoRATrainer:
 
         resume: str | bool | None = resume_from_checkpoint
         if resume is True:
-            resume = self.output_dir
+            utilities = importlib.import_module("transformers.trainer_utils")
+            get_last_checkpoint = utilities.get_last_checkpoint
+
+            resume = get_last_checkpoint(self.output_dir)
+            if resume is None:
+                raise ConfigurationError(
+                    "no training checkpoint found", code="training.lora_checkpoint_missing"
+                )
 
         training_args = transformers.TrainingArguments(
             output_dir=self.output_dir,

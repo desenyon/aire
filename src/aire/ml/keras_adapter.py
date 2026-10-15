@@ -24,7 +24,7 @@ def _require_keras() -> Any:
             code="ml.keras_missing",
             context={"backend": "keras"},
         )
-    import keras  # type: ignore[import-not-found]
+    import keras
 
     return keras
 
@@ -176,9 +176,11 @@ class KerasEstimator(Estimator):
         self._model = self._build(len(x[0]) if x else 0, n_outputs)
         self._compile(self._model)
         cbs = _aire_to_keras_callbacks(self.callbacks, self.keras)
+        import numpy as np
+
         history = self._model.fit(
-            x,
-            targets,
+            np.asarray(x, dtype="float32"),
+            np.asarray(targets),
             epochs=self.epochs,
             batch_size=self.batch_size,
             verbose=self.verbose,
@@ -200,7 +202,9 @@ class KerasEstimator(Estimator):
 
     def _predict_sync(self, x: list[list[float]]) -> list[float | str]:
         assert self._model is not None
-        output = self._model.predict(x, verbose=0)
+        import numpy as np
+
+        output = self._model.predict(np.asarray(x, dtype="float32"), verbose=0)
         rows = output.tolist() if hasattr(output, "tolist") else list(output)
         if self.task == TaskType.CLASSIFICATION:
             if rows and isinstance(rows[0], list):
@@ -215,7 +219,9 @@ class KerasEstimator(Estimator):
         if self.task != TaskType.CLASSIFICATION or not self._classes:
             return None
         assert self._model is not None
-        output = self._model.predict(x, verbose=0)
+        import numpy as np
+
+        output = self._model.predict(np.asarray(x, dtype="float32"), verbose=0)
         rows = output.tolist() if hasattr(output, "tolist") else list(output)
         if not rows:
             return []
@@ -266,6 +272,9 @@ class KerasEstimator(Estimator):
         self._model = self._build(len(self.feature_names), n_outputs)
         self._compile(self._model)
         weights = Path(path).with_name(payload["weights"])
+        optimizer = getattr(self._model, "optimizer", None)
+        if optimizer is not None and callable(getattr(optimizer, "build", None)):
+            optimizer.build(self._model.trainable_variables)
         self._model.load_weights(str(weights))
         from aire.ml.types import FitReport
 

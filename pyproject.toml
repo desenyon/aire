@@ -49,7 +49,7 @@ serve = ["fastapi>=0.110", "uvicorn>=0.29"]
 numpy = ["numpy>=1.26"]
 datasets = ["datasets>=2.18"]
 # Model creation backends (lazy; never imported by core)
-ml = ["scikit-learn>=1.4", "pandas>=2.0"]
+ml = ["scikit-learn>=1.4", "pandas>=2.0", "skops>=0.13"]
 torch = ["torch>=2.2"]
 keras = ["keras>=3.0"]
 xgboost = ["xgboost>=2.0"]
@@ -194,6 +194,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
+    "optional: tests requiring installed optional backend profiles",
     "integration: tests that exercise multiple subsystems together",
     "live: tests that require network access or credentials (skipped by default)",
     "performance: timing and resource usage checks",
@@ -211,4 +212,10 @@ exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
 
 [[tool.mypy.overrides]]
 module = ["torch", "torch.*", "opentelemetry", "opentelemetry.*"]
+ignore_missing_imports = true
+
+# Optional packages may be absent or ship incomplete type metadata. Core code is
+# checked strictly in both the base and all-extras environments.
+[[tool.mypy.overrides]]
+module = ["pandas", "pandas.*", "redis", "redis.*", "psycopg", "psycopg.*", "neo4j", "neo4j.*", "keras", "keras.*", "polars", "polars.*", "optuna", "optuna.*", "peft", "peft.*", "transformers", "transformers.*", "datasets", "datasets.*", "pypdf", "pypdf.*", "pypdfium2", "pypdfium2.*", "pytesseract", "pytesseract.*", "apscheduler", "apscheduler.*"]
 ignore_missing_imports = true

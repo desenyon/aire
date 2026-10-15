@@ -76,3 +76,13 @@ def test_runtime_describe() -> None:
     desc = Runtime().describe()
     assert isinstance(desc, dict)
     assert desc
+
+
+def test_training_does_not_include_target_as_feature():
+    from aire.data.dataset import Dataset
+    from aire.data.types import Record
+    from aire.ml.native import LinearRegressor
+
+    estimator = LinearRegressor()
+    _, _, _ = estimator._prepare(Dataset([Record(metadata={"x": 1.0, "answer": 9.0})]), "answer")
+    assert estimator.feature_names == ["x"]
