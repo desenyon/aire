@@ -112,3 +112,18 @@ Honesty + depth release. Most public names remain; behaviour becomes stricter.
 ## Pre-0.3.4
 
 See [CHANGELOG](https://github.com/desenyon/aire/blob/main/CHANGELOG.md). Prefer upgrading to the latest 0.3.x patch before jumping minors.
+
+## 0.4 remote index identity
+
+Qdrant and Weaviate now derive stable UUIDs from original Aire chunk IDs, and
+remote adapters retain the document ID and chunk position. Reindex existing
+collections into a fresh collection before switching traffic. Earlier Qdrant
+numeric IDs used Python's process-randomized hash and cannot be recomputed safely
+after restart; preserve original `aire_id` payloads if migrating them manually.
+
+Remote mutations now raise normalized provider errors for HTTP failures and
+Weaviate/Milvus per-operation errors. Document replacement refuses to write when
+the backend cannot enumerate the complete existing index. Qdrant, Chroma and
+Milvus text scans page through records; Pinecone enumeration requires its
+serverless list/fetch APIs. Replacement remains best effort across remote writes
+and deletes; use collection/version swaps for transactional publication.

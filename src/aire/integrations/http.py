@@ -28,7 +28,7 @@ def map_http_error(provider: str, exc: httpx.HTTPStatusError) -> ProviderError:
     detail = ""
     try:
         payload = response.json()
-        error = payload.get("error", payload)
+        error = payload.get("error", payload) if isinstance(payload, dict) else payload
         detail = error.get("message", "") if isinstance(error, dict) else str(error)
     except (json.JSONDecodeError, ValueError):
         detail = response.text[:500]
@@ -62,10 +62,12 @@ class ProviderHttpClient:
     def raw(self) -> httpx.AsyncClient:
         return self._client
 
-    async def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Perform a checked request, including mutations with empty responses."""
         try:
-            response = await self._client.post(path, json=payload)
+            response = await self._client.request(method, path, **kwargs)
             response.raise_for_status()
+            return response
         except httpx.HTTPStatusError as exc:
             raise map_http_error(self.provider, exc) from exc
         except httpx.TimeoutException as exc:
@@ -74,25 +76,26 @@ class ProviderHttpClient:
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(self.provider, str(exc), cause=exc) from exc
+
+    def parse_json(self, response: httpx.Response) -> Any:
         try:
             data = response.json()
         except (json.JSONDecodeError, ValueError) as exc:
             raise ProviderError(
-                self.provider, f"non-JSON response from {path}", retryable=False, cause=exc
+                self.provider, "non-JSON response", retryable=False, cause=exc
             ) from exc
+        if self.provider == "milvus" and isinstance(data, dict) and data.get("code", 0) != 0:
+            raise ProviderError(self.provider, str(data.get("message", "operation failed")))
+        return data
+
+    async def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self.parse_json(await self.request("POST", path, json=payload))
         if not isinstance(data, dict):
             raise ProviderError(self.provider, "unexpected response shape", retryable=False)
         return data
 
     async def get_json(self, path: str) -> dict[str, Any]:
-        try:
-            response = await self._client.get(path)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise map_http_error(self.provider, exc) from exc
-        except httpx.HTTPError as exc:
-            raise ProviderError(self.provider, str(exc), cause=exc) from exc
+        data = self.parse_json(await self.request("GET", path))
         if not isinstance(data, dict):
             raise ProviderError(self.provider, "unexpected response shape", retryable=False)
         return data

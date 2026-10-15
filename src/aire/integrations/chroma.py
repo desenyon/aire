@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.integrations.vector_codec import pack_metadata, unpack_chunk
 from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
@@ -41,13 +42,14 @@ class ChromaVectorStore(VectorStore):
 
     async def upsert(self, chunks: list[Chunk]) -> int:
         cid = await self._id()
-        await self.client.raw.post(
+        await self.client.request(
+            "POST",
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/upsert",
             json={
                 "ids": [c.id for c in chunks],
                 "embeddings": [c.embedding or [] for c in chunks],
                 "documents": [c.text for c in chunks],
-                "metadatas": [c.metadata for c in chunks],
+                "metadatas": [pack_metadata(c) for c in chunks],
             },
         )
         return len(chunks)
@@ -60,6 +62,8 @@ class ChromaVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         cid = await self._id()
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
         limit = k * 5 if acl else k
         body: dict[str, Any] = {"query_embeddings": [vector], "n_results": limit}
@@ -75,10 +79,10 @@ class ChromaVectorStore(VectorStore):
         distances = (data.get("distances") or [[]])[0]
         results: list[ScoredChunk] = []
         for i, chunk_id in enumerate(ids):
-            chunk = Chunk(
-                id=str(chunk_id),
-                text=str(docs[i]) if i < len(docs) else "",
-                metadata=dict(metas[i]) if i < len(metas) and metas[i] else {},
+            chunk = unpack_chunk(
+                str(chunk_id),
+                str(docs[i]) if i < len(docs) else "",
+                dict(metas[i]) if i < len(metas) and metas[i] else {},
             )
             distance = float(distances[i]) if i < len(distances) else 1.0
             results.append(ScoredChunk(chunk=chunk, score=1.0 - min(distance, 1.0)))
@@ -93,14 +97,26 @@ class ChromaVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         cid = await self._id()
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
         body: dict[str, Any] = {"limit": min(k * 20, 500)}
         if store_filter:
             body["where"] = store_filter
-        data = await self.client.post_json(
-            f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/get",
-            body,
-        )
+        body["limit"] = 500
+        body["offset"] = 0
+        data: dict[str, Any] = {"ids": [], "documents": [], "metadatas": []}
+        while True:
+            page = await self.client.post_json(
+                f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/get",
+                body,
+            )
+            for key in data:
+                data[key].extend(page.get(key) or [])
+            size = len(page.get("ids") or [])
+            if size < body["limit"]:
+                break
+            body["offset"] += size
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
         for i, chunk_id in enumerate(data.get("ids", [])):
@@ -108,10 +124,10 @@ class ChromaVectorStore(VectorStore):
             overlap = len(terms & set(tokenize(text)))
             if overlap or not terms:
                 metas = data.get("metadatas") or []
-                chunk = Chunk(
-                    id=str(chunk_id),
-                    text=text,
-                    metadata=dict(metas[i]) if i < len(metas) and metas[i] else {},
+                chunk = unpack_chunk(
+                    str(chunk_id),
+                    text,
+                    dict(metas[i]) if i < len(metas) and metas[i] else {},
                 )
                 scored.append(ScoredChunk(chunk=chunk, score=float(overlap)))
         # where may be unsupported on some get paths — enforce equality client-side.
@@ -122,7 +138,8 @@ class ChromaVectorStore(VectorStore):
 
     async def delete(self, ids: list[str]) -> int:
         cid = await self._id()
-        await self.client.raw.post(
+        await self.client.request(
+            "POST",
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/delete",
             json={"ids": ids},
         )
@@ -145,15 +162,16 @@ class ChromaVectorStore(VectorStore):
     async def count(self) -> int:
         cid = await self._id()
         # Chroma's count endpoint returns a bare JSON integer, not an object.
-        response = await self.client.raw.get(
-            f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/count"
+        response = await self.client.request(
+            "GET",
+            f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/count",
         )
-        data = response.json()
+        data = self.client.parse_json(response)
         return int(data) if isinstance(data, int) else int(data.get("count", 0))
 
     async def health(self) -> HealthStatus:
         try:
-            await self.client.raw.get("/api/v2/heartbeat")
+            await self.client.request("GET", "/api/v2/heartbeat")
         except Exception as exc:
             return HealthStatus.unhealthy(f"chroma unreachable: {exc}")
         return HealthStatus.healthy()

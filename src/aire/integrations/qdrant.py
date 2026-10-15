@@ -7,6 +7,7 @@ Activate with ``register(runtime)`` or by using ``AI.rag.vector_store("qdrant:..
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from uuid import NAMESPACE_URL, uuid5
 
 from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
@@ -33,6 +34,11 @@ def _qdrant_must_filter(store_filter: dict[str, Any] | None) -> dict[str, Any] |
     }
 
 
+def point_id(chunk_id: str) -> str:
+    """Stable UUID for the original Aire ID, identical across processes."""
+    return str(uuid5(NAMESPACE_URL, f"aire:chunk:{chunk_id}"))
+
+
 class QdrantVectorStore(VectorStore):
     """Vector store backed by a Qdrant collection."""
 
@@ -53,8 +59,11 @@ class QdrantVectorStore(VectorStore):
             return
         try:
             await self.client.get_json(f"/collections/{self.collection}")
-        except ProviderError:
-            await self.client.raw.put(
+        except ProviderError as exc:
+            if exc.status != 404:
+                raise
+            await self.client.request(
+                "PUT",
                 f"/collections/{self.collection}",
                 json={"vectors": {"size": dimension, "distance": "Cosine"}},
             )
@@ -67,14 +76,20 @@ class QdrantVectorStore(VectorStore):
         await self._ensure_collection(dimension)
         points = [
             {
-                "id": abs(hash(c.id)) % (2**63),
+                "id": point_id(c.id),
                 "vector": c.embedding or [],
-                "payload": {"aire_id": c.id, "text": c.text, "metadata": c.metadata},
+                "payload": {
+                    "aire_id": c.id,
+                    "document_id": c.document_id,
+                    "index": c.index,
+                    "text": c.text,
+                    "metadata": c.metadata,
+                },
             }
             for c in chunks
         ]
-        response = await self.client.raw.put(
-            f"/collections/{self.collection}/points", json={"points": points}
+        response = await self.client.request(
+            "PUT", f"/collections/{self.collection}/points?wait=true", json={"points": points}
         )
         if response.status_code >= 400:
             raise ProviderError("qdrant", f"upsert failed: HTTP {response.status_code}")
@@ -87,6 +102,8 @@ class QdrantVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
         # Over-fetch when ACL post-filter may drop hits.
         limit = k * 5 if acl else k
@@ -109,15 +126,31 @@ class QdrantVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         # Qdrant has no built-in BM25; scroll and score client-side for hybrid fusion.
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
         body: dict[str, Any] = {"limit": min(k * 20, 500), "with_payload": True}
         native = _qdrant_must_filter(store_filter)
         if native:
             body["filter"] = native
-        data = await self.client.post_json(f"/collections/{self.collection}/points/scroll", body)
+        points = []
+        seen_offsets = set()
+        while True:
+            data = await self.client.post_json(
+                f"/collections/{self.collection}/points/scroll", body
+            )
+            result = data.get("result", {})
+            points.extend(result.get("points", []))
+            offset = result.get("next_page_offset")
+            if offset is None:
+                break
+            if str(offset) in seen_offsets:
+                raise ProviderError("qdrant", "repeated scroll offset", retryable=False)
+            seen_offsets.add(str(offset))
+            body["offset"] = offset
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
-        for point in data.get("result", {}).get("points", []):
+        for point in points:
             hit = _to_scored(point)
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
@@ -128,8 +161,10 @@ class QdrantVectorStore(VectorStore):
         return scored[:k]
 
     async def delete(self, ids: list[str]) -> int:
-        await self.client.raw.post(
-            f"/collections/{self.collection}/points/delete", json={"points": ids}
+        await self.client.request(
+            "POST",
+            f"/collections/{self.collection}/points/delete?wait=true",
+            json={"points": [point_id(i) for i in ids]},
         )
         return len(ids)
 
@@ -137,12 +172,13 @@ class QdrantVectorStore(VectorStore):
         """Delete points whose payload metadata ``document_id`` or ``source`` matches."""
         filt = {
             "should": [
-                {"key": "metadata.document_id", "match": {"value": document_id}},
+                {"key": "document_id", "match": {"value": document_id}},
                 {"key": "metadata.source", "match": {"value": document_id}},
             ]
         }
-        await self.client.raw.post(
-            f"/collections/{self.collection}/points/delete",
+        await self.client.request(
+            "POST",
+            f"/collections/{self.collection}/points/delete?wait=true",
             json={"filter": filt},
         )
         # Qdrant filter-delete does not return a count; best-effort.
@@ -154,7 +190,7 @@ class QdrantVectorStore(VectorStore):
 
     async def health(self) -> HealthStatus:
         try:
-            await self.client.raw.get("/healthz")
+            await self.client.request("GET", "/healthz")
         except Exception as exc:
             return HealthStatus.unhealthy(f"qdrant unreachable: {exc}")
         return HealthStatus.healthy()
@@ -172,6 +208,8 @@ def _to_scored(hit: dict[str, Any]) -> ScoredChunk:
     payload = hit.get("payload", {}) or {}
     chunk = Chunk(
         id=str(payload.get("aire_id", hit.get("id", ""))),
+        document_id=str(payload.get("document_id", "")),
+        index=int(payload.get("index", 0)),
         text=str(payload.get("text", "")),
         metadata=dict(payload.get("metadata", {}) or {}),
     )

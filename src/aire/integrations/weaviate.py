@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.integrations.vector_codec import chunk_uuid, pack_metadata, unpack_chunk
 from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore
 from aire.rag.types import Chunk, ScoredChunk
@@ -33,9 +35,13 @@ class WeaviateVectorStore(VectorStore):
     async def _ensure_class(self) -> None:
         if self._ensured:
             return
-        response = await self.client.raw.get(f"/v1/schema/{self._class}")
-        if response.status_code == 404:
-            await self.client.raw.post(
+        try:
+            await self.client.request("GET", f"/v1/schema/{self._class}")
+        except ProviderError as exc:
+            if exc.status != 404:
+                raise
+            await self.client.request(
+                "POST",
                 "/v1/schema",
                 json={
                     "class": self._class,
@@ -54,20 +60,29 @@ class WeaviateVectorStore(VectorStore):
         objects = [
             {
                 "class": self._class,
+                "id": chunk_uuid(c.id),
                 "vector": c.embedding or [],
                 "properties": {
                     "aire_id": c.id,
                     "text": c.text,
-                    "metadata_json": json.dumps(c.metadata),
+                    "metadata_json": json.dumps(pack_metadata(c)),
                 },
             }
             for c in chunks
         ]
-        await self.client.post_json("/v1/batch/objects", {"objects": objects})
+        response = await self.client.request("POST", "/v1/batch/objects", json={"objects": objects})
+        rows = self.client.parse_json(response)
+        if not isinstance(rows, list):
+            raise ProviderError("weaviate", "unexpected batch response", retryable=False)
+        for row in rows:
+            if row.get("result", {}).get("errors"):
+                raise ProviderError("weaviate", "batch object failed", retryable=False)
         return len(chunks)
 
     async def _graphql(self, query: str) -> Any:
         data = await self.client.post_json("/v1/graphql", {"query": query})
+        if data.get("errors"):
+            raise ProviderError("weaviate", "GraphQL query failed", retryable=False)
         return data.get("data", {}).get("Get", {}).get(self._class, [])
 
     async def search(
@@ -121,7 +136,9 @@ class WeaviateVectorStore(VectorStore):
         await self._ensure_class()
         removed = 0
         for chunk_id in ids:
-            response = await self.client.raw.delete(f"/v1/objects/{self._class}/{chunk_id}")
+            response = await self.client.request(
+                "DELETE", f"/v1/objects/{self._class}/{chunk_uuid(chunk_id)}"
+            )
             removed += int(response.status_code < 400)
         return removed
 
@@ -157,7 +174,7 @@ class WeaviateVectorStore(VectorStore):
 
     async def health(self) -> HealthStatus:
         try:
-            await self.client.raw.get("/v1/.well-known/ready")
+            await self.client.request("GET", "/v1/.well-known/ready")
         except Exception as exc:
             return HealthStatus.unhealthy(f"weaviate unreachable: {exc}")
         return HealthStatus.healthy()
@@ -180,12 +197,7 @@ def _to_scored(row: dict[str, Any], *, score_key: str = "distance") -> ScoredChu
     except json.JSONDecodeError:
         metadata = {}
     return ScoredChunk(
-        chunk=Chunk(
-            id=str(row.get("aire_id", "")),
-            text=str(row.get("text", "")),
-            metadata=metadata,
-            document_id=str(metadata.get("document_id") or ""),
-        ),
+        chunk=unpack_chunk(str(row.get("aire_id", "")), str(row.get("text", "")), metadata),
         score=score,
     )
 

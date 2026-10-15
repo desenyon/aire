@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from aire.core.errors import ConfigurationError
 from aire.core.types import Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.integrations.vector_codec import pack_metadata, unpack_chunk
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -31,7 +32,7 @@ class PineconeVectorStore(VectorStore):
             return 0
         vectors: list[dict[str, Any]] = []
         for c in chunks:
-            metadata: dict[str, Any] = {**c.metadata, "text": c.text}
+            metadata: dict[str, Any] = {**pack_metadata(c), "text": c.text}
             vectors.append({"id": c.id, "values": c.embedding or [], "metadata": metadata})
         await self.client.post_json("/vectors/upsert", {"vectors": vectors})
         return len(chunks)
@@ -56,23 +57,35 @@ class PineconeVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
-        # Pinecone has no native BM25; fetch a page and score client-side.
-        # Honesty: describe() omits keyword-search so Retriever skips hybrid.
-        body: dict[str, Any] = {
-            "vector": [0.0],
-            "topK": min(k * 20, 500),
-            "includeMetadata": True,
-        }
-        if filter:
-            plain = {a: b for a, b in filter.items() if a != "__acl__"}
-            if plain:
-                body["filter"] = plain
-        data = await self.client.post_json("/query", body)
+        if k <= 0:
+            return []
+        matches: list[dict[str, Any]] = []
+        params: dict[str, Any] = {"limit": 100}
+        seen_tokens = set()
+        while True:
+            response = await self.client.request("GET", "/vectors/list", params=params)
+            page = self.client.parse_json(response)
+            ids = [v["id"] for v in page.get("vectors", [])]
+            if ids:
+                response = await self.client.request(
+                    "GET", "/vectors/fetch", params=[("ids", i) for i in ids]
+                )
+                values = self.client.parse_json(response).get("vectors", {})
+                matches.extend(values.values())
+            token = page.get("pagination", {}).get("next")
+            if not token:
+                break
+            if token in seen_tokens:
+                from aire.core.errors import ProviderError
+
+                raise ProviderError("pinecone", "repeated listing token", retryable=False)
+            seen_tokens.add(token)
+            params["paginationToken"] = token
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
         from aire.rag.acl import matches_acl
 
-        for match in data.get("matches", []):
+        for match in matches:
             hit = _to_scored(match)
             if filter:
                 acl = filter.get("__acl__") if isinstance(filter.get("__acl__"), dict) else None
@@ -105,7 +118,7 @@ def _to_scored(match: dict[str, Any]) -> ScoredChunk:
     metadata = dict(match.get("metadata", {}) or {})
     text = str(metadata.pop("text", ""))
     return ScoredChunk(
-        chunk=Chunk(id=str(match.get("id", "")), text=text, metadata=metadata),
+        chunk=unpack_chunk(str(match.get("id", "")), text, metadata),
         score=float(match.get("score", 0.0)),
     )
 
