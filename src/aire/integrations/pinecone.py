@@ -13,6 +13,7 @@ from aire.core.errors import ConfigurationError
 from aire.core.types import Manifest
 from aire.integrations.http import ProviderHttpClient
 from aire.integrations.vector_codec import pack_metadata, unpack_chunk
+from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
 
@@ -44,11 +45,16 @@ class PineconeVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
-        body: dict[str, Any] = {"vector": vector, "topK": k, "includeMetadata": True}
-        if filter:
-            body["filter"] = {key: {"$eq": value} for key, value in filter.items()}
+        if k <= 0:
+            return []
+        store_filter, acl = split_acl_filter(filter)
+        limit = max(k, await self.count()) if acl else k
+        body: dict[str, Any] = {"vector": vector, "topK": limit, "includeMetadata": True}
+        if store_filter:
+            body["filter"] = {key: {"$eq": value} for key, value in store_filter.items()}
         data = await self.client.post_json("/query", body)
-        return [_to_scored(m) for m in data.get("matches", [])]
+        hits = [_to_scored(m) for m in data.get("matches", [])]
+        return apply_acl_to_hits(apply_metadata_filter(hits, store_filter), acl)[:k]
 
     async def search_text(
         self,
@@ -94,6 +100,8 @@ class PineconeVectorStore(VectorStore):
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
                 scored.append(ScoredChunk(chunk=hit.chunk, score=float(overlap)))
+        store_filter, acl = split_acl_filter(filter)
+        scored = apply_acl_to_hits(apply_metadata_filter(scored, store_filter), acl)
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 

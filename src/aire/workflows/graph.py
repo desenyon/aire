@@ -15,9 +15,11 @@ Semantics:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,8 @@ from aire.workflows.types import (
 
 ApproverFn = Callable[[str], bool | Awaitable[bool]]
 
+_ACTIVE_CHECKPOINTS: set[str] = set()
+
 _TERMINAL = {NodeStatus.COMPLETED, NodeStatus.SKIPPED, NodeStatus.FAILED}
 
 
@@ -48,10 +52,12 @@ class Workflow:
         max_visits: int = 3,
         checkpoint_path: str | Path | None = None,
         approver: ApproverFn | None = None,
+        definition_version: str = "",
     ) -> None:
         if max_visits < 1:
             raise WorkflowError("max_visits must be positive")
         self.name = name
+        self.definition_version = definition_version
         self.max_visits = max_visits
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.approver = approver
@@ -128,11 +134,36 @@ class Workflow:
             run_id=wf_state.id,
         )
 
-    async def run_stream(  # noqa: C901 — scheduling and cancellation share one state machine
+    async def run_stream(
         self, input: Any = None, *, state: WorkflowState | None = None
     ) -> AsyncIterator[WorkflowEvent]:
+        key = str(self.checkpoint_path.resolve()) if self.checkpoint_path else None
+        if key is not None and key in _ACTIVE_CHECKPOINTS:
+            raise WorkflowError(
+                "checkpoint already has an active execution", code="workflow.checkpoint_busy"
+            )
+        if key is not None:
+            _ACTIVE_CHECKPOINTS.add(key)
+        stream = self._run_stream(input, state=state)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await stream.aclose()
+            if key is not None:
+                _ACTIVE_CHECKPOINTS.discard(key)
+
+    async def _run_stream(  # noqa: C901 — scheduling and cancellation share one state machine
+        self, input: Any = None, *, state: WorkflowState | None = None
+    ) -> AsyncGenerator[WorkflowEvent, None]:
         """Execute, yielding an event after every node transition."""
         wf_state = state or WorkflowState(input=input)
+        fingerprint = self._graph_fingerprint()
+        if wf_state.graph_fingerprint is not None and wf_state.graph_fingerprint != fingerprint:
+            raise WorkflowError(
+                "checkpoint graph definition differs", code="workflow.graph_changed"
+            )
+        wf_state.graph_fingerprint = fingerprint
         context: dict[str, Any] = {"workflow": self.name, "run_id": wf_state.id}
         status: dict[str, NodeStatus] = {}
         visits: dict[str, int] = {}
@@ -498,7 +529,19 @@ class Workflow:
                 "resume() requires a checkpoint path",
                 context={"workflow": self.name},
             )
-        return await self.run(state=self.load_checkpoint(path))
+        state = self.load_checkpoint(path)
+        if (
+            state.graph_fingerprint is not None
+            and state.graph_fingerprint != self._graph_fingerprint()
+        ):
+            raise WorkflowError(
+                "checkpoint graph definition differs", code="workflow.graph_changed"
+            )
+        return await self.run(state=state)
+
+    def _graph_fingerprint(self) -> str:
+        payload = {**self.describe(), "definition_version": self.definition_version}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     # -- introspection -----------------------------------------------------------------
 

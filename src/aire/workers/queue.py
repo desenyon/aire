@@ -216,7 +216,7 @@ def _require_redis() -> Any:
             code="workers.redis_missing",
             context={"extra": "aire-ai[redis]", "package": "redis"},
         )
-    import redis  # type: ignore[import-not-found]
+    import redis
 
     return redis
 

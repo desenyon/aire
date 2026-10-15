@@ -165,7 +165,7 @@ def create_apscheduler(scheduler: Scheduler | None = None) -> Any:
             "(required for cron; or use aire.schedule.Scheduler interval runner)",
             code="schedule.apscheduler_missing",
         )
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-not-found]
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     sched = scheduler or Scheduler()
     apo = AsyncIOScheduler()

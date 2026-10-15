@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from aire.agents.memory import Memory
 from aire.core.content import Message
-from aire.core.serialization import iter_jsonl
+from aire.core.serialization import iter_jsonl, write_jsonl
 from aire.memory.types import MemoryEntry, MemoryKind
 from aire.rag.store import LocalVectorStore, VectorStore
 from aire.rag.types import Chunk
@@ -57,6 +57,8 @@ class LongTermMemory(Memory):
             Path(path) / "semantic.json" if path else None, name="memory"
         )
         self.path = Path(path) if path else None
+        if window < 1:
+            raise ValueError("memory window must be positive")
         self.window = window
         self._episodes: list[Message] = []
         if self.path:
@@ -64,6 +66,7 @@ class LongTermMemory(Memory):
             if episodes_file.is_file():
                 for row in iter_jsonl(episodes_file):
                     self._episodes.append(Message.model_validate(row))
+                self._episodes = self._episodes[-self.window :]
 
     # -- embedding -------------------------------------------------------------------
 
@@ -84,15 +87,17 @@ class LongTermMemory(Memory):
     # -- agent Memory interface --------------------------------------------------------
 
     async def add(self, message: Message) -> None:
-        self._episodes.append(message)
-        if len(self._episodes) > self.window:
-            del self._episodes[: len(self._episodes) - self.window]
+        candidate = [*self._episodes, message][-self.window :]
         if self.path:
             self.path.mkdir(parents=True, exist_ok=True)
-            with (self.path / "episodes.jsonl").open("a") as fh:
-                fh.write(message.model_dump_json() + "\n")
+            write_jsonl(
+                self.path / "episodes.jsonl", [m.model_dump(mode="json") for m in candidate]
+            )
+        self._episodes = candidate
 
     async def recall(self, *, limit: int | None = None) -> list[Message]:
+        if limit is not None and limit <= 0:
+            return []
         return self._episodes[-limit:] if limit else list(self._episodes)
 
     async def clear(self) -> None:
@@ -195,9 +200,7 @@ class LongTermMemory(Memory):
             return
         self.path.mkdir(parents=True, exist_ok=True)
         episodes_file = self.path / "episodes.jsonl"
-        with episodes_file.open("w") as fh:
-            for message in self._episodes:
-                fh.write(message.model_dump_json() + "\n")
+        write_jsonl(episodes_file, [message.model_dump(mode="json") for message in self._episodes])
 
     async def add_procedural(
         self,

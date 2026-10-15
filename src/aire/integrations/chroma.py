@@ -65,10 +65,10 @@ class ChromaVectorStore(VectorStore):
         if k <= 0:
             return []
         store_filter, acl = split_acl_filter(filter)
-        limit = k * 5 if acl else k
+        limit = max(k, await self.count()) if acl else k
         body: dict[str, Any] = {"query_embeddings": [vector], "n_results": limit}
         if store_filter:
-            body["where"] = store_filter  # Chroma where without __acl__
+            body["where"] = _chroma_where(store_filter)
         data = await self.client.post_json(
             f"/api/v2/tenants/default_tenant/databases/default_database/collections/{cid}/query",
             body,
@@ -102,7 +102,7 @@ class ChromaVectorStore(VectorStore):
         store_filter, acl = split_acl_filter(filter)
         body: dict[str, Any] = {"limit": min(k * 20, 500)}
         if store_filter:
-            body["where"] = store_filter
+            body["where"] = _chroma_where(store_filter)
         body["limit"] = 500
         body["offset"] = 0
         data: dict[str, Any] = {"ids": [], "documents": [], "metadatas": []}
@@ -195,3 +195,8 @@ def register(runtime: Runtime) -> None:
         return ChromaVectorStore(name, client)
 
     runtime.vector_stores.register("chroma", _factory, replace=True)
+
+
+def _chroma_where(values: dict[str, Any]) -> dict[str, Any]:
+    clauses = [{key: {"$eq": value}} for key, value in values.items()]
+    return clauses[0] if len(clauses) == 1 else {"$and": clauses}

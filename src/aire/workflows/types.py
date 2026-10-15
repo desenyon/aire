@@ -72,7 +72,8 @@ class WorkflowState(BaseModel):
     records: list[NodeRecord] = Field(default_factory=list)
     # Version 1 persists edge counters and the ready/in-flight wave. Version 0
     # denotes older checkpoints reconstructed from records and outputs.
-    scheduler_version: int = 0
+    scheduler_version: int = Field(default=0, ge=0, le=1)
+    graph_fingerprint: str | None = None
     edge_firings: dict[str, dict[str, int]] = Field(default_factory=dict)
     edge_consumed: dict[str, dict[str, int]] = Field(default_factory=dict)
     pending: list[str] = Field(default_factory=list)

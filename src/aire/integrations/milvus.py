@@ -78,11 +78,11 @@ class MilvusVectorStore(VectorStore):
         if k <= 0:
             return []
         store_filter, acl = split_acl_filter(filter)
-        # Metadata is stored as a JSON string field — native scalar filters on nested
-        # keys are awkward; over-fetch then apply equality + ACL client-side.
-        limit = k * 5 if (store_filter or acl) else k
+        # Metadata lives in JSON; rank all candidates before local equality/ACL filtering.
+        limit = max(k, await self.count()) if (store_filter or acl) else k
         body: dict[str, Any] = {
             "collectionName": self.collection,
+            "consistencyLevel": "Strong",
             "data": [vector],
             "limit": limit,
             "outputFields": ["id", "text", "metadata"],
@@ -111,6 +111,7 @@ class MilvusVectorStore(VectorStore):
                 {
                     "collectionName": self.collection,
                     "filter": "id != ''",
+                    "consistencyLevel": "Strong",
                     "limit": 500,
                     "offset": len(rows),
                     "outputFields": ["id", "text", "metadata"],
@@ -167,9 +168,16 @@ class MilvusVectorStore(VectorStore):
 
     async def count(self) -> int:
         data = await self.client.post_json(
-            "/v2/vectordb/collections/get_stats", {"collectionName": self.collection}
+            "/v2/vectordb/entities/query",
+            {
+                "collectionName": self.collection,
+                "filter": "",
+                "outputFields": ["count(*)"],
+                "consistencyLevel": "Strong",
+            },
         )
-        return int(data.get("data", {}).get("rowCount", 0))
+        rows = data.get("data", [])
+        return int(rows[0].get("count(*)", 0)) if rows else 0
 
     def describe(self) -> Manifest:
         return Manifest(

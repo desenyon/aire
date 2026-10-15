@@ -92,11 +92,12 @@ class WeaviateVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         await self._ensure_class()
         store_filter, acl = split_acl_filter(filter)
-        # Metadata lives in a JSON text property — GraphQL where on nested keys is
-        # awkward; over-fetch then apply equality + ACL client-side.
-        limit = k * 5 if (store_filter or acl) else k
+        # Metadata lives in JSON; rank all candidates before local equality/ACL filtering.
+        limit = max(k, await self.count()) if (store_filter or acl) else k
         query = (
             "{ Get { "
             f"{self._class}(nearVector: {{vector: {json.dumps(vector)}}}, limit: {limit})"
@@ -117,16 +118,25 @@ class WeaviateVectorStore(VectorStore):
     ) -> list[ScoredChunk]:
         await self._ensure_class()
         store_filter, acl = split_acl_filter(filter)
-        limit = k * 5 if (store_filter or acl) else k
-        safe = json.dumps(query)
-        gql = (
-            "{ Get { "
-            f'{self._class}(bm25: {{query: {safe}, properties: ["text"]}}, limit: {limit})'
-            " { aire_id text metadata_json _additional { score id } } } }"
-        )
-        rows = await self._graphql(gql)
-        if not isinstance(rows, list):
+        if k <= 0:
             return []
+        from aire.rag.store import tokenize
+
+        rows: list[dict[str, Any]] = []
+        safe = json.dumps(query)
+        while True:
+            bm25 = f'bm25: {{query: {safe}, properties: ["text"]}}, ' if tokenize(query) else ""
+            gql = (
+                "{ Get { "
+                f"{self._class}({bm25}limit: 500, offset: {len(rows)})"
+                " { aire_id text metadata_json _additional { score id } } } }"
+            )
+            page = await self._graphql(gql)
+            if not isinstance(page, list):
+                raise ProviderError("weaviate", "invalid query rows", retryable=False)
+            rows.extend(page)
+            if len(page) < 500:
+                break
         hits = [_to_scored(row, score_key="score") for row in rows]
         hits = apply_metadata_filter(hits, store_filter)
         hits = apply_acl_to_hits(hits, acl)

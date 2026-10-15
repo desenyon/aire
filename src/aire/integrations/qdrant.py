@@ -105,8 +105,8 @@ class QdrantVectorStore(VectorStore):
         if k <= 0:
             return []
         store_filter, acl = split_acl_filter(filter)
-        # Over-fetch when ACL post-filter may drop hits.
-        limit = k * 5 if acl else k
+        # Enumerate every ranked candidate before applying client-side ACL.
+        limit = max(k, await self.count()) if acl else k
         body: dict[str, Any] = {"vector": vector, "limit": limit, "with_payload": True}
         native = _qdrant_must_filter(store_filter)
         if native:
