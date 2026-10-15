@@ -53,7 +53,7 @@ jobs:
             uv run --locked --no-default-groups --group dev python "examples/$example/main.py"
           done
       - run: uv run --locked --no-default-groups --group dev mkdocs build --strict
-      - run: uv run --locked --no-default-groups --group dev python -m build
+      - run: uv run --locked --no-default-groups --group dev python -m build --no-isolation
       - name: Install wheel outside checkout
         run: uv run --locked --no-default-groups --group dev python scripts/verify_distribution.py dist/aire_ai-*.whl
       - name: Audit resolved production dependencies
@@ -163,5 +163,5 @@ jobs:
           version: "0.13.0"
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group test --group release --extra redis --extra pgvector --extra neo4j
-      - run: .venv/bin/python -m build
+      - run: .venv/bin/python -m build --no-isolation
       - run: .venv/bin/python scripts/verify_services.py --wheel dist/aire_ai-*.whl

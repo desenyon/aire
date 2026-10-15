@@ -50,7 +50,7 @@ version. A further source change requires a new version once publication occurs.
 The tag workflow:
 
 1. Verifies the current tested main/tag/version and repository metadata.
-2. Uses the locked tools and commit timestamp to build reproducible wheel/sdist.
+2. Uses the locked tools/backend without build isolation and the commit timestamp to build reproducible wheel/sdist.
 3. Checks metadata, typing/plugin/CLI/lazy-import behavior outside the checkout.
 4. Attaches source SHA, SHA-256 checksums and changelog-derived release notes.
 5. Downloads the bundle in a separate job and verifies the same bytes again.
@@ -59,7 +59,8 @@ The tag workflow:
    the actual published wheel in a fresh environment.
 7. Creates the GitHub Release with wheel, sdist, checksums, source provenance and
    correct `aire-ai` install instructions. Existing draft releases can resume;
-   an existing public release's assets must match on rerun.
+   an existing public release's assets must match on rerun, then its title/notes are refreshed
+   from the verified bundle.
 
 If a tag workflow is interrupted, rerun its failed jobs. To dispatch publication
 manually, select the **matching tag**, not main:

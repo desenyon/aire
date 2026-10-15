@@ -412,7 +412,7 @@ answer quality. [Evaluation examples](https://github.com/desenyon/aire/blob/main
 Tracing and metrics expose operational events when configured; they do not replace
 application monitoring, audit storage, or provider billing records.
 
-[MCP](https://github.com/desenyon/aire/blob/main/docs/mcp.md), [OpenAPI tools](https://github.com/desenyon/aire/blob/main/examples/openapi_tools/), and custom model/store
+[MCP](https://github.com/desenyon/aire/blob/main/docs/mcp.md), [OpenAPI tools](https://github.com/desenyon/aire/tree/main/examples/openapi_tools/), and custom model/store
 implementations provide extension points. Optional packages are imported lazily.
 Most components expose `.describe()` for capability inspection.
 

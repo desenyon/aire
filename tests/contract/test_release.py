@@ -1,7 +1,11 @@
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -196,3 +200,73 @@ def test_published_verification_checks_downloads_before_install(tmp_path, monkey
         with pytest.raises(ValueError):
             release.verify_published(manifest, True)
         assert installs == []
+
+
+def test_release_builds_use_locked_backend():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert any(dep.startswith("hatchling") for dep in project["dependency-groups"]["release"])
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    assert any(item["name"] == "hatchling" for item in lock["package"])
+    for workflow in ("release.yml", "ci.yml"):
+        for line in (ROOT / ".github/workflows" / workflow).read_text().splitlines():
+            if "python -m build" in line:
+                assert "--no-isolation" in line
+
+
+def test_existing_public_release_corrects_metadata_after_matching_assets(tmp_path):
+    release = release_module()
+    directory = bundle(tmp_path)
+    release.prepare_bundle(directory, "0.4.0", "abc", "python -m pip install aire-ai==0.4.0")
+    directory = directory.rename(tmp_path / "release-bundle")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    step = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step.get("name") == "Create GitHub release with verified assets"
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    gh = binaries / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        + """import json, os, pathlib, shutil, sys
+args = sys.argv[1:]
+with open(os.environ["AIRE_TEST_CALLS"], "a") as stream:
+    stream.write(json.dumps(args) + "\\n")
+if args[:2] == ["release", "view"]:
+    print(json.dumps({"isDraft": False}))
+elif args[:2] == ["release", "download"]:
+    destination = pathlib.Path(args[args.index("--dir") + 1])
+    destination.mkdir()
+    bundle = pathlib.Path(os.environ["AIRE_TEST_BUNDLE"])
+    sources = list((bundle / "dist").iterdir())
+    sources += [bundle / "metadata/SHA256SUMS", bundle / "metadata/provenance.json"]
+    for source in sources:
+        shutil.copy(source, destination / source.name)
+"""
+    )
+    gh.chmod(0o755)
+    jq = binaries / "jq"
+    jq.write_text("#!/bin/sh\nexit 1\n")  # Existing public release: .isDraft is false.
+    jq.chmod(0o755)
+    calls = tmp_path / "calls.jsonl"
+    environment = dict(
+        os.environ,
+        PATH=f"{binaries}:{os.environ['PATH']}",
+        RUNNER_TEMP=str(tmp_path),
+        GITHUB_REF_NAME="v0.4.0",
+        AIRE_TEST_CALLS=str(calls),
+        AIRE_TEST_BUNDLE=str(directory),
+    )
+    subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+    )
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    edits = [command for command in commands if command[:2] == ["release", "edit"]]
+    assert len(edits) == 1
+    assert "--notes-file" in edits[0]
+    assert "--title" in edits[0]
+    assert "--latest" in edits[0]

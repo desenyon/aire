@@ -1,5 +1,8 @@
 # 0.4.0 final review and decisions
 
+This historical review covers the implementation merge. The subsequent request
+to publish is tracked separately in the [publication repair](2026-10-14-release-publication.md).
+
 A fresh reviewer inspected baseline 70b4633 through e3e96de, ran 78 focused
 boundary tests, and reproduced three Important defects. There were no confirmed
 Critical findings. All three were accepted and repaired in 89e2dcc with regressions
