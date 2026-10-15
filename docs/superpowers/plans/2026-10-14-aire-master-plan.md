@@ -46,8 +46,8 @@ cannot close a capability. Unverified optional backends remain visibly unverifie
 
 ## Sequence
 
-Task 1 is implemented in this branch. Tasks 2–6 are the next release blockers. Tasks 7–11
-complete the advertised surface. Task 12 applies the final release gate. Task 2 can precede
+Tasks 1–11 are implemented and validated for 0.4.0. Task 12 applies the final
+GitHub/release gate, including main-only public documentation deployment. Task 2 can precede
 runtime repairs without changing their public contracts. No dependency PR is auto-merged.
 
 ### Task 1 — Correct distribution identity (F01; implemented)
@@ -61,7 +61,7 @@ runtime repairs without changing their public contracts. No dependency PR is aut
 - [x] Observe both new tests fail against `aire[...]` output.
 - [x] Correct install names; keep `import aire` and the `aire` executable unchanged.
 - [x] Verify 125 tests pass, 5 skip; lint, formatting and strict types pass.
-- [ ] Release the repaired package through Task 12. Current source changes are not yet on PyPI.
+- [x] Prepare versioned repaired artifacts through Task 12; PyPI publication is a separate release action, not implied by a merged version bump.
 
 ### Task 2 — Make installation and dependency maintenance reproducible (F02, F17)
 
@@ -71,12 +71,12 @@ new `tests/contract/test_distribution.py` and packaging smoke script.
 **Interfaces:** Preserve published extras. `aire.lock` remains an application-reference file;
 Python dependency locks have a separate explicit format and platform target.
 
-- [ ] Add wheel-install subprocess tests: metadata version equals `aire.__version__`, CLI entrypoint works, `py.typed` and provider entrypoints are present, optional stacks remain unloaded.
-- [ ] Add deployment-install test using a freshly built wheel in a temporary environment, outside the repo; preserve existing user `app.py` and custom requirements.
-- [ ] Introduce test/docs/release dependency groups and commit a tested lock; keep published compatibility extras during transition. Resolve all declared profiles and explicitly encode supported platform conflicts.
-- [ ] Replace duplicated aggregate constraints only after testing extra-equivalence in built metadata; centralize version provenance. Test oldest supported versions separately from the lock.
-- [ ] Generate exact deployment dependencies for a selected platform or rename the current loose file to requirements input with migration support; never label lower bounds a lock.
-- [ ] Verify `uv sync --locked` for development, base-wheel smoke on Linux/macOS, and Python 3.11–3.13 minimum/current profiles. Do not install every heavyweight extra by default.
+- [x] Add wheel-install subprocess tests: metadata version equals `aire.__version__`, CLI entrypoint works, `py.typed` and provider entrypoints are present, optional stacks remain unloaded.
+- [x] Add deployment-install test using a freshly built wheel in a temporary environment, outside the repo; preserve existing user `app.py` and custom requirements.
+- [x] Introduce test/docs/release dependency groups and commit a tested lock; keep published compatibility extras during transition. Resolve all declared profiles and explicitly encode supported platform conflicts.
+- [x] Replace duplicated aggregate constraints only after testing extra-equivalence in built metadata; centralize version provenance. Test oldest supported versions separately from the lock.
+- [x] Generate exact deployment dependencies for a selected platform or rename the current loose file to requirements input with migration support; never label lower bounds a lock.
+- [x] Verify `uv sync --locked` for development, base-wheel smoke on Linux/macOS, and Python 3.11–3.13 minimum/current profiles. Do not install every heavyweight extra by default.
 
 Design references: uv separates published extras from local [dependency groups](https://docs.astral.sh/uv/concepts/projects/dependencies/);
 [`--locked`](https://docs.astral.sh/uv/concepts/projects/sync/) rejects stale project locks.
@@ -89,12 +89,12 @@ Design references: uv separates published extras from local [dependency groups](
 **Interfaces:** Preserve `create_gateway` and model `generate/stream`; add optional cache
 namespace only if caller identity is part of the supported cache contract.
 
-- [ ] Add failing tests for OpenAI and Anthropic streaming output block/redact, including a secret split across chunks, a provider error, and disconnect cleanup.
-- [ ] Choose safe buffered output validation when output rails are enabled; document the latency cost. Preserve unguarded native streaming when explicitly configured.
-- [ ] Test nested ToolCall argument mutation on stream replay cannot affect later results; deep-copy at the cache boundary.
-- [ ] Test role swaps, changed system messages, different images with identical captions, different namespaces, tool contexts, and differing response formats never share unsafe semantic results.
-- [ ] Centralize cache eligibility and exact context signatures for wrapper/gateway/Redis paths; only compare semantically eligible text within compatible context.
-- [ ] Verify security tests, existing provider/gateway protocol suites, and cache roundtrip tests using an injected transport and real local cache objects.
+- [x] Add failing tests for OpenAI and Anthropic streaming output block/redact, including a secret split across chunks, a provider error, and disconnect cleanup.
+- [x] Choose safe buffered output validation when output rails are enabled; document the latency cost. Preserve unguarded native streaming when explicitly configured.
+- [x] Test nested ToolCall argument mutation on stream replay cannot affect later results; deep-copy at the cache boundary.
+- [x] Test role swaps, changed system messages, different images with identical captions, different namespaces, tool contexts, and differing response formats never share unsafe semantic results.
+- [x] Centralize cache eligibility and exact context signatures for wrapper/gateway/Redis paths; only compare semantically eligible text within compatible context.
+- [x] Verify security tests, existing provider/gateway protocol suites, and cache roundtrip tests using an injected transport and real local cache objects.
 
 ### Task 4 — Share agent execution control (F04, F05, F06, F15)
 
@@ -103,12 +103,12 @@ namespace only if caller identity is part of the supported cache contract.
 **Interfaces:** Preserve `AgentExecutor.run`, `Agent.run`, `run_stream`, and `stream_tokens`;
 one internal control path handles budgets, cancellation, state transitions and usage.
 
-- [ ] Test zero token budget prevents provider invocation in all three paths; pre-cancelled context produces no model or tool call.
-- [ ] Test cancellation after one step, provider failure, exhausted step budget, output-only final usage, and client stream closure have consistent terminal behavior.
-- [ ] Test a synchronous tool does not block an async heartbeat and timeout returns before the tool completes; a timed-out write is never retried automatically.
-- [ ] Move synchronous tool bodies off the event loop with documented continuation semantics; enforce cancellation at model/tool boundaries and account usage on every path.
-- [ ] Remove duplicated loops only after parity tests; retain documented turn-based session persistence and separate-resume budget limits unless a new cumulative contract is implemented.
-- [ ] Verify agent/config/session/policy/tool tests plus reliable-local smoke; add a deterministic side-effect counter assertion for parallel tools and cancellation.
+- [x] Test zero token budget prevents provider invocation in all three paths; pre-cancelled context produces no model or tool call.
+- [x] Test cancellation after one step, provider failure, exhausted step budget, output-only final usage, and client stream closure have consistent terminal behavior.
+- [x] Test a synchronous tool does not block an async heartbeat and timeout returns before the tool completes; a timed-out write is never retried automatically.
+- [x] Move synchronous tool bodies off the event loop with documented continuation semantics; enforce cancellation at model/tool boundaries and account usage on every path.
+- [x] Remove duplicated loops only after parity tests; retain documented turn-based session persistence and separate-resume budget limits unless a new cumulative contract is implemented.
+- [x] Verify agent/config/session/policy/tool tests plus reliable-local smoke; add a deterministic side-effect counter assertion for parallel tools and cancellation.
 
 ### Task 5 — Repair remote adapter identity and failure contracts (F07, F08)
 
@@ -118,12 +118,12 @@ expanded `tests/live/test_live_stores.py`; `docs/{rag,migration}.md`.
 **Interfaces:** Preserve `VectorStore` CRUD methods. Define stable serialized Chunk identity,
 backend capability descriptions, and explicit unsupported replacement behavior.
 
-- [ ] Test Qdrant IDs in two subprocesses with different `PYTHONHASHSEED`; upsert/delete must use identical deterministic IDs.
-- [ ] Test `document_id`, chunk index, text, metadata and ID roundtrip through each adapter transport; replacing a document removes only its old generation.
-- [ ] Inject HTTP 401/404/429/500, malformed data and partial batches; assert normalized failures and no success count on failed writes/deletes.
-- [ ] Implement deterministic Qdrant IDs, full identity persistence, checked HTTP mutations, and paginated document enumeration or fail explicitly when unsupported.
-- [ ] Document migration from hash-derived IDs; use stored original IDs/reindexing rather than assuming old Python hashes are recoverable.
-- [ ] Run container-backed Aire CRUD/filter/replace/delete/reopen tests for supported services, including ACL filters before limits. Preserve backend-specific transaction limits.
+- [x] Test Qdrant IDs in two subprocesses with different `PYTHONHASHSEED`; upsert/delete must use identical deterministic IDs.
+- [x] Test `document_id`, chunk index, text, metadata and ID roundtrip through each adapter transport; replacing a document removes only its old generation.
+- [x] Inject HTTP 401/404/429/500, malformed data and partial batches; assert normalized failures and no success count on failed writes/deletes.
+- [x] Implement deterministic Qdrant IDs, full identity persistence, checked HTTP mutations, and paginated document enumeration or fail explicitly when unsupported.
+- [x] Document migration from hash-derived IDs; use stored original IDs/reindexing rather than assuming old Python hashes are recoverable.
+- [x] Run container-backed Aire CRUD/filter/replace/delete/reopen tests for supported services, including ACL filters before limits. Preserve backend-specific transaction limits.
 
 ### Task 6 — Make deployment startup, readiness and resource ownership truthful (F16)
 
@@ -132,11 +132,11 @@ new `tests/integration/test_deployment_contract.py`; `docs/{gateway,ARCHITECTURE
 **Interfaces:** Preserve application factories; add explicit offline fallback configuration
 with a safe default, and ownership-aware app shutdown.
 
-- [ ] Test configured Postgres/Redis initialization failure cannot return an echo service or HTTP-ready state.
-- [ ] Test degraded backend health gives a readiness failure while liveness can remain successful; validate auth on intended diagnostic endpoints.
-- [ ] Validate request bounds/types return structured 4xx responses, not raw ValueError/500; test agent concurrency/session isolation.
-- [ ] Implement fail-closed configuration, meaningful readiness, and lifespan shutdown for owned clients; never close externally owned resources unexpectedly.
-- [ ] Build generated container from the tested wheel, send a real request, exercise dependency outage/recovery, and verify graceful shutdown.
+- [x] Test configured Postgres/Redis initialization failure cannot return an echo service or HTTP-ready state.
+- [x] Test degraded backend health gives a readiness failure while liveness can remain successful; validate auth on intended diagnostic endpoints.
+- [x] Validate request bounds/types return structured 4xx responses, not raw ValueError/500; test agent concurrency/session isolation.
+- [x] Implement fail-closed configuration, meaningful readiness, and lifespan shutdown for owned clients; never close externally owned resources unexpectedly.
+- [x] Build generated container from the tested wheel, send a real request, exercise dependency outage/recovery, and verify graceful shutdown.
 
 ### Task 7 — Verify durable composition and memory/scheduling boundaries
 
@@ -144,11 +144,11 @@ with a safe default, and ownership-aware app shutdown.
 existing recovery tests and new `tests/integration/test_durable_composition.py`.
 **Interfaces:** Preserve Workflow/Worker/Session public results and at-least-once semantics.
 
-- [ ] Extend existing failure-injection coverage across claim, execution, result persistence, acknowledgement, recovery and repeated recovery; assert stable job IDs and no lost work.
-- [ ] Test concurrent workflow instances, cyclic/conditional joins, graph-definition changes on resume, cancellation and per-run checkpoint ownership.
-- [ ] Test long-term memory restart/recall with tool message integrity and tenant filters; test scheduler overlap, negative/zero intervals, failure records and shutdown.
-- [ ] Repair demonstrated gaps; describe local-only file queues and multi-process SQLite cache limitations. Do not promise exactly-once side effects.
-- [ ] Run local recovery suite and real Redis queue crash/recovery integration before promoting Redis support.
+- [x] Extend existing failure-injection coverage across claim, execution, result persistence, acknowledgement, recovery and repeated recovery; assert stable job IDs and no lost work.
+- [x] Test concurrent workflow instances, cyclic/conditional joins, graph-definition changes on resume, cancellation and per-run checkpoint ownership.
+- [x] Test long-term memory restart/recall with tool message integrity and tenant filters; test scheduler overlap, negative/zero intervals, failure records and shutdown.
+- [x] Repair demonstrated gaps; describe local-only file queues and multi-process SQLite cache limitations. Do not promise exactly-once side effects.
+- [x] Run local recovery suite and real Redis queue crash/recovery integration before promoting Redis support.
 
 ### Task 8 — Make evaluation and observability results dependable (F11, F14)
 
@@ -157,11 +157,11 @@ new `tests/unit/test_analytics_cli.py`, `tests/contract/test_evaluation.py`, OTL
 **Interfaces:** Preserve metric names/aliases; separate measured, estimated, synthetic and
 unsupported values in output. Resolve `AIRE_ANALYTICS` as a documented module attribute.
 
-- [ ] Test nonexistent analytics reference fails clearly; synthetic data always has `demo_mode=true`; real source survives JSON/Prometheus output.
-- [ ] Test empty datasets, zero denominators, missing metric gates, failed evaluation cases, judge/embedder absence and cached billing/token accounting.
-- [ ] Test OTLP payload hierarchy and flush-on-close with transport failures; telemetry failure cannot mask application errors.
-- [ ] Fix measured defects and extract shared metrics/error helpers; retain explicit lexical metric names and documented aliases.
-- [ ] Verify evaluated-system → gate → deployment flow on deterministic data; keep model quality claims separate from plumbing tests.
+- [x] Test nonexistent analytics reference fails clearly; synthetic data always has `demo_mode=true`; real source survives JSON/Prometheus output.
+- [x] Test empty datasets, zero denominators, missing metric gates, failed evaluation cases, judge/embedder absence and cached billing/token accounting.
+- [x] Test OTLP payload hierarchy and flush-on-close with transport failures; telemetry failure cannot mask application errors.
+- [x] Fix measured defects and extract shared metrics/error helpers; retain explicit lexical metric names and documented aliases.
+- [x] Verify evaluated-system → gate → deployment flow on deterministic data; keep model quality claims separate from plumbing tests.
 
 ### Task 9 — Complete optional ML, training, media and document contracts
 
@@ -170,11 +170,11 @@ new optional-backend contract suites and real small input fixtures.
 **Interfaces:** Keep adapter exports and documented stubs; each result indicates actual
 backend execution versus dry-run or placeholder output.
 
-- [ ] Build a minimal fixture for each advertised backend: sklearn/boosting fit-predict-save-load, Torch/Keras training, LoRA save-resume, distillation, quantization, image/audio/video/PDF/OCR conversion.
-- [ ] Test missing extras/binaries produce actionable errors with `aire-ai` names; exercise empty/corrupt inputs and unsupported model capabilities.
-- [ ] Test original methods through Aire, not just upstream imports; a tiny locally constructed model can verify training without downloading pretrained weights.
-- [ ] Repair demonstrated gaps, version floors, backend selection and serialization. Validate real media bytes when `stub=False`; refuse fabricated-success outputs.
-- [ ] Record platform/backend versions and live/manual evidence separately. Keep full foundation pretraining, hosted serving, YOLO and full video generation out of scope unless separately specified.
+- [x] Build a minimal fixture for each advertised backend: sklearn/boosting fit-predict-save-load, Torch/Keras training, LoRA save-resume, distillation, quantization, image/audio/video/PDF/OCR conversion.
+- [x] Test missing extras/binaries produce actionable errors with `aire-ai` names; exercise empty/corrupt inputs and unsupported model capabilities.
+- [x] Test original methods through Aire, not just upstream imports; a tiny locally constructed model can verify training without downloading pretrained weights.
+- [x] Repair demonstrated gaps, version floors, backend selection and serialization. Validate real media bytes when `stub=False`; refuse fabricated-success outputs.
+- [x] Record platform/backend versions and live/manual evidence separately. Keep full foundation pretraining, hosted serving, YOLO and full video generation out of scope unless separately specified.
 
 ### Task 10 — Verify MCP, plugins, tools and generated schemas
 
@@ -183,11 +183,11 @@ backend execution versus dry-run or placeholder output.
 **Interfaces:** Preserve stdio/HTTP subset and entrypoint groups; capability negotiation
 must match implemented handlers and errors.
 
-- [ ] Test actual stdio subprocess and HTTP transport initialize/list/call/resource/prompt roundtrips, deadlines, malformed frames, cancellation, auth and closure.
-- [ ] Test supported roots/sampling/progress callbacks and unsupported-method errors; publish exact protocol version/subset in docs and describe output.
-- [ ] Test OpenAPI nested schemas, required inputs, safe URL handling, tool permission/approval boundaries and plugin collisions/import failures.
-- [ ] Remove placeholder skill execution claims or implement the stated behavior; keep descriptive skill content explicitly descriptive.
-- [ ] Verify wheel-discovered providers and third-party plugin fixtures without globally mutating runtime state.
+- [x] Test actual stdio subprocess and HTTP transport initialize/list/call/resource/prompt roundtrips, deadlines, malformed frames, cancellation, auth and closure.
+- [x] Test supported roots/sampling/progress callbacks and unsupported-method errors; publish exact protocol version/subset in docs and describe output.
+- [x] Test OpenAPI nested schemas, required inputs, safe URL handling, tool permission/approval boundaries and plugin collisions/import failures.
+- [x] Remove placeholder skill execution claims or implement the stated behavior; keep descriptive skill content explicitly descriptive.
+- [x] Verify wheel-discovered providers and third-party plugin fixtures without globally mutating runtime state.
 
 ### Task 11 — Consolidate capability documentation and CLI examples (F13, F14, F15)
 
@@ -196,12 +196,12 @@ must match implemented handlers and errors.
 **Interfaces:** Preserve all 23 `AI.describe()['namespaces']` entries and frozen exports.
 A single capability matrix records operations, maturity, limits, evidence and ownership.
 
-- [ ] Inventory every documented operation and link its test/example; classify supported, experimental, intentionally unsupported or unverified. Bugs stay open.
-- [ ] Test CLI init/doctor/deploy/evaluate/analytics/manifest through Typer's runner and wheel subprocesses; test read-only and failing exit paths.
-- [ ] Convert examples to assert their named outcome: calculator executes, gateway handles a request, evaluation gate blocks failure, durable workflow resumes.
-- [ ] Reconcile MCP/Pages/stub claims, remove duplicate status lists, link documentation to the canonical capability matrix; preserve migration history.
-- [ ] Extract facade namespaces/shared CLI output only where tests protect identity and signatures. Remove no-op aliases only through a documented deprecation process.
-- [ ] Run all offline examples in temporary directories plus strict docs and link verification.
+- [x] Inventory every documented operation and link its test/example; classify supported, experimental, intentionally unsupported or unverified. Bugs stay open.
+- [x] Test CLI init/doctor/deploy/evaluate/analytics/manifest through Typer's runner and wheel subprocesses; test read-only and failing exit paths.
+- [x] Convert examples to assert their named outcome: calculator executes, gateway handles a request, evaluation gate blocks failure, durable workflow resumes.
+- [x] Reconcile MCP/Pages/stub claims, remove duplicate status lists, link documentation to the canonical capability matrix; preserve migration history.
+- [x] Extract facade namespaces/shared CLI output only where tests protect identity and signatures. Remove no-op aliases only through a documented deprecation process.
+- [x] Run all offline examples in temporary directories plus strict docs and link verification.
 
 ### Task 12 — Refresh GitHub PRs and gate the next release (F12, F14, F17)
 
@@ -212,9 +212,9 @@ A single capability matrix records operations, maturity, limits, evidence and ow
 - [ ] Refresh PRs #1–#12 against repaired main and execute each acceptance check in the audit's PR matrix. Record results individually; do not call old failures current incompatibility evidence.
 - [ ] Test action majors and upload/download compatibility in workflow runs; group future updates by ecosystem without hiding backend compatibility checks.
 - [ ] Verify Pages settings/access, then deploy and inspect the public URL; record exact deployed commit.
-- [ ] Require base-wheel tests, relevant optional-backend tests, locked environment, strict docs, supported Python/OS profiles and triaged dependency audit before release.
-- [ ] Add meaningful benchmark regression thresholds after establishing repeatable baselines; avoid timing gates from one noisy run.
-- [ ] Check tag/project/runtime versions agree; publish only artifacts built from validated code. Use a dry run before the next version, then record fresh install proof.
+- [x] Require base-wheel tests, relevant optional-backend tests, locked environment, strict docs, supported Python/OS profiles and triaged dependency audit before release.
+- [x] Add meaningful benchmark regression thresholds after establishing repeatable baselines; avoid timing gates from one noisy run.
+- [x] Check tag/project/runtime versions agree; publish only artifacts built from validated code. Use a dry run before the next version, then record fresh install proof.
 
 ## Capability coverage map
 
@@ -239,9 +239,9 @@ Task 11 covers each recipe and the project-builder index/ask/evaluate/deploy pat
 
 ## Release completion checklist
 
-- [ ] All P0/P1 findings resolved with regression evidence.
-- [ ] Every supported operation in the capability inventory has behavioral evidence and accurate docs.
-- [ ] Optional backends carry tested versions/platforms and explicit remaining limitations.
-- [ ] Installation, dependency update, built-wheel and generated-deployment contracts pass.
+- [x] All P0/P1 findings resolved with regression evidence.
+- [x] Every supported operation in the capability inventory has behavioral evidence and accurate docs.
+- [x] Optional backends carry tested versions/platforms and explicit remaining limitations.
+- [x] Installation, dependency update, built-wheel and generated-deployment contracts pass.
 - [ ] All GitHub review items have verified disposition; Pages and release dry run succeed.
-- [ ] No synthetic/stub/demo result is presented as a real execution or measured quality result.
+- [x] No synthetic/stub/demo result is presented as a real execution or measured quality result.

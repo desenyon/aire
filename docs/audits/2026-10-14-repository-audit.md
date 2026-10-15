@@ -1,5 +1,10 @@
 # Repository audit — 2026-10-14
 
+This is the historical baseline audit. For repaired 0.4.0 behavior and current
+validation, see the [release QA record](2026-10-14-release-qa.md) and
+[capability matrix](../capabilities.md). Findings below retain their original
+observations and acceptance criteria.
+
 Baseline: `70b4633e94183961347b7acef5be06b938bb22dc` on `main`.
 Scope agreed with the maintainer: **Fulfill all documented capabilities, with reliable packaging and honest limits.**
 This is a source, contract, packaging, and GitHub audit, not a certification that every defect has been found.
