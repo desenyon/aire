@@ -1,5 +1,14 @@
 # Aire capability status
 
+The latest iteration is the [0.4.2 audit](docs/audits/2026-10-15-042-audit.md):
+configuration secrecy/path checks, dataset snapshots/partitions, execution context
+restoration, scheduler replacement, offline diagnostic smoke and repeatable
+core/optional audit evidence. Run `make audit` and review its selected profile;
+a green report does not certify unrun external services or model quality.
+
+The remaining sections describe the historical 0.4.0 completion baseline.
+
+
 The [master plan](docs/superpowers/plans/2026-10-14-aire-master-plan.md) implements
 0.4.0 against the agreed scope: fulfill documented capabilities with reliable
 packaging and honest limits. The historical [audit](docs/audits/2026-10-14-repository-audit.md)

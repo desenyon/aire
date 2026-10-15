@@ -4,6 +4,24 @@ All notable changes to aire are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.2 - 2026-10-15
+
+- Fail closed when explicitly requested configuration is missing; mask nested
+  credentials and gateway tokens in config inspection and reject unknown selectors.
+- Preserve dataset record/metadata/lineage snapshots across inputs, accessors and
+  callbacks; fix zero-percent sampling and reject conflicting/invalid sample and
+  split arguments before partitioning.
+- Restore nested and overlapping execution contexts correctly; replace scheduled
+  handlers only after successful validation and reject infinite timing intervals.
+- Add offline `aire doctor --smoke`, versioned pass/fail/skipped reports and
+  `--output`/`--config`; use configured credentials for bounded live probes and
+  close their clients without exposing provider/config payloads.
+- Add core/optional repository audit profiles with incremental JSON evidence,
+  per-check logs, bounded process groups and source-change detection. CI runs the
+  same core audit and retains its reports even on failure.
+- Synchronize contributor, CLI, capability, migration and publishing guidance.
+  Preserve the four runtime dependencies and existing release integrity gates.
+
 ## 0.4.1 - 2026-10-14
 
 - Stage a separate copy for PyPI Trusted Publishing so generated attestation

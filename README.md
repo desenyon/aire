@@ -354,7 +354,8 @@ one Redis instance/keyspace and does not manage Redis Cluster hash slots.
 ## Configuration
 
 `Settings.load()` searches the current directory and its parents for `aire.yaml`,
-`aire.yml`, or `aire.json`, or accepts an explicit path. Current precedence is:
+`aire.yml`, or `aire.json`, or accepts an explicit path. A missing explicit
+file/directory raises `config.not_found` instead of silently using defaults. Current precedence is:
 
 1. Explicit Python `overrides`.
 2. Environment variables such as `AIRE_MODEL__REF` (double underscore nests keys).
@@ -395,7 +396,7 @@ specific; built-in cost tables are estimates, not billing guarantees.
 
 ```bash
 aire --help
-aire doctor
+aire doctor --smoke --output doctor.json
 aire run 'hello, aire'
 ```
 
@@ -418,16 +419,19 @@ Most components expose `.describe()` for capability inspection.
 
 ## Validation
 
-From the activated source environment:
+Provision the locked development environment, then run the same core audit as CI:
 
 ```bash
-make lint                         # Ruff lint and formatting
-make typecheck                    # Strict mypy over src/aire
-make test                         # Offline suite; live tests excluded
-python examples/reliable_local/main.py
-python -m mkdocs build --strict
-python -m build                   # Wheel and source distribution
+uv sync --locked --no-default-groups --group dev
+make audit                        # Lint, types, tests, examples, docs, build, wheel install
+# JSON evidence and per-check logs: .audit/core.json, .audit/core-logs/
 ```
+
+For optional CPU backends, install selected extras (or `--all-extras`) plus
+FFmpeg/Tesseract, then run `make audit-optional`. This uses the existing environment
+without pruning its extras. Reports identify source commit/content and distinguish
+failed, timed-out and unrun checks; a source change during an audit invalidates it.
+See [audit contracts](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-15-042-audit.md).
 
 CI tests Python **3.11, 3.12 and 3.13**, runs the offline smoke, and validates docs
 and packaging on Python 3.12. Core tests do not require PyTorch, Redis, paid
@@ -491,4 +495,4 @@ for the complete changes and operational details:
 [Contributing](https://github.com/desenyon/aire/blob/main/CONTRIBUTING.md) · [Security](https://github.com/desenyon/aire/blob/main/SECURITY.md) ·
 [Code of conduct](https://github.com/desenyon/aire/blob/main/CODE_OF_CONDUCT.md) · [Citation](https://github.com/desenyon/aire/blob/main/CITATION.cff) · [License](https://github.com/desenyon/aire/blob/main/LICENSE)
 
-The [0.4 capability contracts](https://github.com/desenyon/aire/blob/main/docs/capabilities.md) map every public namespace to tests, supported backends, and explicit limits. See the [release QA record](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-14-release-qa.md) for current validation.
+The [0.4 capability contracts](https://github.com/desenyon/aire/blob/main/docs/capabilities.md) map every public namespace to tests, supported backends, and explicit limits. See the [release QA record](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-15-042-audit.md) for the latest iteration and repeatable checks.
