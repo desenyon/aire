@@ -40,3 +40,24 @@ def test_export_failure_does_not_mask_application_error():
     with pytest.raises(ValueError, match="application"), Tracer(exporter).span("fails"):
         raise ValueError("application")
     assert exporter.failures == 1
+
+
+def test_otlp_partial_success_counts_rejections_without_retry():
+    from aire.observability.tracing import SpanRecord
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200, json={"partialSuccess": {"rejectedSpans": "1", "errorMessage": "unsupported"}}
+            )
+        )
+    )
+    exporter = OTLPExporter("https://collector.example", client=client)
+    for name in ["accepted", "rejected"]:
+        exporter.export(
+            SpanRecord(trace_id="a" * 32, span_id="b" * 16, name=name, start_time=1, end_time=2)
+        )
+    exporter.flush()
+    assert exporter.exported == 1
+    assert exporter.failures == 1
+    assert not client.is_closed

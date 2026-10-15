@@ -132,7 +132,11 @@ class OpenAIModel(Model):
                 for t in request.tools
             ]
             if request.tool_choice:
-                payload["tool_choice"] = request.tool_choice
+                payload["tool_choice"] = (
+                    request.tool_choice
+                    if request.tool_choice in {"auto", "none", "required"}
+                    else {"type": "function", "function": {"name": request.tool_choice}}
+                )
         if request.response_format is not None:
             payload["response_format"] = {
                 "type": "json_schema",

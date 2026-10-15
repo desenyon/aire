@@ -46,3 +46,20 @@ def test_unsupported_schema_fails_explicitly():
         schema_model(
             "qa", {"type": "object", "properties": {"x": {"allOf": [{"type": "integer"}]}}}
         )
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"allOf": [{"type": "object"}]},
+        {
+            "type": "object",
+            "properties": {"x": {"oneOf": [{"type": "number"}, {"type": "integer"}]}},
+        },
+    ],
+)
+def test_unsupported_composition_never_silently_accepts_invalid_arguments(schema):
+    from aire.tools.schema import schema_model
+
+    with pytest.raises(ConfigurationError, match="unsupported"):
+        schema_model("qa", schema)

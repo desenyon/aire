@@ -2,70 +2,89 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build only (skip PyPI upload)"
+        description: "Build and verify only (skip PyPI upload)"
         type: boolean
-        default: false
+        default: true
+
+env:
+  UV_PYTHON: "3.12"
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  build:
-    name: Build distributions
+  validate:
+    name: Verify release source and artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-          cache: pip
-
-      - name: Install build tooling
-        run: pip install --upgrade pip build twine
-
-      - name: Build sdist and wheel
-        run: python -m build
-
-      - name: Check metadata
-        run: twine check dist/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+      - name: Require matching version tag on main for publication
+        env:
+          PUBLISH: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: |
+          python - <<'PY'
+          import os, runpy, subprocess
+          version = runpy.run_path('src/aire/_version.py')['__version__']
+          if os.environ['PUBLISH'] == 'true':
+              expected = 'refs/tags/v' + version
+              assert os.environ['GITHUB_REF'] == expected, 'Publication requires the matching version tag'
+              subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], check=True)
+          print('Validated source version', version)
+          PY
+      - name: Require successful CI for the publication commit
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" > /tmp/ci-runs.json
+          python - <<'PYCI'
+          import json, os
+          runs = json.load(open('/tmp/ci-runs.json'))['workflow_runs']
+          assert any(run['head_sha'] == os.environ['GITHUB_SHA'] and run['event'] == 'push' for run in runs), 'This commit must pass main-branch CI before publishing'
+          PYCI
+      - run: uv sync --locked --no-default-groups --group dev
+      - run: .venv/bin/ruff check src tests scripts
+      - run: .venv/bin/ruff format --check src tests scripts
+      - run: .venv/bin/mypy
+      - run: .venv/bin/python -m pytest -m "not live and not optional"
+      - run: .venv/bin/mkdocs build --strict
+      - run: .venv/bin/python -m build
+      - run: .venv/bin/twine check dist/*
+      - run: .venv/bin/python scripts/verify_distribution.py dist/aire_ai-*.whl
+      - uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
 
   publish:
-    name: Publish to PyPI
-    needs: build
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+    name: Publish verified artifacts to PyPI
+    needs: validate
+    if: github.event_name == 'push' || inputs.dry_run == false
     runs-on: ubuntu-latest
     environment:
       name: release
       url: https://pypi.org/project/aire-ai/
     permissions:
-      id-token: write # mandatory for Trusted Publishing (OIDC)
+      id-token: write
       contents: read
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
-
-      - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # packages-dir defaults to dist/
-          verbose: true
-          # print-hash helps debug upload issues
           print-hash: true

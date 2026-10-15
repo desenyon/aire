@@ -5,9 +5,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      workflow-actions:
+        patterns: ["*"]
 
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      development-tools:
+        patterns:
+          - ruff
+          - mypy
+          - pytest*
+          - types-*
+          - mkdocs*
+          - build
+          - twine

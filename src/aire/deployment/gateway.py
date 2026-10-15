@@ -942,6 +942,33 @@ def _openai_content(raw: Any) -> list[Any]:
     return blocks
 
 
+def _request_tools(body: dict[str, Any], *, openai: bool) -> list[dict[str, Any]]:
+    raw = body.get("tools")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("tools must be an array")
+    for tool in raw:
+        definition = tool.get("function") if openai and isinstance(tool, dict) else tool
+        if (
+            not isinstance(definition, dict)
+            or not isinstance(definition.get("name"), str)
+            or not definition["name"]
+        ):
+            raise ValueError("tool name is required")
+    return raw
+
+
+def _openai_tool_choice(raw: Any) -> str | None:
+    if raw is None or isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict) and raw.get("type") == "function":
+        name = raw["function"]["name"]
+        if isinstance(name, str) and name:
+            return name
+    raise ValueError("invalid tool_choice")
+
+
 def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
     return _validated_request(body, _parse_generation_request)
 
@@ -962,7 +989,11 @@ def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
                 tool_call_id=raw.get("tool_call_id"),
                 tool_calls=[
                     ToolCall.from_json(
-                        c["id"], c["function"]["name"], c["function"].get("arguments", "{}")
+                        c["id"],
+                        c["function"]["name"],
+                        json.loads(c["function"].get("arguments", "{}"))
+                        if isinstance(c["function"].get("arguments", "{}"), str)
+                        else c["function"]["arguments"],
                     )
                     for c in raw.get("tool_calls") or []
                 ],
@@ -975,8 +1006,7 @@ def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
             parameters=(t.get("function") or {}).get("parameters")
             or {"type": "object", "properties": {}},
         )
-        for t in body.get("tools") or []
-        if isinstance(t, dict) and (t.get("function") or {}).get("name")
+        for t in _request_tools(body, openai=True)
     ]
     stop_raw = body.get("stop")
     stop = [stop_raw] if isinstance(stop_raw, str) else stop_raw or None
@@ -986,7 +1016,7 @@ def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
         max_tokens=body.get("max_completion_tokens", body.get("max_tokens")),
         stop=stop,
         tools=tools or None,
-        tool_choice=body.get("tool_choice") if isinstance(body.get("tool_choice"), str) else None,
+        tool_choice=_openai_tool_choice(body.get("tool_choice")),
         response_format=_response_format(body.get("response_format")),
         seed=body.get("seed"),
         metadata=body.get("metadata") or {},
@@ -994,8 +1024,10 @@ def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
 
 
 def _response_format(raw: Any) -> StructuredOutputSpec | None:
-    if not isinstance(raw, dict):
+    if raw is None:
         return None
+    if not isinstance(raw, dict):
+        raise ValueError("invalid response_format")
     if raw.get("type") == "json_schema" and isinstance(raw.get("json_schema"), dict):
         schema = raw["json_schema"]
         return StructuredOutputSpec(
@@ -1005,7 +1037,7 @@ def _response_format(raw: Any) -> StructuredOutputSpec | None:
         )
     if raw.get("type") == "json_object":
         return StructuredOutputSpec(name="json", schema={"type": "object"}, strict=False)
-    return None
+    raise ValueError("unsupported response_format")
 
 
 def _tool_calls_payload(result: GenerationResult) -> list[dict[str, Any]]:
@@ -1343,9 +1375,7 @@ def _parse_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa
         ]
         messages.append(Message(role=role, content=blocks, tool_calls=calls))
     tools: list[ToolDefinition] = []
-    for raw_tool in body.get("tools") or []:
-        if not isinstance(raw_tool, dict):
-            continue
+    for raw_tool in _request_tools(body, openai=False):
         name = raw_tool.get("name")
         if not isinstance(name, str) or not name:
             continue

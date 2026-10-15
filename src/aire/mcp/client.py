@@ -89,11 +89,13 @@ class MCPClient:
                 ),
                 timeout=self.startup_timeout,
             )
-        except Exception:
+            self.server_info = dict(response.get("serverInfo", {}))
+            await self._send(make_notification("notifications/initialized"))
+        except BaseException as exc:
             await self.close()
+            if isinstance(exc, TimeoutError):
+                raise MCPError("MCP startup timed out") from exc
             raise
-        self.server_info = dict(response.get("serverInfo", {}))
-        await self._send(make_notification("notifications/initialized"))
         return self
 
     async def close(self) -> None:
@@ -218,6 +220,14 @@ class MCPClient:
             await self._send(make_error(request_id, -32603, str(exc)))
 
     async def _request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        try:
+            return await asyncio.wait_for(
+                self._send_request(method, params), timeout=self.request_timeout
+            )
+        except TimeoutError as exc:
+            raise MCPError(f"MCP request timed out: {method}") from exc
+
+    async def _send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         async with self._write_lock:
             self._next_id += 1
             request_id = self._next_id
@@ -226,7 +236,7 @@ class MCPClient:
             self._pending[request_id] = fut
             try:
                 await self._send(make_request(request_id, method, params))
-            except Exception:
+            except BaseException:
                 self._pending.pop(request_id, None)
                 raise
         try:

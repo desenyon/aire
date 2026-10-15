@@ -3,7 +3,7 @@
 The distribution name on PyPI is **`aire-ai`** (the import package remains `aire`).
 The name `aire` is already taken by an unrelated project.
 
-Releases publish via **Trusted Publishing** (OIDC) — no PyPI API token in GitHub secrets.
+Validated, matching version tags on main publish via **Trusted Publishing** (OIDC) — no PyPI API token in GitHub secrets.
 
 ## One-time setup (required)
 
@@ -43,7 +43,7 @@ No secrets are needed for Trusted Publishing.
 `.github/workflows/release.yml` runs on:
 
 - pushes of tags matching `v*` (e.g. `v0.4.0`)
-- manual `workflow_dispatch` (optional dry-run build)
+- manual `workflow_dispatch` (dry-run build by default)
 
 Flow: build sdist/wheel → `twine check` → OIDC publish with
 `pypa/gh-action-pypi-publish`.

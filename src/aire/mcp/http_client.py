@@ -10,6 +10,7 @@ Requires ``httpx`` (core dependency).
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -46,6 +47,8 @@ class MCPHttpClient:
     ) -> None:
         if not url:
             raise MCPError("MCPHttpClient requires a base URL")
+        if timeout <= 0:
+            raise MCPError("MCP deadlines must be positive")
         self.url = url.rstrip("/")
         self.timeout = timeout
         self._extra_headers = dict(headers or {})
@@ -72,13 +75,13 @@ class MCPHttpClient:
                     "clientInfo": {"name": "aire", "version": _aire_version()},
                 },
             )
-        except Exception:
+        except BaseException:
             await self.close()
             raise
         self.server_info = dict(result.get("serverInfo", {}))
         try:
             await self._notify("notifications/initialized")
-        except Exception:
+        except BaseException:
             await self.close()
             raise
         return self
@@ -190,7 +193,16 @@ class MCPHttpClient:
 
     async def _request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         self._next_id += 1
-        message = await self._post(make_request(self._next_id, method, params))
+        import httpx
+
+        try:
+            message = await asyncio.wait_for(
+                self._post(make_request(self._next_id, method, params)), timeout=self.timeout
+            )
+        except TimeoutError as exc:
+            raise MCPError(f"MCP request timed out: {method}") from exc
+        except httpx.HTTPError as exc:
+            raise MCPError(f"MCP HTTP transport failed: {method}") from exc
         if "error" in message:
             error = message["error"]
             raise MCPError(

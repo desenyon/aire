@@ -45,3 +45,21 @@ def test_synthetic_count_is_explicit():
         run_sync(generator.qa_pairs("content", n=0))
     with pytest.raises(ConfigurationError, match="requested"):
         run_sync(generator.qa_pairs("content", n=20))
+
+
+def test_gates_can_reject_failed_cases_and_empty_evaluations():
+    report = EvalReport(
+        results=[CaseResult(case=EvalCase(input="a"), output="", error="provider failed")]
+    )
+    result = check_gates(report, [{"metric": "failures", "max": 0}])
+    assert not result.passed and result.results[0].value == 1
+    assert not check_gates(EvalReport(), [{"metric": "pass_rate", "min": 1}]).passed
+
+
+def test_nonfinite_gate_threshold_is_rejected():
+    from pydantic import ValidationError
+
+    from aire.evaluation.gates import EvalGate
+
+    with pytest.raises(ValidationError):
+        EvalGate(metric="score", min=math.nan)

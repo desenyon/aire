@@ -4,7 +4,29 @@ All notable changes to aire are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.4.0 - 2026-10-14
+
+### Capability completion
+
+- Add a locked development environment, tested dependency profiles, a single
+  version source and wheel/deployment smoke checks outside the checkout.
+- Buffer guarded output streams, isolate semantic cache context, copy tool
+  arguments and prevent cache replay from charging original generation usage.
+- Share agent execution controls, run sync tools off the event loop, isolate HTTP
+  conversations, index project sources at startup and preserve the configured model.
+- Preserve remote chunk identity, check failures, paginate enumeration, enforce
+  filters before result limits and add atomic PostgreSQL replacement.
+- Validate durable checkpoint ownership/graph changes, memory windows and scheduler
+  overlap; test interrupted Redis claims and repeated recovery.
+- Repair real estimator persistence, tiny LoRA/distillation/LM execution, OCR and
+  video frame conversion; distinguish CPU, transport-only, dry-run and GPU evidence.
+- Complete MCP HTTP callbacks/deadlines/cancellation and nested OpenAPI validation;
+  report unsupported schemas and skill import failures explicitly.
+- Resolve configured analytics, support real evaluation reports and failed-case
+  gates, and handle OTLP partial rejection and flush/close ownership.
+- Integrate reviewed dependency upgrades and gate CI, docs, benchmark and release
+  artifacts. Publish the capability matrix, migration notes and release QA record.
+
 
 ### Packaging and audit
 

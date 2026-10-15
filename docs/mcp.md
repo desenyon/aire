@@ -47,7 +47,7 @@ async def connect(url, token):
 ```
 
 Generated MCP/OpenAPI argument validators cover objects, arrays, primitive types,
-local references, enums, simple unions and scalar bounds. Recursive schemas and
+local references, enums, `anyOf`/type unions and scalar bounds. Recursive schemas, `oneOf`, typed additional properties and
 conditional/composition keywords outside that subset fail explicitly. OpenAPI
 imports use HTTP(S) bases and relative operation paths; nested JSON bodies,
 path, query and header inputs are validated before calls. Inline skill JSON tools
