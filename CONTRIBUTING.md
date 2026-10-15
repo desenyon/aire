@@ -12,7 +12,7 @@ Requires **Python 3.11+**.
 git clone https://github.com/desenyon/aire.git
 cd aire
 uv sync --locked --no-default-groups --group dev
-make all
+make audit
 # Optional Git hooks:
 uvx pre-commit install
 ```
@@ -38,8 +38,8 @@ Install from PyPI: `pip install aire-ai` (import remains `from aire import …`)
 make lint
 make typecheck
 make test
-# or
-make all
+# or run the complete core gate with retained evidence
+make audit
 ```
 
 5. Open a PR using the template. Link related issues.
@@ -59,9 +59,18 @@ Tests live under `tests/`. Markers include `integration`, `live`, `performance`,
 and `security`. Live/network tests should be skipped by default.
 
 ```bash
-pytest -q
-pytest -m "not live"
+make test                         # locked core profile
+# Provision optional backends first; does not sync away their extras:
+uv sync --locked --no-default-groups --group dev --all-extras
+# Install FFmpeg and Tesseract separately, then:
+make audit-optional
 ```
+
+`make audit` runs CI's core profile and writes `.audit/core.json` plus named logs.
+`make audit-optional` runs the full non-live suite with bounded CPU threads and
+requires all optional CPU test prerequisites. Inspect profile scope and skipped
+checks before interpreting a report. Source changes observed at check boundaries invalidate it.
+See [audit contracts](docs/audits/2026-10-15-042-audit.md).
 
 Keep new tests deterministic and offline when possible.
 

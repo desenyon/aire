@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import math
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -16,7 +17,7 @@ from aire.workflows.graph import Workflow
 
 class ScheduleEntry(BaseModel):
     name: str
-    interval_seconds: float = Field(gt=0)
+    interval_seconds: float = Field(gt=0, allow_inf_nan=False)
     workflow: str
     input: Any = None
     enabled: bool = True
@@ -49,11 +50,11 @@ class Scheduler:
         name: str | None = None,
         input: Any = None,
     ) -> ScheduleEntry:
+        handler = None
         if isinstance(workflow, Workflow):
             wf_name = workflow.name
-            self.workflows[wf_name] = workflow
             entry_name = name or wf_name
-            self.entries[entry_name] = ScheduleEntry(
+            entry = ScheduleEntry(
                 name=entry_name,
                 interval_seconds=interval_seconds,
                 workflow=wf_name,
@@ -62,8 +63,7 @@ class Scheduler:
         elif callable(workflow) and not isinstance(workflow, str):
             entry_name = name or str(getattr(workflow, "__name__", "job"))
             handler = workflow
-            self._handlers[entry_name] = handler
-            self.entries[entry_name] = ScheduleEntry(
+            entry = ScheduleEntry(
                 name=entry_name,
                 interval_seconds=interval_seconds,
                 workflow=entry_name,
@@ -71,13 +71,20 @@ class Scheduler:
             )
         else:
             entry_name = name or str(workflow)
-            self.entries[entry_name] = ScheduleEntry(
+            entry = ScheduleEntry(
                 name=entry_name,
                 interval_seconds=interval_seconds,
                 workflow=str(workflow),
                 input=input,
             )
-        return self.entries[entry_name]
+        # Validate the complete replacement before changing a working registration.
+        if isinstance(workflow, Workflow):
+            self.workflows[workflow.name] = workflow
+        self._handlers.pop(entry_name, None)
+        if handler is not None:
+            self._handlers[entry_name] = handler
+        self.entries[entry_name] = entry
+        return entry
 
     async def tick(self, *, now: float | None = None) -> list[dict[str, Any]]:
         """Run any due entries once. Returns list of run records."""
@@ -134,8 +141,10 @@ class Scheduler:
             }
 
     async def run_forever(self, *, poll_seconds: float = 1.0, max_ticks: int | None = None) -> None:
-        if poll_seconds <= 0:
-            raise ConfigurationError("poll_seconds must be positive", code="schedule.poll_interval")
+        if not math.isfinite(poll_seconds) or poll_seconds <= 0:
+            raise ConfigurationError(
+                "poll_seconds must be finite and positive", code="schedule.poll_interval"
+            )
         ticks = 0
         while max_ticks is None or ticks < max_ticks:
             await self.tick()

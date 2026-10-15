@@ -133,6 +133,12 @@ class Settings(BaseModel):
         """Load settings by merging file, environment and explicit overrides."""
         data: dict[str, Any] = {}
         file_path = _find_project_file(path)
+        if path is not None and file_path is None:
+            raise ConfigurationError(
+                f"configuration not found: {path}",
+                code="config.not_found",
+                context={"path": str(path)},
+            )
         if file_path is not None:
             data = _deep_merge(data, _load_file(file_path))
         user_file = Path.home() / ".config" / "aire" / "config.yaml"
@@ -166,6 +172,41 @@ class Settings(BaseModel):
     def credential(self, provider: str) -> ProviderCredential:
         return self.providers.get(provider, ProviderCredential())
 
+    def safe_dict(self) -> dict[str, Any]:
+        """Configuration for inspection, with known secret-bearing keys masked.
+
+        Custom secret fields must be listed in ``observability.mask_fields``.
+        Key-based masking cannot identify arbitrary secrets embedded in text.
+        """
+        hidden = {
+            "api_key",
+            "authorization",
+            "proxy_authorization",
+            "password",
+            "passwd",
+            "secret",
+            "token",
+            "credential",
+            "private_key",
+            *(key.lower().replace("-", "_") for key in self.observability.mask_fields),
+        }
+
+        def scrub(value: Any) -> Any:
+            if isinstance(value, dict):
+                result: dict[str, Any] = {}
+                for key, item in value.items():
+                    normalized = key.lower().replace("-", "_")
+                    sensitive = normalized in hidden or normalized.endswith(
+                        ("_token", "_secret", "_password", "_api_key", "_private_key")
+                    )
+                    result[key] = "[REDACTED]" if sensitive and item is not None else scrub(item)
+                return result
+            if isinstance(value, list):
+                return [scrub(item) for item in value]
+            return value
+
+        return dict(scrub(self.model_dump(mode="json", exclude={"providers"})))
+
 
 def _find_project_file(path: str | Path | None) -> Path | None:
     if path is not None:
@@ -190,7 +231,7 @@ def _load_file(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text()
         data = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
             f"failed to load config file {path}: {exc}",
             code="config.load_failed",

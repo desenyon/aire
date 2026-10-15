@@ -1,5 +1,35 @@
 # Migration guides
 
+## 0.4.2 (from 0.4.1)
+
+Upgrade with `python -m pip install aire-ai==0.4.2`. Runtime requirements and
+published extras are unchanged.
+
+- Explicit missing config files/directories now raise `config.not_found`.
+  Omit the path to use implicit discovery/defaults. `aire inspect config` masks
+  known secret-bearing keys recursively; list custom secret keys in
+  `observability.mask_fields`. Arbitrary secret text cannot be inferred by key.
+- Dataset inputs, returned records and lineage are isolated copies. To change
+  records, return the modified record from `map` and use the returned dataset.
+  Slices preserve tuple results with deep-copied records. Callback side effects
+  cannot mutate the source. Sampling accepts a count or
+  a fraction, not both; negative/noninteger counts and nonfinite/out-of-range
+  fractions raise `data.sample_invalid`. A zero fraction now returns zero rows.
+  Invalid split fractions raise `data.split_invalid` before partitioning.
+- Nested/overlapping uses of one `ExecutionContext` now restore each task's prior
+  ambient context. This does not make its shared usage counters independently
+  budgeted. Scheduler replacement removes old handlers only after validation;
+  timing intervals must be finite and positive.
+- `aire doctor` keeps its JSON `checks`, `healthy`, `live` and `skipped` fields,
+  and adds schema/version/Python, smoke and per-check status/required fields.
+  Unconfigured credentials are explicitly skipped. Default execution is offline;
+  `--smoke` runs deterministic local outcomes, `--output` saves the same JSON,
+  and `--config` validates an explicit path. `--live` also probes configured
+  providers and local Ollama and may incur provider usage. Failures return 1.
+- Contributors can run `make audit` for the same core gate as CI. Provision
+  optional dependencies/binaries before `make audit-optional`; absent prerequisites
+  fail rather than certifying skipped backend tests. See [repeatable audits](audits/2026-10-15-042-audit.md).
+
 ## 0.4.1 (from 0.4.0)
 
 This patch fixes publication automation: publisher-generated attestations use a

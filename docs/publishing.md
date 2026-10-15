@@ -12,7 +12,7 @@ A successful dry run builds artifacts but publishes neither output.
    version/date, README release series, docs home and bug-report version example.
 2. Update affected implementation, examples, capability evidence and migration
    notes; retain explicitly historical audit results and unsupported boundaries.
-3. Run `uv sync --locked --no-default-groups --group dev`, `make all`, and the
+3. Run `uv sync --locked --no-default-groups --group dev`, `make audit`, and the
    relevant optional/service checks. Build and test installed distributions.
 4. Merge the reviewed PR. Wait for **CI, CodeQL, Docs and Benchmarks** to succeed
    on that exact current `main` commit, including the public Pages deployment.
@@ -40,8 +40,8 @@ git pull --ff-only
 # Confirm this exact commit passed all four required main workflows.
 git status --short
 .venv/bin/python scripts/release.py check
-git tag -a v0.4.1 -m "Aire 0.4.1"
-git push origin refs/tags/v0.4.1
+git tag -a v0.4.2 -m "Aire 0.4.2"
+git push origin refs/tags/v0.4.2
 ```
 
 Push only the intended tag. Never move a tag or replace an already published
@@ -66,7 +66,7 @@ If a tag workflow is interrupted, rerun its failed jobs. To dispatch publication
 manually, select the **matching tag**, not main:
 
 ```bash
-gh workflow run release.yml --ref v0.4.1 -f dry_run=false
+gh workflow run release.yml --ref v0.4.2 -f dry_run=false
 ```
 
 Matching published files are reused; conflicting files fail instead of being
@@ -89,10 +89,10 @@ exact PyPI version. A missing GitHub release or a skipped publisher is incomplet
 
 ```bash
 uv venv /tmp/aire-release-check
-uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.1'
+uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.2'
 /tmp/aire-release-check/bin/python -I -c \
   "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
-/tmp/aire-release-check/bin/aire doctor
+/tmp/aire-release-check/bin/aire doctor --smoke
 ```
 
 For optional backends, use the selected documented extras and supported hardware;

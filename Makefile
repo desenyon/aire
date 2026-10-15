@@ -1,4 +1,4 @@
-.PHONY: install lint typecheck test docs bench release-check all
+.PHONY: install lint typecheck test docs bench release-check audit audit-optional all
 
 UV_RUN = uv run --locked --no-default-groups --group dev
 
@@ -23,5 +23,11 @@ bench:
 
 release-check:
 	$(UV_RUN) python scripts/release.py check
+
+audit:
+	$(UV_RUN) python scripts/audit.py --profile core --output .audit/core.json
+
+audit-optional:
+	uv run --locked --no-sync python scripts/audit.py --profile optional --output .audit/optional.json
 
 all: lint typecheck test docs release-check

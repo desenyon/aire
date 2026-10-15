@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,6 +12,9 @@ from aire.core.errors import BudgetExceededError, TimeoutError
 from aire.core.types import Usage, new_id
 
 _current: ContextVar[ExecutionContext | None] = ContextVar("aire_context", default=None)
+_entries: ContextVar[tuple[tuple[ExecutionContext, Token[ExecutionContext | None]], ...]] = (
+    ContextVar("aire_context_entries", default=())
+)
 
 
 @dataclass
@@ -65,11 +68,15 @@ class ExecutionContext:
     # -- context variable plumbing ------------------------------------------------
 
     def __enter__(self) -> ExecutionContext:
-        self._token = _current.set(self)
+        _entries.set((*_entries.get(), (self, _current.set(self))))
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
-        _current.reset(self._token)
+        entries = _entries.get()
+        if not entries or entries[-1][0] is not self:
+            raise RuntimeError("execution contexts must exit in reverse entry order")
+        _current.reset(entries[-1][1])
+        _entries.set(entries[:-1])
 
     @classmethod
     def current(cls) -> ExecutionContext:

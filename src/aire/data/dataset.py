@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from aire.core.errors import DataError
 from aire.core.types import new_id as _new_id
@@ -39,25 +40,37 @@ class Dataset:
         source: str | None = None,
         lineage: list[LineageEntry] | None = None,
     ) -> None:
-        self._records = tuple(records)
+        self._records = tuple(record.model_copy(deep=True) for record in records)
         self.name = name
         self.source = source
-        self.lineage: tuple[LineageEntry, ...] = tuple(lineage or ())
+        self._lineage = tuple(entry.model_copy(deep=True) for entry in lineage or ())
 
     # -- basics ----------------------------------------------------------------------
 
     def __iter__(self) -> Iterator[Record]:
-        return iter(self._records)
+        return (record.model_copy(deep=True) for record in self._records)
 
     def __len__(self) -> int:
         return len(self._records)
 
-    def __getitem__(self, index: int) -> Record:
-        return self._records[index]
+    @overload
+    def __getitem__(self, index: int) -> Record: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[Record, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> Record | tuple[Record, ...]:
+        if isinstance(index, slice):
+            return tuple(record.model_copy(deep=True) for record in self._records[index])
+        return self._records[index].model_copy(deep=True)
 
     @property
     def records(self) -> list[Record]:
-        return list(self._records)
+        return list(self)
+
+    @property
+    def lineage(self) -> tuple[LineageEntry, ...]:
+        return tuple(entry.model_copy(deep=True) for entry in self._lineage)
 
     @property
     def texts(self) -> list[str]:
@@ -65,7 +78,7 @@ class Dataset:
 
     @property
     def version(self) -> str:
-        """Content-addressed version: changes iff any record changes."""
+        """Content-addressed version of record text and metadata (not IDs)."""
         digest = hashlib.sha256()
         for record in self._records:
             digest.update(
@@ -104,12 +117,12 @@ class Dataset:
 
     def map(self, fn: Callable[[Record], Record]) -> Dataset:
         """Transform each record."""
-        return self._derive([fn(r) for r in self._records], "map", fn=getattr(fn, "__name__", "?"))
+        return self._derive([fn(r) for r in self], "map", fn=getattr(fn, "__name__", "?"))
 
     def filter(self, predicate: Callable[[Record], bool]) -> Dataset:
         """Keep records where predicate(record) is true."""
         return self._derive(
-            [r for r in self._records if predicate(r)],
+            [r for r in self if predicate(r)],
             "filter",
             fn=getattr(predicate, "__name__", "?"),
         )
@@ -145,7 +158,7 @@ class Dataset:
         key_fn = key or (lambda r: r.fingerprint())
         seen: set[str] = set()
         unique: list[Record] = []
-        for record in self._records:
+        for record in self:
             fingerprint = key_fn(record)
             if fingerprint in seen:
                 continue
@@ -154,9 +167,18 @@ class Dataset:
         return self._derive(unique, "deduplicate", removed=len(self._records) - len(unique))
 
     def sample(self, n: int | None = None, *, frac: float | None = None, seed: int = 42) -> Dataset:
-        """Deterministically sample records."""
+        """Deterministically sample a count or fraction; default to all records."""
+        if (
+            (n is not None and frac is not None)
+            or (n is not None and (not isinstance(n, int) or isinstance(n, bool) or n < 0))
+            or (frac is not None and (not math.isfinite(frac) or not 0 <= frac <= 1))
+        ):
+            raise DataError(
+                "sample requires a nonnegative integer n or a finite frac in [0, 1]",
+                code="data.sample_invalid",
+            )
         rng = random.Random(seed)  # noqa: S311 - sampling, not security
-        count = n if n is not None else int(len(self._records) * (frac or 1.0))
+        count = n if n is not None else int(len(self._records) * (1.0 if frac is None else frac))
         count = max(0, min(count, len(self._records)))
         picked = rng.sample(list(self._records), count)
         return self._derive(picked, "sample", n=count, seed=seed)
@@ -171,7 +193,13 @@ class Dataset:
     ) -> DatasetSplits:
         """Reproducibly split into train/validation/test datasets."""
         total = train + validation + test
-        if abs(total - 1.0) > 1e-6:
+        if (
+            any(
+                not math.isfinite(value) or not 0 <= value <= 1
+                for value in (train, validation, test)
+            )
+            or abs(total - 1.0) > 1e-6
+        ):
             raise DataError(
                 f"split fractions must sum to 1.0, got {total}",
                 code="data.split_invalid",
@@ -181,8 +209,8 @@ class Dataset:
         shuffled = list(self._records)
         rng.shuffle(shuffled)
         n = len(shuffled)
-        n_train = int(n * train)
-        n_val = int(n * validation)
+        n_train = int(n * (train / total))
+        n_val = min(n - n_train, int(n * (validation / total)))
         meta = DatasetSplit(
             train_count=n_train,
             validation_count=n_val,

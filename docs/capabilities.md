@@ -9,7 +9,7 @@ The facade lists 23 namespaces; the project builder is a separate entry point.
 | Namespace | Supported contract | Evidence | Limits / maturity |
 | --- | --- | --- | --- |
 | `models` | Generation, complete tool-call streaming, embeddings, exact/semantic cache, routing | `test_stream_protocol.py`, `test_cache_isolation.py`, provider transport tests | Contract tested; paid provider availability/quality not live verified; semantic caching is approximate and text-only within exact context |
-| `data` | Loading, chunking, validation, dedup, splits, label-sensitive versions | `test_chunking.py`, `test_core_quality.py`, `test_evaluation.py` | Contract tested; materializes datasets in memory; metadata must be JSON serializable |
+| `data` | Loading, chunking, validation, dedup, splits, label-sensitive versions | `test_chunking.py`, `test_dataset_boundaries.py`, `test_core_quality.py`, `test_evaluation.py` | Contract tested; isolated record/lineage snapshots; finite valid partitions; materializes datasets in memory; metadata must be JSON serializable |
 | `rag` | Ingest, retrieve, ACL/equality filters, citations, reindex/replacement | `test_rag_offline.py`, `test_adapter_contracts.py`, reliable_local example | SQLite/local and five remote stores tested; remote nontransactional limits below |
 | `graph` | SQLite/Neo4j triples, graph-grounded retrieval, lexical/model extraction, communities | `test_product_flow.py`, `test_adapter_contracts.py`, graph examples | Local backend tested; lexical co-occurrence and label propagation are heuristics |
 | `memory` | Windowed short/long-term messages, restart/recall, filtering | `test_durable_composition.py`, memory example | Contract tested; local JSONL single-writer persistence; no distributed transactional memory |
@@ -23,7 +23,7 @@ The facade lists 23 namespaces; the project builder is a separate entry point.
 | `deploy` | API factory, indexed project serving, generated version-pinned inputs/hashed locks, Docker/Compose/K8s templates | `test_deployment_contract.py`, `test_packaging.py`, generated-container QA | Local Docker build/request/outage/recovery tested; Compose/K8s are templates, not managed hosted infrastructure |
 | `gateway` | OpenAI/Anthropic request translation/SSE, aliases, fallback, auth/rate limits, policy, readiness/ownership | `test_gateway_requests.py`, `test_anthropic_gateway.py`, `test_stream_guardrails.py`, gateway_offline example | Contract tested; output rails buffer text until validated; latency/cost budgets measured after provider reporting; diagnostics require configured auth |
 | `safety` | Guardrails, PII redaction, policy/approval, sandboxed filesystem tools | `tests/security`, `test_policy.py`, `test_eval_safety_035.py` | Contract tested; heuristic rails are not a complete security classifier; hard termination requires process isolation |
-| `schedule` | Positive intervals, serialized ticks, job failure records, shutdown | `test_storage_recovery.py` | Contract tested; in-process scheduling, no distributed lease/clock guarantee |
+| `schedule` | Positive intervals, serialized ticks, job failure records, shutdown | `test_storage_recovery.py`, `test_context_schedule_boundaries.py` | Contract tested; validated replacement and finite intervals; in-process scheduling, no distributed lease/clock guarantee |
 | `workers` | In-process, local file queue, Redis claim/result/ack/recover | `test_storage_recovery.py`, `test_reliability.py`, live Redis interrupted-claim test | Real Redis tested; at-least-once effects, idempotency required; recover only with workers stopped; SQS unavailable explicitly |
 | `recipes` | Discoverable templates for RAG/agents/eval/gateway/workflows | `test_core_quality.py`, CLI scaffold/product-flow test | Contract tested; recipes generate code/config and do not provision services |
 | `locks` | Versioned application model/store references and roundtrip/apply | `test_product_flow.py`, `test_storage_recovery.py` | Contract tested; aire.lock is distinct from uv.lock and hashed Python requirements |
@@ -71,3 +71,16 @@ A version bump is not publication. Only successful artifact, release and Pages j
 establish those external outcomes. The repository audit preserves the original
 findings; the [backlog](https://github.com/desenyon/aire/blob/main/GAPS.md) and
 [release QA record](audits/2026-10-14-release-qa.md) track current evidence.
+
+## Repeatable audits (0.4.2)
+
+`aire doctor --smoke` verifies installed-package offline generation, embedding,
+tool and cited RAG outcomes; `test_diagnostics.py` covers failures, credentials,
+client closure and secret-safe JSON evidence. `test_config_boundaries.py` covers
+explicit-path failures and recursive inspection masking. Nested task-local context
+restoration is covered by `test_context_schedule_boundaries.py`.
+
+The [repository audit runner](audits/2026-10-15-042-audit.md) records the exact
+selected checks, source fingerprint, logs and failure/unrun states. CI uses its
+core profile; optional, service, paid-provider and production-scale evidence must
+still be interpreted separately.
