@@ -23,4 +23,5 @@ updates:
           - types-*
           - mkdocs*
           - build
+          - hatchling
           - twine

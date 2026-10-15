@@ -4,7 +4,10 @@ Status: 0.4.0 implementation, independent review, QA and merge complete.
 [PR #15](https://github.com/desenyon/aire/pull/15) merged as
 `afb168c3cd5cb54606ff5206cc29aa75ab734270`, preserving all twelve dependency
 PR heads. PRs #1–#12 are marked merged and audit tracker #14 is closed.
-No PyPI tag/upload was performed. The [capability matrix](../capabilities.md)
+This historical implementation-merge audit did not publish a PyPI tag/upload.
+The subsequent publication flow is documented in [publishing](../publishing.md);
+consult [GitHub Releases](https://github.com/desenyon/aire/releases) and
+[PyPI](https://pypi.org/project/aire-ai/) for the actual publication state. The [capability matrix](../capabilities.md)
 separates executed backends from deterministic transports and intentional limits.
 
 | Gate | Evidence so far |
