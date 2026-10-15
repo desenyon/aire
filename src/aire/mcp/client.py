@@ -16,8 +16,6 @@ import contextlib
 import logging
 from typing import Any
 
-from pydantic import ConfigDict, create_model
-
 from aire.mcp.protocol import (
     MCPError,
     client_capabilities,
@@ -27,7 +25,9 @@ from aire.mcp.protocol import (
     make_response,
     parse_message,
 )
+from aire.tools.schema import schema_model
 from aire.tools.tool import Tool
+from aire.tools.types import SideEffect
 
 _log = logging.getLogger("aire.mcp.client")
 
@@ -40,6 +40,7 @@ class MCPClient:
         command: list[str],
         *,
         startup_timeout: float = 15.0,
+        request_timeout: float = 30.0,
         roots: list[dict[str, Any]] | None = None,
         sampling_handler: Any | None = None,
         on_progress: Any | None = None,
@@ -47,7 +48,10 @@ class MCPClient:
         if not command:
             raise MCPError("MCPClient requires a command to spawn")
         self.command = command
+        if startup_timeout <= 0 or request_timeout <= 0:
+            raise MCPError("MCP deadlines must be positive")
         self.startup_timeout = startup_timeout
+        self.request_timeout = request_timeout
         self.roots = roots or [{"uri": "file://.", "name": "cwd"}]
         self.sampling_handler = sampling_handler
         self.on_progress = on_progress
@@ -110,8 +114,17 @@ class MCPClient:
                 process.stdin.close()
         with contextlib.suppress(ProcessLookupError):
             process.terminate()
-        with contextlib.suppress(asyncio.TimeoutError):
+        try:
             await asyncio.wait_for(process.wait(), timeout=5.0)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stderr_task
+            self._stderr_task = None
 
     async def __aenter__(self) -> MCPClient:
         return await self.connect()
@@ -216,7 +229,19 @@ class MCPClient:
             except Exception:
                 self._pending.pop(request_id, None)
                 raise
-        message = await fut
+        try:
+            message = await asyncio.wait_for(fut, timeout=self.request_timeout)
+        except TimeoutError as exc:
+            with contextlib.suppress(Exception):
+                await self._send(
+                    make_notification(
+                        "notifications/cancelled",
+                        {"requestId": request_id, "reason": "deadline exceeded"},
+                    )
+                )
+            raise MCPError(f"MCP request timed out: {method}") from exc
+        finally:
+            self._pending.pop(request_id, None)
         if "error" in message:
             error = message["error"]
             raise MCPError(
@@ -255,12 +280,14 @@ class MCPClient:
         async def _remote() -> str:  # replaced via _invoke override below
             return ""
 
-        tool = Tool(_remote, name=name, description=str(info.get("description", "")))
-        tool.spec.input_schema = info.get("inputSchema") or {"type": "object", "properties": {}}
-        tool._args_model = create_model(  # accept the server's schema verbatim
-            f"mcp_{name}_args",
-            __config__=ConfigDict(extra="allow"),
+        tool = Tool(
+            _remote,
+            name=name,
+            description=str(info.get("description", "")),
+            side_effect=SideEffect.EXTERNAL_SIDE_EFFECT,
         )
+        tool.spec.input_schema = info.get("inputSchema") or {"type": "object", "properties": {}}
+        tool._args_model = schema_model("mcp_client_" + name, tool.spec.input_schema)
 
         async def _invoke(kwargs: dict[str, Any]) -> str:
             return await client.call_tool(name, kwargs)

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlparse
 
 from aire.core.errors import ConfigurationError, ToolError
+from aire.tools.schema import resolve_schema, schema_model
 from aire.tools.tool import Tool
 from aire.tools.types import SideEffect
 
@@ -87,9 +88,13 @@ def openapi_to_tools(
             "OpenAPI import requires base_url= or servers[0].url",
             code="tools.openapi_base",
         )
+    if urlparse(resolved_base).scheme not in {"http", "https"}:
+        raise ConfigurationError("OpenAPI base URL must use HTTP(S)", code="tools.openapi_base")
     paths = spec.get("paths") or {}
     tools: list[Tool] = []
     for path, methods in paths.items():
+        if not path.startswith("/") or path.startswith("//") or "://" in path:
+            raise ConfigurationError("invalid OpenAPI operation path", code="tools.openapi_path")
         if not isinstance(methods, dict):
             continue
         for method, op in methods.items():
@@ -116,6 +121,9 @@ def openapi_to_tools(
                     method=method.upper(),
                     url=urljoin(resolved_base.rstrip("/") + "/", path.lstrip("/")),
                     timeout_seconds=timeout_seconds,
+                    parameters=[*(methods.get("parameters") or []), *(op.get("parameters") or [])],
+                    operation=op,
+                    root=spec,
                 )
             )
     return tools
@@ -128,23 +136,53 @@ def _make_http_tool(
     method: str,
     url: str,
     timeout_seconds: float,
+    parameters: list[dict[str, Any]],
+    operation: dict[str, Any],
+    root: dict[str, Any],
 ) -> Tool:
+    parameters = [resolve_schema(p, root) for p in parameters]
+    properties = {p["name"]: p.get("schema", {"type": "string"}) for p in parameters}
+    required = [p["name"] for p in parameters if p.get("required") or p.get("in") == "path"]
+    body_spec = resolve_schema(operation.get("requestBody", {}), root)
+    body_schema = body_spec.get("content", {}).get("application/json", {}).get("schema")
+    if body_schema is not None:
+        properties["body"] = body_schema
+        if body_spec.get("required"):
+            required.append("body")
+    args_model = schema_model(
+        name + "_args",
+        {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        },
+        root=root,
+    )
+
     async def _call(body: dict[str, Any] | None = None, **params: Any) -> str:
         import httpx
 
         # Path param substitution
         final_url = url
+        headers = {}
+        locations = {p["name"]: p.get("in") for p in parameters}
         for key, value in list(params.items()):
             token = "{" + key + "}"
             if token in final_url:
-                final_url = final_url.replace(token, str(value))
+                if str(value) in {".", ".."}:
+                    raise ToolError("invalid path parameter", code="tool.arguments_invalid")
+                final_url = final_url.replace(token, quote(str(value), safe=""))
                 params.pop(key, None)
+            elif locations.get(key) == "header":
+                headers[key] = str(params.pop(key))
         try:
             async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
                 response = await client.request(
                     method,
                     final_url,
-                    params=params if method == "GET" else None,
+                    params=params,
+                    headers=headers,
                     json=body if method != "GET" else None,
                 )
                 response.raise_for_status()
@@ -154,13 +192,16 @@ def _make_http_tool(
 
     _call.__doc__ = description
     _call.__name__ = name
-    return Tool(
+    result = Tool(
         _call,
         name=name,
         description=description,
         side_effect=SideEffect.EXTERNAL_SIDE_EFFECT,
         timeout_seconds=timeout_seconds,
     )
+    result._args_model = args_model
+    result.spec.input_schema = args_model.model_json_schema()
+    return result
 
 
 def describe() -> dict[str, Any]:

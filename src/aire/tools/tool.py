@@ -135,7 +135,7 @@ class Tool:
             return ToolResult.failure(
                 f"invalid arguments: {exc}", tool=self.name, code="tool.arguments_invalid"
             )
-        kwargs = validated.model_dump()
+        kwargs = validated.model_dump(exclude_unset=True)
         attempts = max(1, self.spec.retry.attempts)
         last_error: BaseException | None = None
         for attempt in range(attempts):

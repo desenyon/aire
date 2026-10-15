@@ -10,11 +10,10 @@ Requires ``httpx`` (core dependency).
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from typing import Any
-
-from pydantic import ConfigDict, create_model
 
 from aire.mcp.protocol import (
     PROTOCOL_VERSION,
@@ -23,7 +22,9 @@ from aire.mcp.protocol import (
     make_notification,
     make_request,
 )
+from aire.tools.schema import schema_model
 from aire.tools.tool import Tool
+from aire.tools.types import SideEffect
 
 _log = logging.getLogger("aire.mcp.http_client")
 
@@ -41,11 +42,13 @@ class MCPHttpClient:
         roots: list[dict[str, Any]] | None = None,
         sampling_handler: Any | None = None,
         on_progress: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         if not url:
             raise MCPError("MCPHttpClient requires a base URL")
         self.url = url.rstrip("/")
         self.timeout = timeout
+        self._extra_headers = dict(headers or {})
         self.roots = roots or [{"uri": "file://.", "name": "cwd"}]
         self.sampling_handler = sampling_handler
         self.on_progress = on_progress
@@ -73,7 +76,11 @@ class MCPHttpClient:
             await self.close()
             raise
         self.server_info = dict(result.get("serverInfo", {}))
-        await self._notify("notifications/initialized")
+        try:
+            await self._notify("notifications/initialized")
+        except Exception:
+            await self.close()
+            raise
         return self
 
     async def close(self) -> None:
@@ -89,6 +96,8 @@ class MCPHttpClient:
 
     def _headers(self) -> dict[str, str]:
         headers = {
+            **self._extra_headers,
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
@@ -99,30 +108,85 @@ class MCPHttpClient:
     async def _post(self, body: str) -> dict[str, Any]:
         if self._http is None:
             raise MCPError("MCP HTTP client is not connected")
-        response = await self._http.post(self.url, content=body, headers=self._headers())
-        session = response.headers.get(_SESSION_HEADER) or response.headers.get("Mcp-Session-Id")
-        if session:
-            self._session_id = session
-        if response.status_code >= 400:
-            raise MCPError(
-                f"MCP HTTP {response.status_code}: {response.text[:200]}",
-                context={"url": self.url, "status": response.status_code},
-            )
-        content_type = (response.headers.get("content-type") or "").lower()
-        text = response.text
-        if "text/event-stream" in content_type:
-            return _parse_sse_jsonrpc(text, on_progress=self.on_progress)
+        expected_id = json.loads(body).get("id")
+        async with self._http.stream(
+            "POST", self.url, content=body, headers=self._headers()
+        ) as response:
+            session = response.headers.get(_SESSION_HEADER)
+            if session:
+                self._session_id = session
+            if response.status_code >= 400:
+                raise MCPError(
+                    f"MCP HTTP {response.status_code}", context={"status": response.status_code}
+                )
+            if "text/event-stream" not in response.headers.get("content-type", "").lower():
+                try:
+                    message = json.loads(await response.aread())
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise MCPError("invalid JSON-RPC HTTP body") from exc
+                result = await self._route_message(message, expected_id)
+                if result is None:
+                    raise MCPError("HTTP response has no matching JSON-RPC result")
+                return result
+            return await self._read_sse_response(response, expected_id)
+
+    async def _read_sse_response(self, response: Any, expected_id: Any) -> dict[str, Any]:
+        data_lines: list[str] = []
+        async for line in response.aiter_lines():
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+            elif not line and data_lines:
+                try:
+                    message = json.loads("\n".join(data_lines))
+                except ValueError as exc:
+                    raise MCPError("invalid JSON-RPC SSE frame") from exc
+                data_lines = []
+                result = await self._route_message(message, expected_id)
+                if result is not None:
+                    return result
+        raise MCPError("no matching JSON-RPC response in SSE stream")
+
+    async def _route_message(self, message: Any, expected_id: Any) -> dict[str, Any] | None:
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            raise MCPError("invalid JSON-RPC response")
+        method = message.get("method")
+        request_id = message.get("id")
+        if method and request_id is not None:
+            await self._server_request(message)
+            return None
+        if method == "notifications/progress" and self.on_progress is not None:
+            value = self.on_progress(message.get("params") or {})
+            if inspect.isawaitable(value):
+                await value
+            return None
+        if request_id == expected_id and ("result" in message or "error" in message):
+            return message
+        if method:
+            return None
+        raise MCPError("JSON-RPC response ID does not match request")
+
+    async def _server_request(self, message: dict[str, Any]) -> None:
+        result: Any
+        reply: dict[str, Any] = {"jsonrpc": "2.0", "id": message["id"]}
         try:
-            data = response.json()
-        except json.JSONDecodeError as exc:
-            raise MCPError(
-                f"invalid JSON-RPC HTTP body: {exc}",
-                cause=exc,
-                context={"body": text[:200]},
-            ) from exc
-        if not isinstance(data, dict):
-            raise MCPError("MCP HTTP response is not a JSON object")
-        return data
+            if message["method"] == "roots/list":
+                result = {"roots": list(self.roots)}
+            elif (
+                message["method"] == "sampling/createMessage" and self.sampling_handler is not None
+            ):
+                result = self.sampling_handler(message.get("params") or {})
+                if inspect.isawaitable(result):
+                    result = await result
+            else:
+                reply["error"] = {"code": -32601, "message": "unsupported client method"}
+                result = None
+            if "error" not in reply:
+                reply["result"] = result
+        except Exception:
+            reply["error"] = {"code": -32603, "message": "client callback failed"}
+        response = await self._http.post(self.url, json=reply, headers=self._headers())
+        if response.status_code >= 400:
+            raise MCPError("server rejected callback response")
 
     async def _request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         self._next_id += 1
@@ -147,7 +211,7 @@ class MCPHttpClient:
         if session:
             self._session_id = session
         if response.status_code >= 400:
-            _log.warning("MCP notification %s failed: %s", method, response.status_code)
+            raise MCPError(f"MCP notification {method} failed: HTTP {response.status_code}")
 
     async def list_tools(self) -> list[dict[str, Any]]:
         result = await self._request("tools/list")
@@ -194,12 +258,14 @@ class MCPHttpClient:
         async def _remote() -> str:
             return ""
 
-        tool = Tool(_remote, name=name, description=str(info.get("description", "")))
-        tool.spec.input_schema = info.get("inputSchema") or {"type": "object", "properties": {}}
-        tool._args_model = create_model(
-            f"mcp_http_{name}_args",
-            __config__=ConfigDict(extra="allow"),
+        tool = Tool(
+            _remote,
+            name=name,
+            description=str(info.get("description", "")),
+            side_effect=SideEffect.EXTERNAL_SIDE_EFFECT,
         )
+        tool.spec.input_schema = info.get("inputSchema") or {"type": "object", "properties": {}}
+        tool._args_model = schema_model("mcp_http_client_" + name, tool.spec.input_schema)
 
         async def _invoke(kwargs: dict[str, Any]) -> str:
             return await client.call_tool(name, kwargs)
@@ -227,38 +293,6 @@ class MCPHttpClient:
                 "prompts/get",
             ],
         }
-
-
-def _parse_sse_jsonrpc(  # noqa: C901
-    text: str, *, on_progress: Any | None = None
-) -> dict[str, Any]:
-    """Extract the last JSON-RPC response from an SSE body; forward progress."""
-    last: dict[str, Any] | None = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("data:"):
-            continue
-        payload = line[5:].strip()
-        if not payload or payload == "[DONE]":
-            continue
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(data, dict) or data.get("jsonrpc") != "2.0":
-            continue
-        if data.get("id") is None and data.get("method") == "notifications/progress":
-            if on_progress is not None:
-                try:
-                    on_progress(data.get("params") or {})
-                except Exception:
-                    _log.exception("on_progress handler failed")
-            continue
-        if data.get("id") is not None:
-            last = data
-    if last is None:
-        raise MCPError("no JSON-RPC message found in SSE body", context={"body": text[:200]})
-    return last
 
 
 def _aire_version() -> str:
