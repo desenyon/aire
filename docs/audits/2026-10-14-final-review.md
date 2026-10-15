@@ -37,3 +37,11 @@ claims. No second review was used to replace the regression/full-suite gate.
 - Final: Ruling: production-scale remote retrieval is not proven — bounded live fixtures verify correctness within documented backend/query limits — cost if wrong: large workloads need backend-specific performance/limit validation.
 - Final: Ruling: merge and main-only Pages verification finish this authorized delivery; PyPI upload remains unperformed — publishing is not needed to prove versioned artifacts and was not requested — cost if wrong: package-index availability requires a separate release tag/publication.
 - Final: Ruling: wheel/hash and optional compatibility claims are scoped to executed platforms/profiles — installed artifact/hash checks do not prove every future resolver combination — cost if wrong: unsupported combinations need additional matrix coverage.
+
+## Completion
+
+All twelve plan tasks are complete. Task 12's final merged-tree run passed
+308 tests (11 live tests selected separately); merged-main CI and the protected
+Pages deployment also passed. The release QA record retains exact run/deployment
+identities and individual dependency-PR outcomes. The temporary SDD ledger is
+retired after preserving its decisions here; sibling workspaces are untouched.
