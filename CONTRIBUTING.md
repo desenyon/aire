@@ -11,19 +11,21 @@ Requires **Python 3.11+**.
 ```bash
 git clone https://github.com/desenyon/aire.git
 cd aire
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-make install               # pip install -e ".[dev]"
-pre-commit install         # optional but recommended
+uv sync --locked --no-default-groups --group dev
+make all
+# Optional Git hooks:
+uvx pre-commit install
 ```
 
 ## Publishing (maintainers)
 
 See [docs/publishing.md](docs/publishing.md). Summary:
 
-1. Pending Trusted Publisher on PyPI for project **`aire-ai`**
-2. GitHub environment **`release`** (already created)
-3. Tag `vX.Y.Z` → `.github/workflows/release.yml` publishes via OIDC
+1. Keep version, citation/date, changelog, README, docs and issue template consistent.
+2. Merge and wait for exact-current-main CI, CodeQL, Docs and Benchmarks.
+3. Run the release dry run, then tag `vX.Y.Z` at that tested main commit.
+4. Verify both PyPI installation and GitHub release assets; OIDC uses the existing
+   `aire-ai` publisher and tag-protected `release` environment.
 
 Install from PyPI: `pip install aire-ai` (import remains `from aire import …`).
 

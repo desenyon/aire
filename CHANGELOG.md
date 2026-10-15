@@ -33,6 +33,10 @@ All notable changes to aire are documented here. The format follows
 
 ### Packaging and audit
 
+- Complete tag publication through PyPI and GitHub Releases, verify published
+  artifact hashes and fresh installation, reject stale source/metadata, and
+  preserve matching artifacts when resuming interrupted publication.
+
 - Correct generated deployment and scale-pack requirements, optional-extra errors,
   examples and installation guidance to use the `aire-ai` distribution.
 - Correct the publishing verification command to use the public facade manifest.

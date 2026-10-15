@@ -1,85 +1,98 @@
-# Publishing to PyPI
+# Publishing Aire
 
-The distribution name on PyPI is **`aire-ai`** (the import package remains `aire`).
-The name `aire` is already taken by an unrelated project.
+The distribution is **`aire-ai`**; the Python import and CLI are `aire`.
+The unrelated PyPI project `aire` must never appear in an install command for this
+repository. [PyPI](https://pypi.org/project/aire-ai/) and
+[GitHub Releases](https://github.com/desenyon/aire/releases) are separate outputs.
+A successful dry run builds artifacts but publishes neither output.
 
-Validated, matching version tags on main publish via **Trusted Publishing** (OIDC) — no PyPI API token in GitHub secrets.
+## Before tagging
 
-## One-time setup (required)
+1. Update `src/aire/_version.py`, the dated `CHANGELOG.md` entry, `CITATION.cff`
+   version/date, README release series, docs home and bug-report version example.
+2. Update affected implementation, examples, capability evidence and migration
+   notes; retain explicitly historical audit results and unsupported boundaries.
+3. Run `uv sync --locked --no-default-groups --group dev`, `make all`, and the
+   relevant optional/service checks. Build and test installed distributions.
+4. Merge the reviewed PR. Wait for **CI, CodeQL, Docs and Benchmarks** to succeed
+   on that exact current `main` commit, including the public Pages deployment.
+5. Run a dry run from that commit:
 
-### 1. Create a PyPI account
+   ```bash
+   gh workflow run release.yml --ref main -f dry_run=true
+   ```
 
-Sign up at [https://pypi.org/account/register/](https://pypi.org/account/register/)
-and enable 2FA.
+   Inspect both source/artifact and downloaded-artifact verification jobs. A green
+   dry run with a skipped publishing job is not a published release.
 
-### 2. Add a pending Trusted Publisher
+The preflight checks current metadata and rejects stale/mismatched tags, a dirty
+checkout, a tag behind current main, or missing exact-commit main checks. The
+version remains centralized in `_version.py`; dynamic project metadata and the
+editable uv lock do not duplicate it.
 
-Until the first successful upload, the project does not exist on PyPI. Create a
-**pending** publisher:
+## Publish the tested commit
 
-1. Open [https://pypi.org/manage/account/publishing/](https://pypi.org/manage/account/publishing/)
-2. Under **GitHub**, fill in:
-
-   | Field | Value |
-   |-------|-------|
-   | PyPI Project Name | `aire-ai` |
-   | Owner | `desenyon` |
-   | Repository name | `aire` |
-   | Workflow name | `release.yml` |
-   | Environment name | `release` |
-
-3. Click **Add**
-
-### 3. Create the GitHub `release` environment
-
-1. Open [https://github.com/desenyon/aire/settings/environments](https://github.com/desenyon/aire/settings/environments)
-2. Create environment named exactly **`release`**
-3. (Recommended) Restrict it to tags matching `v*` and require a reviewer
-
-No secrets are needed for Trusted Publishing.
-
-## How publishing works
-
-`.github/workflows/release.yml` runs on:
-
-- pushes of tags matching `v*` (e.g. `v0.4.0`)
-- manual `workflow_dispatch` (dry-run build by default)
-
-Flow: build sdist/wheel → `twine check` → OIDC publish with
-`pypa/gh-action-pypi-publish`.
-
-## Publish a new version
+After every check above succeeds and local main matches the tested remote SHA:
 
 ```bash
-# bump src/aire/_version.py and CHANGELOG.md; metadata reads the version dynamically
-git commit -am "release 0.4.0"
-git tag -a v0.4.0 -m "aire 0.4.0"
-git push origin main --tags
+git switch main
+git pull --ff-only
+# Confirm this exact commit passed all four required main workflows.
+git status --short
+.venv/bin/python scripts/release.py check
+git tag -a v0.4.0 -m "Aire 0.4.0"
+git push origin refs/tags/v0.4.0
 ```
 
-Or re-run a failed tag build from the Actions UI after completing the pending
-publisher setup above.
+Push only the intended tag. Never move a tag or replace an already published
+version. A further source change requires a new version once publication occurs.
 
-## Verify
+The tag workflow:
+
+1. Verifies the current tested main/tag/version and repository metadata.
+2. Uses the locked tools and commit timestamp to build reproducible wheel/sdist.
+3. Checks metadata, typing/plugin/CLI/lazy-import behavior outside the checkout.
+4. Attaches source SHA, SHA-256 checksums and changelog-derived release notes.
+5. Downloads the bundle in a separate job and verifies the same bytes again.
+6. Rejects an existing PyPI file whose hash differs; uploads missing matching
+   files through Trusted Publishing; verifies the published bytes and installs
+   the actual published wheel in a fresh environment.
+7. Creates the GitHub Release with wheel, sdist, checksums, source provenance and
+   correct `aire-ai` install instructions. Existing draft releases can resume;
+   an existing public release's assets must match on rerun.
+
+If a tag workflow is interrupted, rerun its failed jobs. To dispatch publication
+manually, select the **matching tag**, not main:
 
 ```bash
-pip install aire-ai==0.4.0
-python -c "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
+gh workflow run release.yml --ref v0.4.0 -f dry_run=false
 ```
 
-Project page (after first upload): https://pypi.org/project/aire-ai/
+Matching published files are reused; conflicting files fail instead of being
+silently skipped. Publication remains restricted to `v*` tags by the `release`
+environment. No API-token secret is used.
 
-## Reproducible development and release QA
+## Trusted Publisher configuration
 
-Use `uv sync --locked --group dev` for the tested development tools. Core checks do
-not install heavyweight optional backends. Use selected extras (for example
-`uv sync --locked --extra ml --group test`) for backend contracts. The `all` extra
-aggregates the public profiles without copying version constraints and is expensive;
-backend runtime/hardware compatibility still applies.
+The existing `aire-ai` project already uses PyPI Trusted Publishing. Its GitHub
+publisher must continue to match owner `desenyon`, repository `aire`, workflow
+`release.yml`, and environment `release`. For a new project, configure a pending
+publisher first; for this project, manage the existing publisher. Do not rename
+these identifiers without updating PyPI. The GitHub environment permits tags
+matching `v*`; preserve that protection.
 
-Build with `uv run --locked --group release python -m build`, check distributions
-with `twine check dist/*`, then run `python scripts/verify_distribution.py <wheel>`.
-That script installs outside the source checkout and checks metadata, CLI, plugin
-entrypoints, typing marker and lazy imports. Release dry runs must pass before a
-version tag is used for publication. A merged version bump is not proof of a PyPI
-upload; inspect the publishing job and install the exact published version.
+## Verify the published release
+
+Inspect the publishing and verification jobs, the GitHub release assets and the
+exact PyPI version. A missing GitHub release or a skipped publisher is incomplete.
+
+```bash
+uv venv /tmp/aire-release-check
+uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.0'
+/tmp/aire-release-check/bin/python -I -c \
+  "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
+/tmp/aire-release-check/bin/aire doctor
+```
+
+For optional backends, use the selected documented extras and supported hardware;
+base-install success does not establish GPU or hosted-provider quality.

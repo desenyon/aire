@@ -1,27 +1,27 @@
-.PHONY: install lint typecheck test docs bench all
+.PHONY: install lint typecheck test docs bench release-check all
+
+UV_RUN = uv run --locked --no-default-groups --group dev
 
 install:
-	pip install -e ".[dev]"
+	uv sync --locked --no-default-groups --group dev
 
 lint:
-	ruff check src tests
-	ruff format --check src tests
+	$(UV_RUN) ruff check src tests scripts
+	$(UV_RUN) ruff format --check src tests scripts
 
 typecheck:
-	mypy
+	$(UV_RUN) mypy
 
 test:
-	pytest -q -m "not live"
+	$(UV_RUN) pytest -m "not live and not optional"
 
 docs:
-	@if command -v mkdocs >/dev/null 2>&1; then \
-		mkdocs build --strict; \
-	else \
-		echo "install docs extras: pip install -e '.[docs]'"; \
-		ls docs >/dev/null; \
-	fi
+	$(UV_RUN) mkdocs build --strict
 
 bench:
-	python benchmarks/microbench.py --json benchmarks/results/latest.json
+	$(UV_RUN) python benchmarks/microbench.py --json benchmarks/results/latest.json
 
-all: lint typecheck test
+release-check:
+	$(UV_RUN) python scripts/release.py check
+
+all: lint typecheck test docs release-check

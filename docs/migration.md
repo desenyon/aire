@@ -1,10 +1,10 @@
 # Migration guides
 
-## Unreleased reliability update (from 0.3.5)
+## 0.4.0 (from 0.3.5)
 
 Existing `AI` facade calls, offline defaults, provider constructors, and the
-`aire.models.types.ToolCall` import remain supported. No package version/tag is
-published by this update.
+`aire.models.types.ToolCall` import remain supported. The distribution is `aire-ai`; use `python -m pip install aire-ai==0.4.0`.
+See [publishing](publishing.md) for the verified release flow.
 
 ### Conversation and streaming data
 

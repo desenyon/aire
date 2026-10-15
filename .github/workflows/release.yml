@@ -17,6 +17,10 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: Verify release source and artifacts
@@ -31,43 +35,27 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           version: "0.13.0"
-      - name: Require matching version tag on main for publication
+      - run: uv sync --locked --no-default-groups --group dev
+      - name: Check repository metadata, current main and publication QA
         env:
           PUBLISH: ${{ github.event_name == 'push' || inputs.dry_run == false }}
-        run: |
-          python - <<'PY'
-          import os, runpy, subprocess
-          version = runpy.run_path('src/aire/_version.py')['__version__']
-          if os.environ['PUBLISH'] == 'true':
-              expected = 'refs/tags/v' + version
-              assert os.environ['GITHUB_REF'] == expected, 'Publication requires the matching version tag'
-              subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], check=True)
-          print('Validated source version', version)
-          PY
-      - name: Require successful CI for the publication commit
-        if: github.event_name == 'push' || inputs.dry_run == false
-        env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" > /tmp/ci-runs.json
-          python - <<'PYCI'
-          import json, os
-          runs = json.load(open('/tmp/ci-runs.json'))['workflow_runs']
-          assert any(run['head_sha'] == os.environ['GITHUB_SHA'] and run['event'] == 'push' for run in runs), 'This commit must pass main-branch CI before publishing'
-          PYCI
-      - run: uv sync --locked --no-default-groups --group dev
+          .venv/bin/python scripts/release.py check
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - run: .venv/bin/ruff check src tests scripts
       - run: .venv/bin/ruff format --check src tests scripts
       - run: .venv/bin/mypy
       - run: .venv/bin/python -m pytest -m "not live and not optional"
       - run: .venv/bin/mkdocs build --strict
-      - run: .venv/bin/python -m build
-      - run: .venv/bin/twine check dist/*
-      - run: .venv/bin/python scripts/verify_distribution.py dist/aire_ai-*.whl
+      - run: .venv/bin/python -m build --outdir release-bundle/dist
+      - run: .venv/bin/twine check release-bundle/dist/*
+      - run: .venv/bin/python scripts/verify_distribution.py release-bundle/dist/aire_ai-*.whl
+      - run: .venv/bin/python scripts/release.py prepare
       - uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
-          path: dist/
+          path: release-bundle/
 
   verify-upload:
     name: Verify uploaded distribution artifacts
@@ -84,13 +72,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
-          path: dist/
+          path: release-bundle/
       - run: uv sync --locked --no-default-groups --group release
-      - run: .venv/bin/twine check dist/*
-      - run: .venv/bin/python scripts/verify_distribution.py dist/aire_ai-*.whl
+      - run: .venv/bin/python scripts/release.py verify
+      - run: .venv/bin/twine check release-bundle/dist/*
+      - run: .venv/bin/python scripts/verify_distribution.py release-bundle/dist/aire_ai-*.whl
 
   publish:
-    name: Publish verified artifacts to PyPI
+    name: Publish and verify PyPI and GitHub release
     needs: [validate, verify-upload]
     if: github.event_name == 'push' || inputs.dry_run == false
     runs-on: ubuntu-latest
@@ -99,12 +88,54 @@ jobs:
       url: https://pypi.org/project/aire-ai/
     permissions:
       id-token: write
-      contents: read
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
       - uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
-          path: dist/
+          path: release-bundle/
+      - run: uv sync --locked --no-default-groups --group release
+      - name: Recheck current main and completed QA immediately before publication
+        env:
+          PUBLISH: "true"
+        run: .venv/bin/python scripts/release.py check
+      - name: Verify provenance and existing PyPI files before uploading
+        id: published
+        run: .venv/bin/python scripts/release.py pypi
       - uses: pypa/gh-action-pypi-publish@release/v1
+        if: steps.published.outputs.complete != 'true'
         with:
+          packages-dir: release-bundle/dist
           print-hash: true
+          skip-existing: true
+      - name: Verify published bytes and fresh installed package
+        run: .venv/bin/python scripts/release.py pypi --install
+      - name: Create GitHub release with verified assets
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          TITLE="Aire $TAG"
+          NOTES=release-bundle/metadata/release-notes.md
+          ASSETS=(release-bundle/dist/* release-bundle/metadata/SHA256SUMS release-bundle/metadata/provenance.json)
+          if gh release view "$TAG" --json isDraft > "$RUNNER_TEMP/aire-release.json"; then
+            if jq -e '.isDraft' "$RUNNER_TEMP/aire-release.json" > /dev/null; then
+              gh release upload "$TAG" "${ASSETS[@]}" --clobber
+              gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES" --draft=false --latest
+            else
+              gh release download "$TAG" --dir "$RUNNER_TEMP/aire-existing-release"
+              for asset in "${ASSETS[@]}"; do
+                cmp "$asset" "$RUNNER_TEMP/aire-existing-release/$(basename "$asset")"
+              done
+            fi
+          else
+            gh release create "$TAG" "${ASSETS[@]}" --verify-tag --title "$TITLE" --notes-file "$NOTES" --latest
+          fi

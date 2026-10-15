@@ -4,7 +4,7 @@
 One `AI` facade exposes the components; lower-level classes let you replace them
 individually. Apache-2.0 · Python 3.11+ · distribution: **`aire-ai`** · import: **`aire`**.
 
-**Alpha, 0.3.x.** Start with the offline defaults, test your chosen adapters, and
+**Alpha, 0.4.x.** Start with the offline defaults, test your chosen adapters, and
 read the [limitations](#limitations) before using it for production workloads.
 The echo model tests plumbing; it does not reason or answer questions intelligently.
 
@@ -114,7 +114,7 @@ SQLite stores with `await store.aclose()`.
 | `deployment`, `mcp` | FastAPI/gateway adapters, generated deployment files, MCP subset |
 | `ml`, `training`, `audio`, `vision`, `graph` | Optional and experimental subsystems; see their capability descriptions |
 
-The [architecture guide](docs/ARCHITECTURE.md) and [public API map](docs/PUBLIC_API.md)
+The [architecture guide](https://github.com/desenyon/aire/blob/main/docs/ARCHITECTURE.md) and [public API map](https://github.com/desenyon/aire/blob/main/docs/PUBLIC_API.md)
 provide more detail. These are composable systems: configuring a workflow does
 not automatically deploy it, attach tracing, or run evaluations.
 
@@ -230,7 +230,7 @@ without clearing the store. `clear=False` keeps append/upsert behavior.
 Local/SQLite filters apply before the result limit, including empty and
 punctuation-only queries. Plain filter keys use exact metadata equality;
 `{"__acl__": {"tenant": "demo", "roles": ["reader"]}}` enables ACL matching.
-`k <= 0` returns no local/SQLite hits. See [RAG](docs/rag.md) for query rewriting,
+`k <= 0` returns no local/SQLite hits. See [RAG](https://github.com/desenyon/aire/blob/main/docs/rag.md) for query rewriting,
 reranking, compression and remote-store behavior. Treat ACL metadata as trusted
 application data and verify each remote backend's filtering semantics.
 
@@ -270,7 +270,7 @@ Memory retains assistant declarations and tool observations together; a truncate
 buffer drops orphan tool-result messages at its beginning. JSON sessions preserve
 the same typed messages. Session saves are atomic snapshots, but a session is not
 a transaction log of every side effect: normal persistence happens at turn end
-or explicit pause. See [agents](docs/agents.md) for planning, teams, memory,
+or explicit pause. See [agents](https://github.com/desenyon/aire/blob/main/docs/agents.md) for planning, teams, memory,
 streamed step events, and approvals.
 
 ## Workflows and recovery
@@ -401,18 +401,18 @@ aire run 'hello, aire'
 
 `assistant.deploy()` constructs a FastAPI application; it does not publish a
 service. The gateway provides OpenAI-compatible and Anthropic-compatible routes,
-model aliases and routing. See [gateway](docs/gateway.md) for authentication,
+model aliases and routing. See [gateway](https://github.com/desenyon/aire/blob/main/docs/gateway.md) for authentication,
 configuration and route details. Deployment file generators produce starting
 points that need environment-specific review.
 
 Use `assistant.evaluate(...)` or the evaluation namespace with explicit datasets
 and metrics. Some metrics are deterministic lexical checks; model/embedding
 judges require their configured dependencies. Offline wiring tests do not measure
-answer quality. [Evaluation examples](examples/eval_gates/) demonstrate gates.
+answer quality. [Evaluation examples](https://github.com/desenyon/aire/blob/main/examples/eval_gates/) demonstrate gates.
 Tracing and metrics expose operational events when configured; they do not replace
 application monitoring, audit storage, or provider billing records.
 
-[MCP](docs/mcp.md), [OpenAPI tools](examples/openapi_tools/), and custom model/store
+[MCP](https://github.com/desenyon/aire/blob/main/docs/mcp.md), [OpenAPI tools](https://github.com/desenyon/aire/blob/main/examples/openapi_tools/), and custom model/store
 implementations provide extension points. Optional packages are imported lazily.
 Most components expose `.describe()` for capability inspection.
 
@@ -445,7 +445,7 @@ compatibility and cancellation. Tests use synthetic data and injected failures.
 ## Migration and reliability changes
 
 The `AI` facade, offline defaults, `provider:name` references and existing provider
-constructors remain. See [migration](docs/migration.md) and [CHANGELOG](CHANGELOG.md)
+constructors remain. See [migration](https://github.com/desenyon/aire/blob/main/docs/migration.md) and [CHANGELOG](https://github.com/desenyon/aire/blob/main/CHANGELOG.md)
 for the complete changes and operational details:
 
 - Existing messages without `tool_calls` load with an empty list. Historical tool
@@ -480,15 +480,15 @@ for the complete changes and operational details:
   Python code. Review tool permissions and side effects.
 - Some vision/audio pipelines explicitly return `stub=True`. Foundation helpers
   build toy architectures unless pretrained loading is requested. Dry-run training
-  is not evidence of a trained model. See [honesty](docs/honesty.md) and [GAPS](GAPS.md).
+  is not evidence of a trained model. See [honesty](https://github.com/desenyon/aire/blob/main/docs/honesty.md) and [GAPS](https://github.com/desenyon/aire/blob/main/GAPS.md).
 
 ## Project resources
 
-[Capability master plan](docs/superpowers/plans/2026-10-14-aire-master-plan.md) ·
-[Repository audit](docs/audits/2026-10-14-repository-audit.md) · [Open gaps](GAPS.md)
+[Capability master plan](https://github.com/desenyon/aire/blob/main/docs/superpowers/plans/2026-10-14-aire-master-plan.md) ·
+[Repository audit](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-14-repository-audit.md) · [Open gaps](https://github.com/desenyon/aire/blob/main/GAPS.md)
 
-[Documentation](docs/index.md) · [Runnable examples](examples/README.md) ·
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
-[Code of conduct](CODE_OF_CONDUCT.md) · [Citation](CITATION.cff) · [License](LICENSE)
+[Documentation](https://github.com/desenyon/aire/blob/main/docs/index.md) · [Runnable examples](https://github.com/desenyon/aire/blob/main/examples/README.md) ·
+[Contributing](https://github.com/desenyon/aire/blob/main/CONTRIBUTING.md) · [Security](https://github.com/desenyon/aire/blob/main/SECURITY.md) ·
+[Code of conduct](https://github.com/desenyon/aire/blob/main/CODE_OF_CONDUCT.md) · [Citation](https://github.com/desenyon/aire/blob/main/CITATION.cff) · [License](https://github.com/desenyon/aire/blob/main/LICENSE)
 
-The [0.4 capability contracts](docs/capabilities.md) map every public namespace to tests, supported backends, and explicit limits. See the [release QA record](docs/audits/2026-10-14-release-qa.md) for current validation.
+The [0.4 capability contracts](https://github.com/desenyon/aire/blob/main/docs/capabilities.md) map every public namespace to tests, supported backends, and explicit limits. See the [release QA record](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-14-release-qa.md) for current validation.
