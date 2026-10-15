@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from typing import Any
 
 from aire.core.errors import ConfigurationError
@@ -15,10 +16,10 @@ from aire.rag.types import Chunk, ScoredChunk
 def _require_psycopg() -> Any:
     if importlib.util.find_spec("psycopg") is None:
         raise ConfigurationError(
-            "psycopg is required for pgvector: pip install 'aire[pgvector]'",
+            "psycopg is required for pgvector: pip install 'aire-ai[pgvector]'",
             code="rag.pgvector_missing",
         )
-    import psycopg  # type: ignore[import-not-found]
+    import psycopg
 
     return psycopg
 
@@ -40,6 +41,12 @@ class PgVectorStore(VectorStore):
         dim: int | None = None,
         use_pgvector: bool | None = None,
     ) -> None:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+            raise ConfigurationError(
+                "invalid PostgreSQL table identifier", code="rag.pgvector_table"
+            )
+        if dim is not None and dim <= 0:
+            raise ConfigurationError("dim must be positive", code="rag.pgvector_dim")
         self.psycopg = _require_psycopg()
         self.dsn = dsn
         self.table = table
@@ -50,7 +57,7 @@ class PgVectorStore(VectorStore):
         self._ensure()
 
     def _connect(self) -> Any:
-        return self.psycopg.connect(self.dsn)
+        return self.psycopg.connect(self.dsn, connect_timeout=5)
 
     def _ensure(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
@@ -199,6 +206,8 @@ class PgVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         if self._pgvector:
             return await self._search_pgvector(vector, k=k, filter=filter)
         return await self._search_jsonb(vector, k=k, filter=filter)
@@ -210,6 +219,7 @@ class PgVectorStore(VectorStore):
         k: int,
         filter: dict[str, Any] | None,
     ) -> list[ScoredChunk]:
+        limit = max(k, await self.count()) if filter else k
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -219,7 +229,7 @@ class PgVectorStore(VectorStore):
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (vector, vector, max(k * 5, k)),
+                (vector, vector, limit),
             )
             rows = cur.fetchall()
         scored: list[ScoredChunk] = []
@@ -305,6 +315,49 @@ class PgVectorStore(VectorStore):
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 
+    async def replace_document(self, document_id: str, chunks: list[Chunk]) -> int:
+        return self._replace(chunks, document_id=document_id)
+
+    async def replace_all(self, chunks: list[Chunk]) -> int:
+        return self._replace(chunks, document_id=None)
+
+    def _replace(self, chunks: list[Chunk], *, document_id: str | None) -> int:
+        # The transaction owns delete and insert together; constraint/driver errors
+        # roll back the old generation as well as the new writes.
+        with self._connect() as conn, conn.cursor() as cur:
+            if document_id is None:
+                cur.execute(f"DELETE FROM {self.table}")
+            else:
+                cur.execute(f"DELETE FROM {self.table} WHERE document_id = %s", (document_id,))
+            for chunk in chunks:
+                if document_id is not None and chunk.document_id != document_id:
+                    raise ConfigurationError(
+                        "replacement document ID mismatch", code="rag.document_id"
+                    )
+                if self.dim is not None and len(chunk.embedding or []) != self.dim:
+                    raise ConfigurationError(
+                        "replacement embedding dimension mismatch", code="rag.pgvector_dim"
+                    )
+                embedding = json.dumps(chunk.embedding or [])
+                cast = "vector" if self._pgvector else "jsonb"
+                cur.execute(
+                    f"INSERT INTO {self.table} (id, document_id, text, idx, metadata, embedding) "
+                    f"VALUES (%s, %s, %s, %s, %s::jsonb, %s::{cast}) "
+                    "ON CONFLICT (id) DO UPDATE SET document_id=EXCLUDED.document_id, "
+                    "text=EXCLUDED.text, idx=EXCLUDED.idx, metadata=EXCLUDED.metadata, "
+                    "embedding=EXCLUDED.embedding",
+                    (
+                        chunk.id,
+                        chunk.document_id,
+                        chunk.text,
+                        chunk.index,
+                        json.dumps(chunk.metadata),
+                        embedding,
+                    ),
+                )
+            conn.commit()
+        return len(chunks)
+
     async def delete(self, ids: list[str]) -> int:
         if not ids:
             return 0
@@ -314,6 +367,11 @@ class PgVectorStore(VectorStore):
             return int(cur.rowcount or 0)
 
     async def count(self) -> int:
+        import asyncio
+
+        return await asyncio.to_thread(self._count)
+
+    def _count(self) -> int:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {self.table}")
             return int(cur.fetchone()[0])

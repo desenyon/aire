@@ -21,11 +21,12 @@ The request ``model`` field accepts an exposed alias, an exposed ref, or (when
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from aire._version import __version__
@@ -40,7 +41,9 @@ from aire.core.errors import (
     RateLimitError,
     SafetyError,
 )
+from aire.core.lifecycle import closing_stream
 from aire.core.runtime import Runtime
+from aire.core.tool_calls import ToolCall
 from aire.deployment.fastapi_app import _make_guard
 from aire.models.base import EmbeddingModel, Model
 from aire.models.registry import ModelRegistry
@@ -57,7 +60,7 @@ if TYPE_CHECKING:
     from fastapi import Depends, FastAPI, Request
     from fastapi.responses import JSONResponse, Response, StreamingResponse
 else:
-    try:  # optional dependency: aire[serve]
+    try:  # optional dependency: aire-ai[serve]
         from fastapi import Depends, FastAPI, Request
         from fastapi.responses import JSONResponse, Response, StreamingResponse
     except ImportError:  # pragma: no cover - exercised only without the extra
@@ -97,6 +100,7 @@ class Gateway:
         semantic_threshold: float = 0.95,
         semantic_embedder: str | EmbeddingModel | None = None,
         semantic_cache_redis_url: str | None = None,
+        semantic_cache_namespace: str = "default",
     ) -> None:
         if routing not in ("first", "round_robin"):
             raise ConfigurationError(
@@ -124,6 +128,7 @@ class Gateway:
         )
         self._semantic_entries: list[tuple[str, list[float], str, GenerationResult]] = []
         self._semantic_redis_url = semantic_cache_redis_url
+        self._semantic_cache_namespace = semantic_cache_namespace
         self._semantic_redis_backend: Any = None
         self.semantic_hits = 0
         self.semantic_misses = 0
@@ -253,7 +258,7 @@ class Gateway:
                 last_error = exc
                 continue
             self._record_success(public, ref, result.usage.cost_usd)
-            await self._semantic_store(public, request, result)
+            await self._semantic_store(public, request, result, resolved=ref)
             return ref, result
         assert last_error is not None
         if isinstance(last_error, AireError):
@@ -289,16 +294,16 @@ class Gateway:
     async def _semantic_lookup(
         self, public: str, request: GenerationRequest
     ) -> tuple[str, GenerationResult] | None:
-        from aire.optimization.cache import _has_tool_context
+        from aire.optimization.cache import _has_tool_context, replay_result
 
         embedder = None if _has_tool_context(request) else await self._ensure_semantic_embedder()
         if embedder is None:
             return None
-        from aire.optimization.cache import _params_signature
         from aire.rag.store import cosine_similarity
 
         prompt = "\n".join(m.text_content for m in request.messages)
-        signature = f"{public}|{_params_signature(request)}"
+        signature = self._semantic_signature(public, request, embedder)
+        valid_refs = self._semantic_refs(public)
         vector = await embedder.embed_one(prompt)
 
         redis = await self._get_semantic_redis()
@@ -310,25 +315,68 @@ class Gateway:
                 try:
                     payload = json.loads(raw)
                     for item in payload:
-                        if cosine_similarity(vector, item["vector"]) >= self.semantic_threshold:
+                        if (
+                            item["ref"] in valid_refs
+                            and cosine_similarity(vector, item["vector"]) >= self.semantic_threshold
+                        ):
                             self.semantic_hits += 1
-                            return item["ref"], GenerationResult.model_validate(item["result"])
+                            return item["ref"], replay_result(
+                                GenerationResult.model_validate(item["result"])
+                            )
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     pass
             self.semantic_misses += 1
             return None
 
         for cached_sig, cached_vec, cached_ref, result in self._semantic_entries:
-            if cached_sig != signature:
+            if cached_sig != signature or cached_ref not in valid_refs:
                 continue
             if cosine_similarity(vector, cached_vec) >= self.semantic_threshold:
                 self.semantic_hits += 1
-                return cached_ref, result.model_copy(deep=True)
+                return cached_ref, replay_result(result)
         self.semantic_misses += 1
         return None
 
+    def _semantic_refs(self, public: str) -> set[str]:
+        candidates = self._refs_for(public, self.chat_routes, "chat")
+        refs = set(candidates)
+        if self.objective is not None:
+            router = self._routers.get(public)
+            refs.add(router.info.ref if router is not None else "router:" + "+".join(candidates))
+        return refs
+
+    def _semantic_signature(
+        self, public: str, request: GenerationRequest, embedder: EmbeddingModel
+    ) -> str:
+        from aire.optimization.cache import _params_signature
+
+        identity = {
+            "version": 2,
+            "namespace": self._semantic_cache_namespace,
+            "public": public,
+            "refs": self._refs_for(public, self.chat_routes, "chat"),
+            "routing": self.routing,
+            "objective": self.objective,
+            "fallback": self.fallback,
+            "embedder": {
+                "class": f"{type(embedder).__module__}.{type(embedder).__qualname__}",
+                "name": embedder.name,
+                "dimension": embedder.dimension,
+                "ref": self._semantic_embedder_spec
+                if isinstance(self._semantic_embedder_spec, str)
+                else None,
+            },
+        }
+        fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        return f"{fingerprint}|{_params_signature(request)}"
+
     async def _semantic_store(
-        self, public: str, request: GenerationRequest, result: GenerationResult
+        self,
+        public: str,
+        request: GenerationRequest,
+        result: GenerationResult,
+        *,
+        resolved: str | None = None,
     ) -> None:
         from aire.optimization.cache import _has_tool_context
 
@@ -337,10 +385,8 @@ class Gateway:
         embedder = await self._ensure_semantic_embedder()
         if embedder is None:
             return
-        from aire.optimization.cache import _params_signature
-
         prompt = "\n".join(m.text_content for m in request.messages)
-        signature = f"{public}|{_params_signature(request)}"
+        signature = self._semantic_signature(public, request, embedder)
         vector = await embedder.embed_one(prompt)
 
         redis = await self._get_semantic_redis()
@@ -355,7 +401,7 @@ class Gateway:
             existing.append(
                 {
                     "vector": vector,
-                    "ref": public,
+                    "ref": resolved or result.model,
                     "result": result.model_dump(mode="json"),
                 }
             )
@@ -365,11 +411,13 @@ class Gateway:
 
         if len(self._semantic_entries) >= 1024:
             self._semantic_entries.pop(0)
-        self._semantic_entries.append((signature, vector, public, result.model_copy(deep=True)))
+        self._semantic_entries.append(
+            (signature, vector, resolved or result.model, result.model_copy(deep=True))
+        )
 
     async def stream(
         self, public: str, request: GenerationRequest
-    ) -> AsyncIterator[tuple[str, GenerationChunk]]:
+    ) -> AsyncGenerator[tuple[str, GenerationChunk], None]:
         """Stream chunks; semantic-cache hits replay as a single chunk stream."""
         cached = await self._semantic_lookup(public, request)
         if cached is not None:
@@ -390,15 +438,20 @@ class Gateway:
         for ref, model in chain if self.fallback else chain[:1]:
             started = False
             pieces: list[str] = []
+            tool_calls: list[ToolCall] = []
+            finish = "stop"
             cost_usd = 0.0
             try:
-                async for chunk in model.stream(request):
-                    started = True
-                    if chunk.text:
-                        pieces.append(chunk.text)
-                    if chunk.usage is not None:
-                        cost_usd += float(chunk.usage.cost_usd or 0.0)
-                    yield ref, chunk
+                async with closing_stream(model.stream(request)) as upstream:
+                    async for chunk in upstream:
+                        started = True
+                        tool_calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                        finish = chunk.finish_reason or finish
+                        if chunk.text:
+                            pieces.append(chunk.text)
+                        if chunk.usage is not None:
+                            cost_usd = float(chunk.usage.cost_usd or 0.0)
+                        yield ref, chunk
             except Exception as exc:
                 self._record_failure(ref)
                 last_error = exc
@@ -410,7 +463,10 @@ class Gateway:
                 await self._semantic_store(
                     public,
                     request,
-                    GenerationResult.text_result("".join(pieces), model=ref),
+                    GenerationResult.text_result(
+                        "".join(pieces), model=ref, tool_calls=tool_calls
+                    ).model_copy(update={"finish_reason": finish}),
+                    resolved=ref,
                 )
             return
         assert last_error is not None
@@ -498,12 +554,14 @@ def create_gateway(
     semantic_threshold: float = 0.95,
     semantic_embedder: str | EmbeddingModel | None = None,
     semantic_cache_redis_url: str | None = None,
+    semantic_cache_namespace: str = "default",
     guardrails: GuardrailChain | list[Guardrail] | bool | None = None,
+    close_runtime: bool = False,
 ) -> Any:
-    """Build an OpenAI-compatible gateway app. Requires ``pip install aire[serve]``."""
+    """Build an OpenAI-compatible gateway app. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
         raise ConfigurationError(
-            "fastapi is required for the gateway: pip install 'aire[serve]'",
+            "fastapi is required for the gateway: pip install 'aire-ai[serve]'",
             code="deploy.fastapi_missing",
         )
     if runtime is None:
@@ -534,10 +592,22 @@ def create_gateway(
         semantic_threshold=semantic_threshold,
         semantic_embedder=semantic_embedder,
         semantic_cache_redis_url=redis_url if semantic_cache else None,
+        semantic_cache_namespace=semantic_cache_namespace,
     )
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
     log = _make_request_logger(request_log)
-    app = FastAPI(title=title, version=__version__)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Any) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if gateway._semantic_redis_backend is not None:
+                await gateway._semantic_redis_backend.aclose()
+            if close_runtime:
+                await runtime.aclose()
+
+    app = FastAPI(title=title, version=__version__, lifespan=lifespan)
 
     @app.exception_handler(AireError)
     async def _aire_error_handler(request: Request, exc: AireError) -> Any:
@@ -555,6 +625,22 @@ def create_gateway(
 
 
 def _register_meta_routes(app: Any, gateway: Gateway, guard: Any) -> None:
+    @app.get("/ready")
+    async def ready() -> Any:
+        import asyncio
+
+        available = not gateway._runtime._closed
+        for public in gateway.chat_routes:
+            try:
+                chain = await asyncio.wait_for(gateway._chat_chain(public), timeout=5)
+                statuses = await asyncio.wait_for(
+                    asyncio.gather(*(model.health() for _, model in chain)), timeout=5
+                )
+                available = available and any(status.ok for status in statuses)
+            except Exception:
+                available = False
+        return JSONResponse(status_code=200 if available else 503, content={"ready": available})
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return _health_payload(gateway)
@@ -625,7 +711,7 @@ def _register_chat_route(
         request = await _guard_generation_request(_build_generation_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
-                _sse_stream(gateway, public, request, metrics),
+                _sse_stream(gateway, public, request, metrics, safety_chain),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -656,7 +742,7 @@ def _register_anthropic_route(
         request = await _guard_generation_request(_build_anthropic_request(body), safety_chain)
         if body.get("stream"):
             return StreamingResponse(
-                _anthropic_sse_stream(gateway, public, request, metrics),
+                _anthropic_sse_stream(gateway, public, request, metrics, safety_chain),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -859,8 +945,92 @@ def _content_text(content: Any) -> str:
     return ""
 
 
+def _validated_request(
+    body: dict[str, Any], parser: Callable[[dict[str, Any]], GenerationRequest]
+) -> GenerationRequest:
+    try:
+        messages = body.get("messages")
+        if (
+            not isinstance(messages, list)
+            or not messages
+            or any(not isinstance(m, dict) for m in messages)
+        ):
+            raise ValueError("messages must be a nonempty array of objects")
+        for key in ("max_tokens", "max_completion_tokens"):
+            value = body.get(key)
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ValueError(f"{key} must be a positive integer")
+        if "stream" in body and type(body["stream"]) is not bool:
+            raise ValueError("stream must be a boolean")
+        return parser(body)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ConfigurationError("invalid generation request", code="gateway.bad_request") from exc
+
+
+def _openai_content(raw: Any) -> list[Any]:
+    import base64
+
+    from aire.core.content import AudioContent, ImageContent, TextContent
+
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [TextContent(text=raw)]
+    if not isinstance(raw, list):
+        raise ValueError("content must be text or an array")
+    blocks: list[Any] = []
+    for part in raw:
+        kind = part["type"]
+        if kind == "text":
+            blocks.append(TextContent(text=part["text"]))
+        elif kind == "image_url":
+            blocks.append(ImageContent(uri=part["image_url"]["url"]))
+        elif kind == "input_audio":
+            audio = part["input_audio"]
+            blocks.append(
+                AudioContent(
+                    data=base64.b64decode(audio["data"], validate=True),
+                    media_type="audio/" + audio["format"],
+                )
+            )
+        else:
+            raise ValueError("unsupported content block")
+    return blocks
+
+
+def _request_tools(body: dict[str, Any], *, openai: bool) -> list[dict[str, Any]]:
+    raw = body.get("tools")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("tools must be an array")
+    for tool in raw:
+        definition = tool.get("function") if openai and isinstance(tool, dict) else tool
+        if (
+            not isinstance(definition, dict)
+            or not isinstance(definition.get("name"), str)
+            or not definition["name"]
+        ):
+            raise ValueError("tool name is required")
+    return raw
+
+
+def _openai_tool_choice(raw: Any) -> str | None:
+    if raw is None or isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict) and raw.get("type") == "function":
+        name = raw["function"]["name"]
+        if isinstance(name, str) and name:
+            return name
+    raise ValueError("invalid tool_choice")
+
+
 def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
-    from aire.core.content import Message, TextContent
+    return _validated_request(body, _parse_generation_request)
+
+
+def _parse_generation_request(body: dict[str, Any]) -> GenerationRequest:
+    from aire.core.content import Message
     from aire.models.types import ToolCall
 
     messages = []
@@ -870,12 +1040,16 @@ def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
         messages.append(
             Message(
                 role=raw.get("role", "user"),
-                content=[TextContent(text=_content_text(raw.get("content")))],
+                content=_openai_content(raw.get("content")),
                 name=raw.get("name"),
                 tool_call_id=raw.get("tool_call_id"),
                 tool_calls=[
                     ToolCall.from_json(
-                        c["id"], c["function"]["name"], c["function"].get("arguments", "{}")
+                        c["id"],
+                        c["function"]["name"],
+                        json.loads(c["function"].get("arguments", "{}"))
+                        if isinstance(c["function"].get("arguments", "{}"), str)
+                        else c["function"]["arguments"],
                     )
                     for c in raw.get("tool_calls") or []
                 ],
@@ -888,26 +1062,28 @@ def _build_generation_request(body: dict[str, Any]) -> GenerationRequest:
             parameters=(t.get("function") or {}).get("parameters")
             or {"type": "object", "properties": {}},
         )
-        for t in body.get("tools") or []
-        if isinstance(t, dict) and (t.get("function") or {}).get("name")
+        for t in _request_tools(body, openai=True)
     ]
     stop_raw = body.get("stop")
     stop = [stop_raw] if isinstance(stop_raw, str) else stop_raw or None
     return GenerationRequest(
         messages=messages,
         temperature=body.get("temperature"),
-        max_tokens=body.get("max_tokens"),
+        max_tokens=body.get("max_completion_tokens", body.get("max_tokens")),
         stop=stop,
         tools=tools or None,
-        tool_choice=body.get("tool_choice") if isinstance(body.get("tool_choice"), str) else None,
+        tool_choice=_openai_tool_choice(body.get("tool_choice")),
         response_format=_response_format(body.get("response_format")),
         seed=body.get("seed"),
+        metadata=body.get("metadata") or {},
     )
 
 
 def _response_format(raw: Any) -> StructuredOutputSpec | None:
-    if not isinstance(raw, dict):
+    if raw is None:
         return None
+    if not isinstance(raw, dict):
+        raise ValueError("invalid response_format")
     if raw.get("type") == "json_schema" and isinstance(raw.get("json_schema"), dict):
         schema = raw["json_schema"]
         return StructuredOutputSpec(
@@ -917,7 +1093,7 @@ def _response_format(raw: Any) -> StructuredOutputSpec | None:
         )
     if raw.get("type") == "json_object":
         return StructuredOutputSpec(name="json", schema={"type": "object"}, strict=False)
-    return None
+    raise ValueError("unsupported response_format")
 
 
 def _tool_calls_payload(result: GenerationResult) -> list[dict[str, Any]]:
@@ -969,8 +1145,55 @@ def _sse(payload: dict[str, Any] | str) -> str:
     return f"data: {data}\n\n"
 
 
+async def _checked_stream(
+    gateway: Gateway, public: str, request: GenerationRequest, safety_chain: Any | None
+) -> AsyncIterator[tuple[str, GenerationChunk]]:
+    """Buffer guarded output until the full text passes the output policy.
+
+    Chunk-local validation cannot detect secrets spanning chunk boundaries.
+    Closing/cancelling the consumer closes the upstream stream as well.
+    """
+    from aire.core.types import Usage
+
+    stream = gateway.stream(public, request)
+    async with contextlib.aclosing(stream):
+        if safety_chain is None:
+            async for item in stream:
+                yield item
+            return
+        text: list[str] = []
+        calls = []
+        usage = Usage()
+        finish = "stop"
+        resolved = public
+        async for resolved_ref, chunk in stream:
+            resolved = resolved_ref
+            text.append(chunk.text)
+            calls.extend(chunk.tool_calls)
+            if chunk.usage is not None:
+                usage = chunk.usage
+            finish = chunk.finish_reason or finish
+        result = GenerationResult.text_result(
+            "".join(text), model=resolved, usage=usage, tool_calls=calls
+        ).model_copy(update={"finish_reason": finish})
+        result = await _guard_generation_result(result, safety_chain)
+        yield (
+            resolved,
+            GenerationChunk(
+                text=result.text,
+                tool_calls=result.tool_calls,
+                usage=result.usage,
+                finish_reason=result.finish_reason,
+            ),
+        )
+
+
 async def _sse_stream(
-    gateway: Gateway, public: str, request: GenerationRequest, metrics: Metrics | None
+    gateway: Gateway,
+    public: str,
+    request: GenerationRequest,
+    metrics: Metrics | None,
+    safety_chain: Any | None = None,
 ) -> AsyncIterator[str]:
     stream_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
@@ -989,27 +1212,31 @@ async def _sse_stream(
     emitted_role = False
     tool_index = 0
     try:
-        async for _resolved, chunk in gateway.stream(public, request):
-            if not emitted_role:
-                yield _sse(_chunk({"role": "assistant"}))
-                yield _sse({"aire": {"resolved_model": resolved}})
-                emitted_role = True
-            delta: dict[str, Any] = {}
-            if chunk.text:
-                delta["content"] = chunk.text
-            if chunk.tool_calls:
-                delta["tool_calls"] = [
-                    {
-                        "index": tool_index + i,
-                        "id": tc.id or f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                    }
-                    for i, tc in enumerate(chunk.tool_calls)
-                ]
-                tool_index += len(chunk.tool_calls)
-            if delta or chunk.finish_reason:
-                yield _sse(_chunk(delta, chunk.finish_reason))
+        async with closing_stream(
+            _checked_stream(gateway, public, request, safety_chain)
+        ) as upstream:
+            async for _resolved, chunk in upstream:
+                resolved = _resolved
+                if not emitted_role:
+                    yield _sse(_chunk({"role": "assistant"}))
+                    yield _sse({"aire": {"resolved_model": resolved}})
+                    emitted_role = True
+                delta: dict[str, Any] = {}
+                if chunk.text:
+                    delta["content"] = chunk.text
+                if chunk.tool_calls:
+                    delta["tool_calls"] = [
+                        {
+                            "index": tool_index + i,
+                            "id": tc.id or f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                        }
+                        for i, tc in enumerate(chunk.tool_calls)
+                    ]
+                    tool_index += len(chunk.tool_calls)
+                if delta or chunk.finish_reason:
+                    yield _sse(_chunk(delta, chunk.finish_reason))
     except Exception as exc:
         error = exc if isinstance(exc, AireError) else ProviderError("gateway", str(exc))
         yield _sse(_error_body(error))
@@ -1055,11 +1282,13 @@ async def _guard_generation_request(
             messages.append(message)
             continue
         messages.append(
-            Message(
-                role=message.role,
-                content=[TextContent(text=scrubbed)],
-                name=message.name,
-                tool_call_id=message.tool_call_id,
+            message.model_copy(
+                update={
+                    "content": [
+                        TextContent(text=scrubbed),
+                        *(block for block in message.content if not isinstance(block, TextContent)),
+                    ]
+                }
             )
         )
     return request.with_messages(messages)
@@ -1134,7 +1363,11 @@ def _maybe_span(runtime: Runtime, name: str, attributes: dict[str, Any]) -> Any:
 # -- anthropic-compatible endpoint --------------------------------------------------------
 
 
-def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa: C901
+def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:
+    return _validated_request(body, _parse_anthropic_request)
+
+
+def _parse_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa: C901
     """Translate an Anthropic /v1/messages body into a GenerationRequest.
 
     Supports text and image content blocks (base64 / url), tools, tool_choice,
@@ -1168,7 +1401,7 @@ def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa
                 )
             continue
         if role not in ("user", "assistant"):
-            role = "user"
+            raise ValueError("invalid Anthropic message role")
         blocks = _anthropic_content_blocks(content)
         if not blocks:
             blocks = [TextContent(text=_content_text(content))]
@@ -1201,9 +1434,7 @@ def _build_anthropic_request(body: dict[str, Any]) -> GenerationRequest:  # noqa
         ]
         messages.append(Message(role=role, content=blocks, tool_calls=calls))
     tools: list[ToolDefinition] = []
-    for raw_tool in body.get("tools") or []:
-        if not isinstance(raw_tool, dict):
-            continue
+    for raw_tool in _request_tools(body, openai=False):
         name = raw_tool.get("name")
         if not isinstance(name, str) or not name:
             continue
@@ -1294,7 +1525,11 @@ def _anthropic_content_blocks(content: Any) -> list[Any]:  # noqa: C901
 
 
 async def _anthropic_sse_stream(
-    gateway: Gateway, public: str, request: GenerationRequest, metrics: Metrics | None
+    gateway: Gateway,
+    public: str,
+    request: GenerationRequest,
+    metrics: Metrics | None,
+    safety_chain: Any | None = None,
 ) -> AsyncIterator[str]:
     """Anthropic-compatible SSE stream for ``/v1/messages?stream``."""
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
@@ -1323,48 +1558,51 @@ async def _anthropic_sse_stream(
                 "content_block": {"type": "text", "text": ""},
             }
         )
-        async for resolved_ref, chunk in gateway.stream(public, request):
-            resolved = resolved_ref
-            if chunk.usage is not None:
-                output_tokens = max(output_tokens, chunk.usage.output_tokens)
-            if chunk.text:
-                yield _sse(
-                    {
-                        "type": "content_block_delta",
-                        "index": 0,
-                        "delta": {"type": "text_delta", "text": chunk.text},
-                    }
-                )
-            for tc in chunk.tool_calls:
-                stop_reason = "tool_use"
-                block_index += 1
-                yield _sse(
-                    {
-                        "type": "content_block_start",
-                        "index": block_index,
-                        "content_block": {
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.name,
-                            "input": {},
-                        },
-                    }
-                )
-                yield _sse(
-                    {
-                        "type": "content_block_delta",
-                        "index": block_index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": json.dumps(tc.arguments),
-                        },
-                    }
-                )
-                yield _sse({"type": "content_block_stop", "index": block_index})
-            if chunk.finish_reason == "tool_calls":
-                stop_reason = "tool_use"
-            elif chunk.finish_reason == "length":
-                stop_reason = "max_tokens"
+        async with closing_stream(
+            _checked_stream(gateway, public, request, safety_chain)
+        ) as upstream:
+            async for resolved_ref, chunk in upstream:
+                resolved = resolved_ref
+                if chunk.usage is not None:
+                    output_tokens = max(output_tokens, chunk.usage.output_tokens)
+                if chunk.text:
+                    yield _sse(
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": chunk.text},
+                        }
+                    )
+                for tc in chunk.tool_calls:
+                    stop_reason = "tool_use"
+                    block_index += 1
+                    yield _sse(
+                        {
+                            "type": "content_block_start",
+                            "index": block_index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tc.id,
+                                "name": tc.name,
+                                "input": {},
+                            },
+                        }
+                    )
+                    yield _sse(
+                        {
+                            "type": "content_block_delta",
+                            "index": block_index,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": json.dumps(tc.arguments),
+                            },
+                        }
+                    )
+                    yield _sse({"type": "content_block_stop", "index": block_index})
+                if chunk.finish_reason == "tool_calls":
+                    stop_reason = "tool_use"
+                elif chunk.finish_reason == "length":
+                    stop_reason = "max_tokens"
         yield _sse({"type": "content_block_stop", "index": 0})
         yield _sse(
             {

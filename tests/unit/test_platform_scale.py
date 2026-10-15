@@ -13,7 +13,7 @@ from aire.workers import create_worker
 
 def test_create_worker_redis() -> None:
     if importlib.util.find_spec("redis") is None:
-        with pytest.raises(ConfigurationError, match="aire\\[redis\\]"):
+        with pytest.raises(ConfigurationError, match="aire-ai\\[redis\\]"):
             create_worker("redis")
     else:
         worker = create_worker("redis", url="redis://localhost:6379/0")

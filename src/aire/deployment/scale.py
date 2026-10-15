@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aire._version import __version__
 from aire.deployment.artifacts import generate_artifacts
 
 # deploy.replicas is honored by `docker compose --compatibility` / swarm mode.
@@ -280,9 +281,9 @@ def generate_scale_pack(
     if include_base_artifacts:
         extras: list[str] = []
         if cfg.with_redis:
-            extras.append("aire[redis]>=0.1.0")
+            extras.append(f"aire-ai[redis]=={__version__}")
         if cfg.with_postgres:
-            extras.append("aire[pgvector]>=0.1.0")
+            extras.append(f"aire-ai[pgvector]=={__version__}")
         base = generate_artifacts(target, project=cfg.project, extra_requirements=extras or None)
         files.extend(base.files)
     files.append(str(generate_compose(target, cfg)))

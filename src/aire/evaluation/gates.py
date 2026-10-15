@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 from aire.core.errors import ConfigurationError
 
@@ -13,8 +14,8 @@ class EvalGate(BaseModel):
     """A single metric threshold check."""
 
     metric: str
-    min: float | None = None
-    max: float | None = None
+    min: FiniteFloat | None = None
+    max: FiniteFloat | None = None
     required: bool = True
 
     def describe(self) -> dict[str, Any]:
@@ -51,6 +52,15 @@ class GateReport(BaseModel):
 
 
 def _metric_map(report: Any) -> dict[str, float]:
+    from aire.evaluation.types import EvalReport
+
+    if isinstance(report, EvalReport):
+        return {
+            "pass_rate": report.pass_rate(),
+            "failures": float(report.failures),
+            "total": float(report.total),
+            **_metric_map({"metrics": report.metric_summary()}),
+        }
     if isinstance(report, dict):
         metrics = report.get("metrics") or report
         if isinstance(metrics, dict):
@@ -93,8 +103,8 @@ def check_gates(report: Any, gates: list[EvalGate] | list[dict[str, Any]]) -> Ga
             )
             continue
         value = metrics[gate.metric]
-        ok = True
-        reasons: list[str] = []
+        ok = math.isfinite(value)
+        reasons: list[str] = [] if ok else ["nonfinite metric"]
         if gate.min is not None and value < gate.min:
             ok = False
             reasons.append(f"{value} < min {gate.min}")

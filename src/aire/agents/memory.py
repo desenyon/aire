@@ -29,6 +29,8 @@ class BufferMemory(Memory):
     """In-memory sliding window of the most recent messages."""
 
     def __init__(self, window: int = 50) -> None:
+        if window <= 0:
+            raise ValueError("memory window must be positive")
         self.window = window
         self._messages: list[Message] = []
 
@@ -38,7 +40,9 @@ class BufferMemory(Memory):
             del self._messages[: len(self._messages) - self.window]
 
     async def recall(self, *, limit: int | None = None) -> list[Message]:
-        messages = self._messages[-limit:] if limit else list(self._messages)
+        if limit is not None and limit <= 0:
+            return []
+        messages = self._messages[-limit:] if limit is not None else list(self._messages)
         # A sliding window can cut a tool exchange in half. Drop orphan results
         # at its boundary rather than send a provider an invalid conversation.
         while messages and messages[0].role == "tool":
@@ -59,12 +63,13 @@ class JsonlMemory(Memory):
         if self.path.is_file():
             for row in iter_jsonl(self.path):
                 self._buffer._messages.append(Message.model_validate(row))
+            self._buffer._messages = self._buffer._messages[-window:]
 
     async def add(self, message: Message) -> None:
-        await self._buffer.add(message)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a") as fh:
             fh.write(message.model_dump_json() + "\n")
+        await self._buffer.add(message)
 
     async def recall(self, *, limit: int | None = None) -> list[Message]:
         return await self._buffer.recall(limit=limit)

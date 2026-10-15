@@ -322,7 +322,7 @@ async def bleu(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
     """Sentence BLEU-4 with brevity penalty against ``expected``.
 
     Pure-Python Papineni BLEU (orders 1-4). Prefer ``sacrebleu`` metric when the
-    optional ``aire[eval]`` extra is installed for sacreBLEU tokenization.
+    optional ``aire-ai[eval]`` extra is installed for sacreBLEU tokenization.
     """
     ref = tokenize(case.expected or "")
     hyp = tokenize(output)
@@ -357,14 +357,14 @@ async def bleu_approx(case: EvalCase, output: str, ctx: MetricContext) -> Metric
 
 
 async def sacrebleu(case: EvalCase, output: str, ctx: MetricContext) -> MetricResult:
-    """Official sacreBLEU score (requires ``pip install 'aire[eval]'``)."""
+    """Official sacreBLEU score (requires ``pip install 'aire-ai[eval]'``)."""
     from aire.core.errors import ConfigurationError
 
     try:
         import sacrebleu as sb
     except ImportError as exc:
         raise ConfigurationError(
-            "sacrebleu metric requires the eval extra: pip install 'aire[eval]'",
+            "sacrebleu metric requires the eval extra: pip install 'aire-ai[eval]'",
             code="eval.sacrebleu_missing",
         ) from exc
     expected = case.expected or ""

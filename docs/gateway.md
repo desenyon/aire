@@ -1,6 +1,6 @@
 # Gateway
 
-OpenAI-compatible HTTP gateway over aire model refs. Requires `aire[serve]` (FastAPI + uvicorn).
+OpenAI-compatible HTTP gateway over aire model refs. Requires `aire-ai[serve]` (FastAPI + uvicorn).
 
 ## Create (do not have to bind)
 
@@ -37,3 +37,30 @@ AI.gateway.serve(models=["mock:echo"], port=4000)
 AI.gateway.endpoints()   # known local + hosted OpenAI-compat endpoints
 AI.gateway.describe()
 ```
+
+### Output checks while streaming
+
+When guardrails are enabled, the gateway buffers a completion and checks the
+entire output before emitting text. This prevents a restricted value split across
+provider chunks from escaping. Both OpenAI and Anthropic SSE routes use this rule;
+a blocked output or interrupted provider stream emits an error without partial
+text. Buffering increases time to first text. `guardrails=False` enables native
+incremental streaming when the application explicitly chooses that behavior.
+
+Semantic caching compares only eligible text requests within the same exact
+conversation history, system instructions, generation parameters and request
+metadata. Requests containing tools or media bypass semantic caching. Put caller
+or tenant identifiers in request metadata when using caches across identities.
+Persistent entries also fingerprint the ordered route, routing policy and embedder
+identity/dimension, and reject a resolved model outside the current route. Set
+`semantic_cache_namespace="deployment-or-tenant-version"` on `create_gateway`
+when provider endpoints, custom embedder behavior or other application configuration
+changes without changing those model identities. Matching configuration can share
+Redis entries across gateway instances; old-format entries expire without replay.
+
+`/health` is liveness; `/ready` probes exposed chat-model routes and returns 503
+when no healthy candidate is available or the runtime is closed. Gateway shutdown
+closes its own semantic Redis client. Use `close_runtime=True` only when the app
+owns the supplied runtime; externally managed runtimes remain open by default.
+OpenAI image URLs and input-audio blocks are preserved. Unsupported content blocks
+and malformed generation requests return a structured 400 instead of being dropped.

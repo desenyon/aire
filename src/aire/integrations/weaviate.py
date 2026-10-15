@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from aire.core.errors import ProviderError
 from aire.core.types import HealthStatus, Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.integrations.vector_codec import chunk_uuid, pack_metadata, unpack_chunk
 from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore
 from aire.rag.types import Chunk, ScoredChunk
@@ -33,9 +35,13 @@ class WeaviateVectorStore(VectorStore):
     async def _ensure_class(self) -> None:
         if self._ensured:
             return
-        response = await self.client.raw.get(f"/v1/schema/{self._class}")
-        if response.status_code == 404:
-            await self.client.raw.post(
+        try:
+            await self.client.request("GET", f"/v1/schema/{self._class}")
+        except ProviderError as exc:
+            if exc.status != 404:
+                raise
+            await self.client.request(
+                "POST",
                 "/v1/schema",
                 json={
                     "class": self._class,
@@ -54,20 +60,29 @@ class WeaviateVectorStore(VectorStore):
         objects = [
             {
                 "class": self._class,
+                "id": chunk_uuid(c.id),
                 "vector": c.embedding or [],
                 "properties": {
                     "aire_id": c.id,
                     "text": c.text,
-                    "metadata_json": json.dumps(c.metadata),
+                    "metadata_json": json.dumps(pack_metadata(c)),
                 },
             }
             for c in chunks
         ]
-        await self.client.post_json("/v1/batch/objects", {"objects": objects})
+        response = await self.client.request("POST", "/v1/batch/objects", json={"objects": objects})
+        rows = self.client.parse_json(response)
+        if not isinstance(rows, list):
+            raise ProviderError("weaviate", "unexpected batch response", retryable=False)
+        for row in rows:
+            if row.get("result", {}).get("errors"):
+                raise ProviderError("weaviate", "batch object failed", retryable=False)
         return len(chunks)
 
     async def _graphql(self, query: str) -> Any:
         data = await self.client.post_json("/v1/graphql", {"query": query})
+        if data.get("errors"):
+            raise ProviderError("weaviate", "GraphQL query failed", retryable=False)
         return data.get("data", {}).get("Get", {}).get(self._class, [])
 
     async def search(
@@ -77,11 +92,12 @@ class WeaviateVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         await self._ensure_class()
         store_filter, acl = split_acl_filter(filter)
-        # Metadata lives in a JSON text property — GraphQL where on nested keys is
-        # awkward; over-fetch then apply equality + ACL client-side.
-        limit = k * 5 if (store_filter or acl) else k
+        # Metadata lives in JSON; rank all candidates before local equality/ACL filtering.
+        limit = max(k, await self.count()) if (store_filter or acl) else k
         query = (
             "{ Get { "
             f"{self._class}(nearVector: {{vector: {json.dumps(vector)}}}, limit: {limit})"
@@ -102,16 +118,25 @@ class WeaviateVectorStore(VectorStore):
     ) -> list[ScoredChunk]:
         await self._ensure_class()
         store_filter, acl = split_acl_filter(filter)
-        limit = k * 5 if (store_filter or acl) else k
-        safe = json.dumps(query)
-        gql = (
-            "{ Get { "
-            f'{self._class}(bm25: {{query: {safe}, properties: ["text"]}}, limit: {limit})'
-            " { aire_id text metadata_json _additional { score id } } } }"
-        )
-        rows = await self._graphql(gql)
-        if not isinstance(rows, list):
+        if k <= 0:
             return []
+        from aire.rag.store import tokenize
+
+        rows: list[dict[str, Any]] = []
+        safe = json.dumps(query)
+        while True:
+            bm25 = f'bm25: {{query: {safe}, properties: ["text"]}}, ' if tokenize(query) else ""
+            gql = (
+                "{ Get { "
+                f"{self._class}({bm25}limit: 500, offset: {len(rows)})"
+                " { aire_id text metadata_json _additional { score id } } } }"
+            )
+            page = await self._graphql(gql)
+            if not isinstance(page, list):
+                raise ProviderError("weaviate", "invalid query rows", retryable=False)
+            rows.extend(page)
+            if len(page) < 500:
+                break
         hits = [_to_scored(row, score_key="score") for row in rows]
         hits = apply_metadata_filter(hits, store_filter)
         hits = apply_acl_to_hits(hits, acl)
@@ -121,7 +146,9 @@ class WeaviateVectorStore(VectorStore):
         await self._ensure_class()
         removed = 0
         for chunk_id in ids:
-            response = await self.client.raw.delete(f"/v1/objects/{self._class}/{chunk_id}")
+            response = await self.client.request(
+                "DELETE", f"/v1/objects/{self._class}/{chunk_uuid(chunk_id)}"
+            )
             removed += int(response.status_code < 400)
         return removed
 
@@ -157,7 +184,7 @@ class WeaviateVectorStore(VectorStore):
 
     async def health(self) -> HealthStatus:
         try:
-            await self.client.raw.get("/v1/.well-known/ready")
+            await self.client.request("GET", "/v1/.well-known/ready")
         except Exception as exc:
             return HealthStatus.unhealthy(f"weaviate unreachable: {exc}")
         return HealthStatus.healthy()
@@ -180,12 +207,7 @@ def _to_scored(row: dict[str, Any], *, score_key: str = "distance") -> ScoredChu
     except json.JSONDecodeError:
         metadata = {}
     return ScoredChunk(
-        chunk=Chunk(
-            id=str(row.get("aire_id", "")),
-            text=str(row.get("text", "")),
-            metadata=metadata,
-            document_id=str(metadata.get("document_id") or ""),
-        ),
+        chunk=unpack_chunk(str(row.get("aire_id", "")), str(row.get("text", "")), metadata),
         score=score,
     )
 

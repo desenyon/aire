@@ -1,4 +1,4 @@
-"""Lazy Neo4j GraphStore adapter (``aire[neo4j]``).
+"""Lazy Neo4j GraphStore adapter (``aire-ai[neo4j]``).
 
 Uses the official ``neo4j`` driver when installed; raises
 :class:`~aire.core.errors.ConfigurationError` with an install hint otherwise.
@@ -28,11 +28,11 @@ if TYPE_CHECKING:
 def _require_neo4j() -> Any:
     if importlib.util.find_spec("neo4j") is None:
         raise ConfigurationError(
-            "neo4j is required for Neo4jGraphStore: pip install 'aire[neo4j]'",
+            "neo4j is required for Neo4jGraphStore: pip install 'aire-ai[neo4j]'",
             code="graph.neo4j_missing",
-            context={"extra": "aire[neo4j]", "package": "neo4j"},
+            context={"extra": "aire-ai[neo4j]", "package": "neo4j"},
         )
-    import neo4j  # type: ignore[import-not-found]
+    import neo4j
 
     return neo4j
 
@@ -132,6 +132,8 @@ class Neo4jGraphStore(GraphStore):
         await self.upsert(extraction, chunk_id=relation.chunk_id)
 
     async def neighborhood(self, names: list[str], *, depth: int = 1) -> Subgraph:
+        if isinstance(depth, bool) or not isinstance(depth, int) or not 1 <= depth <= 32:
+            raise ConfigurationError("graph depth must be between 1 and 32", code="graph.depth")
         keys = [n.strip().lower() for n in names if n.strip()]
         if not keys:
             return Subgraph()
@@ -142,15 +144,14 @@ class Neo4jGraphStore(GraphStore):
                 WHERE seed.key IN $keys
                 CALL {
                     WITH seed
-                    MATCH path = (seed)-[*1..$depth]-(n:Entity)
+                    MATCH path = (seed)-[*1..__AIRE_DEPTH__]-(n:Entity)
                     RETURN nodes(path) AS ns, relationships(path) AS rs
                 }
                 UNWIND ns AS node
                 UNWIND rs AS rel
                 RETURN collect(DISTINCT node) AS nodes, collect(DISTINCT rel) AS rels
-                """,
+                """.replace("__AIRE_DEPTH__", str(depth)),
                 keys=keys,
-                depth=max(1, depth),
             )
             record = result.single()
             if not record:
@@ -261,6 +262,6 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "neo4j_graph_store",
         "available": available,
-        "install": "pip install 'aire[neo4j]'",
+        "install": "pip install 'aire-ai[neo4j]'",
         "ref": "neo4j:<name>",
     }

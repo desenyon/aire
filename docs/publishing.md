@@ -3,7 +3,7 @@
 The distribution name on PyPI is **`aire-ai`** (the import package remains `aire`).
 The name `aire` is already taken by an unrelated project.
 
-Releases publish via **Trusted Publishing** (OIDC) — no PyPI API token in GitHub secrets.
+Validated, matching version tags on main publish via **Trusted Publishing** (OIDC) — no PyPI API token in GitHub secrets.
 
 ## One-time setup (required)
 
@@ -42,8 +42,8 @@ No secrets are needed for Trusted Publishing.
 
 `.github/workflows/release.yml` runs on:
 
-- pushes of tags matching `v*` (e.g. `v0.3.5`)
-- manual `workflow_dispatch` (optional dry-run build)
+- pushes of tags matching `v*` (e.g. `v0.4.0`)
+- manual `workflow_dispatch` (dry-run build by default)
 
 Flow: build sdist/wheel → `twine check` → OIDC publish with
 `pypa/gh-action-pypi-publish`.
@@ -51,9 +51,9 @@ Flow: build sdist/wheel → `twine check` → OIDC publish with
 ## Publish a new version
 
 ```bash
-# bump version in pyproject.toml + src/aire/_version.py + CHANGELOG.md
-git commit -am "release 0.3.6"
-git tag -a v0.3.6 -m "aire 0.3.6"
+# bump src/aire/_version.py and CHANGELOG.md; metadata reads the version dynamically
+git commit -am "release 0.4.0"
+git tag -a v0.4.0 -m "aire 0.4.0"
 git push origin main --tags
 ```
 
@@ -63,8 +63,23 @@ publisher setup above.
 ## Verify
 
 ```bash
-pip install aire-ai==0.3.5
-python -c "from aire import AI, __version__; print(__version__, AI.describe()['kind'])"
+pip install aire-ai==0.4.0
+python -c "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
 ```
 
 Project page (after first upload): https://pypi.org/project/aire-ai/
+
+## Reproducible development and release QA
+
+Use `uv sync --locked --group dev` for the tested development tools. Core checks do
+not install heavyweight optional backends. Use selected extras (for example
+`uv sync --locked --extra ml --group test`) for backend contracts. The `all` extra
+aggregates the public profiles without copying version constraints and is expensive;
+backend runtime/hardware compatibility still applies.
+
+Build with `uv run --locked --group release python -m build`, check distributions
+with `twine check dist/*`, then run `python scripts/verify_distribution.py <wheel>`.
+That script installs outside the source checkout and checks metadata, CLI, plugin
+entrypoints, typing marker and lazy imports. Release dry runs must pass before a
+version tag is used for publication. A merged version bump is not proof of a PyPI
+upload; inspect the publishing job and install the exact published version.

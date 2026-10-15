@@ -101,7 +101,7 @@ Honesty + depth release. Most public names remain; behaviour becomes stricter.
 |--------|--------|
 | Guardrails auto-wire on `Knowledge.ask` / `create_gateway` | Pass `guardrails=False` to opt out; tune via `SafetyConfig` |
 | `bleu` metric | Now BLEU-4 + brevity penalty; old F1 approx is `bleu_approx` |
-| `cross_encoder` reranker | Defaults to HF CrossEncoder (`aire[eval]`); pass `model=` LLM for old scorer, or use `reranker="model"` |
+| `cross_encoder` reranker | Defaults to HF CrossEncoder (`aire-ai[eval]`); pass `model=` LLM for old scorer, or use `reranker="model"` |
 | `embedding_similarity` / `nli_faithfulness` / `model_judge` | Raise `ConfigurationError` when judge/embedder missing (no silent 0.0) |
 | Gateway images | Returns **501** without image capability |
 | Workers | `create_worker("redis")` available; `"sqs"` raises until boto3 is bundled |
@@ -112,3 +112,46 @@ Honesty + depth release. Most public names remain; behaviour becomes stricter.
 ## Pre-0.3.4
 
 See [CHANGELOG](https://github.com/desenyon/aire/blob/main/CHANGELOG.md). Prefer upgrading to the latest 0.3.x patch before jumping minors.
+
+## 0.4 remote index identity
+
+Qdrant and Weaviate now derive stable UUIDs from original Aire chunk IDs, and
+remote adapters retain the document ID and chunk position. Reindex existing
+collections into a fresh collection before switching traffic. Earlier Qdrant
+numeric IDs used Python's process-randomized hash and cannot be recomputed safely
+after restart; preserve original `aire_id` payloads if migrating them manually.
+
+Remote mutations now raise normalized provider errors for HTTP failures and
+Weaviate/Milvus per-operation errors. Document replacement refuses to write when
+the backend cannot enumerate the complete existing index. Qdrant, Chroma and
+Milvus text scans page through records; Pinecone enumeration requires its
+serverless list/fetch APIs. Replacement remains best effort across remote writes
+and deletes; use collection/version swaps for transactional publication.
+
+## 0.4.0 deployment and state contracts
+
+- The version comes from `src/aire/_version.py`; `pyproject.toml` reads it dynamically.
+- Generated loose dependency files are now `requirements.in`, with an exact Aire
+  version. `aire.deployment.lock_requirements(directory, python_version="3.12",
+  python_platform="linux")` resolves `requirements.lock` with hashes using uv and
+  switches the generated Dockerfile only after success. `aire.lock` still stores
+  application references; it is not a Python dependency lock.
+- HTTP agent/team runs use fresh conversation memory for each request. Explicit
+  `create_app(..., shared_agent_session=True)` preserves a single shared conversation
+  and serializes requests. Put authenticated tenant/session routing in your application
+  when you need multiple durable conversations.
+- Generated apps fail startup when a configured backend cannot initialize. An explicit
+  `AIRE_ALLOW_OFFLINE_FALLBACK=1` enables the offline fallback for development.
+- Workflow checkpoints reject changed node/edge definitions. Set and bump
+  `Workflow(..., definition_version="...")` when function semantics change without a
+  graph-shape change. File checkpoints and JSONL memory need one process owner;
+  same-process overlapping workflow checkpoint owners are rejected.
+- Cache replays charge zero new generation tokens/cost; `raw.cache_hit` and
+  `raw.source_usage` identify original usage on full results. Semantic lookup embedding
+  costs are separate and are not included in generation billing.
+- sklearn state now uses skops; boosting adapters use native JSON/UBJ/CBM formats.
+  No arbitrary pickle loading or automatic trust of serialized custom classes. Refit
+  old states that did not persist an underlying model; cross-version backend compatibility
+  follows the backend format's limits.
+- Dataset versions now include labels/metadata; text deduplication remains text-based.
+  Synthetic generation raises if the model returns fewer QA pairs than requested.

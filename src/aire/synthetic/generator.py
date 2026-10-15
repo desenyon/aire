@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aire.core.errors import ConfigurationError
 from aire.data.dataset import Dataset
 from aire.data.types import Record
 from aire.models.base import Model
@@ -40,10 +41,16 @@ class SyntheticGenerator:
 
     async def qa_pairs(self, document: str, *, n: int = 5) -> list[QAPair]:
         """Generate n QA pairs grounded in a document."""
+        if n <= 0:
+            raise ConfigurationError("n must be positive", code="synthetic.invalid_count")
         batch = await self.model.ask_structured(
             _QA_PROMPT.format(n=n, document=document[:8000]), QABatch, retries=2
         )
         assert isinstance(batch, QABatch)
+        if len(batch.pairs) < n:
+            raise ConfigurationError(
+                f"requested {n} QA pairs, received {len(batch.pairs)}", code="synthetic.incomplete"
+            )
         return batch.pairs[:n]
 
     async def augment(self, dataset: Dataset, *, pairs_per_doc: int = 3) -> Dataset:

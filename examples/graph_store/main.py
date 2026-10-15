@@ -1,4 +1,4 @@
-"""Graph store offline: SQLiteGraphStore (Neo4j needs AIRE_LIVE_NEO4J / aire[neo4j])."""
+"""Graph store offline: SQLiteGraphStore (Neo4j needs AIRE_LIVE_NEO4J / aire-ai[neo4j])."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def main() -> None:
         print("upserted:", n_ent, "entities,", n_rel, "relations")
         print("store:", store.describe().model_dump(mode="json"))
         print(
-            "Neo4j live: set AIRE_LIVE_NEO4J and install aire[neo4j]; "
+            "Neo4j live: set AIRE_LIVE_NEO4J and install aire-ai[neo4j]; "
             "see tests/live/test_live_stores.py"
         )
 

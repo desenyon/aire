@@ -68,7 +68,15 @@ class Dataset:
         """Content-addressed version: changes iff any record changes."""
         digest = hashlib.sha256()
         for record in self._records:
-            digest.update(record.fingerprint().encode())
+            digest.update(
+                json.dumps(
+                    {"text": record.text, "metadata": record.metadata},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode()
+            )
         return digest.hexdigest()[:12]
 
     def info(self) -> DatasetInfo:

@@ -76,11 +76,11 @@ class Quantizer:
             )
         if importlib.util.find_spec("transformers") is None:
             raise ConfigurationError(
-                "transformers required for quantization: pip install 'aire[peft]'",
+                "transformers required for quantization: pip install 'aire-ai[peft]'",
                 code="training.quant_missing",
-                context={"extra": "aire[peft]", "packages": ["transformers", "bitsandbytes"]},
+                context={"extra": "aire-ai[peft]", "packages": ["transformers", "bitsandbytes"]},
             )
-        import transformers  # type: ignore[import-not-found]
+        import transformers
 
         kwargs: dict[str, Any] = {}
         if self.config.load_in_4bit:
@@ -114,7 +114,7 @@ class Quantizer:
                 "bitsandbytes": bnb,
                 "stub": True,
             },
-            "install": "pip install 'aire[peft]' bitsandbytes",
+            "install": "pip install 'aire-ai[peft]' bitsandbytes",
         }
 
 

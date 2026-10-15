@@ -79,7 +79,13 @@ class VectorStore(abc.ABC):
         adapters may leave both versions on delete failure. Empty text search
         must enumerate the old document for this fallback to be complete.
         """
-        old = await self.search_text("", k=1_000_000)
+        total = await self.count()
+        old = await self.search_text("", k=max(total, 1))
+        if len({h.chunk.id for h in old}) != total:
+            raise RetrievalError(
+                "backend cannot enumerate the complete index for safe document replacement",
+                code="rag.document_replace_unsupported",
+            )
         new_ids = {c.id for c in chunks}
         obsolete = [
             h.chunk.id

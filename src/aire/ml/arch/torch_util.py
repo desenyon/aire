@@ -11,11 +11,11 @@ from aire.core.errors import ConfigurationError
 def require_torch() -> Any:
     if importlib.util.find_spec("torch") is None:
         raise ConfigurationError(
-            "PyTorch is required: pip install 'aire[torch]'",
+            "PyTorch is required: pip install 'aire-ai[torch]'",
             code="ml.torch_missing",
             context={"backend": "torch"},
         )
-    import torch  # type: ignore[import-not-found,unused-ignore]
+    import torch
 
     return torch
 

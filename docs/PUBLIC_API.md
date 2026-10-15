@@ -22,7 +22,7 @@ Symbols re-exported from `aire` (`src/aire/__init__.py`) and the `AI` facade (`s
 | `Message`, content types (`TextContent`, …) | Content |
 | `Capability`, `HealthStatus`, `Manifest`, `Ref`, `Usage` | Shared types |
 | `AireError`, `ConfigurationError`, `PermissionDeniedError`, `ProviderError` | Errors |
-| `__version__` | Package version (`0.3.5`) |
+| `__version__` | Package version (`0.4.0`) |
 
 Import what you need from `aire` first; deeper modules are stable for advanced use but not all are re-exported.
 

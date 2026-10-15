@@ -17,6 +17,7 @@ from aire.core.plugins import PluginManager
 from aire.core.registry import Registries, Registry
 
 if TYPE_CHECKING:
+    from aire.observability.metrics import Metrics
     from aire.observability.tracing import Tracer
 
 logger = get_logger(__name__)
@@ -37,6 +38,7 @@ class Runtime:
         self.resources = ResourceManager()
         self.plugins = PluginManager()
         self.tracer: Tracer | None = None
+        self._observability_metrics: Metrics | None = None
         self._closed = False
         _register_builtin_providers(self)
         if discover_plugins:
@@ -89,12 +91,12 @@ class Runtime:
                 except Exception:  # telemetry must never block shutdown
                     logger.debug("tracer.flush failed during runtime close", exc_info=True)
             exporter = getattr(self.tracer, "exporter", None)
-            exporter_flush = getattr(exporter, "flush", None) if exporter is not None else None
-            if callable(exporter_flush):
+            exporter_close = getattr(exporter, "close", None) if exporter is not None else None
+            if callable(exporter_close):
                 try:
-                    exporter_flush()
+                    exporter_close()
                 except Exception:
-                    logger.debug("exporter.flush failed during runtime close", exc_info=True)
+                    logger.debug("exporter.close failed during runtime close", exc_info=True)
         await self.resources.aclose()
         self._closed = True
         self.events.emit("runtime.closed", source="runtime")

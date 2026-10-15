@@ -14,7 +14,7 @@ compose arbitrary per-layer stacks; register your own factories::
         n_embd=64, n_head=4, vocab_size=128,
     )
 
-Requires ``pip install aire[torch]`` to materialize modules.
+Requires ``pip install aire-ai[torch]`` to materialize modules.
 """
 
 # Load example composed architectures into the registry.

@@ -187,16 +187,16 @@ def html_to_text(html: str) -> str:
 
 
 def _load_tabular(path: Path, suffix: str, *, text_field: str, name: str) -> Dataset:
-    """Load parquet/excel via pandas (lazy; requires ``aire[ml]``)."""
+    """Load parquet/excel via pandas (lazy; requires ``aire-ai[ml]``)."""
     import importlib.util
 
     if importlib.util.find_spec("pandas") is None:
         raise DataError(
-            f"reading {suffix} files requires pandas: pip install 'aire[ml]'",
+            f"reading {suffix} files requires pandas: pip install 'aire-ai[ml]'",
             code="data.pandas_missing",
             context={"path": str(path)},
         )
-    import pandas  # type: ignore[import-untyped]
+    import pandas
 
     try:
         frame = pandas.read_parquet(path) if suffix == ".parquet" else pandas.read_excel(path)

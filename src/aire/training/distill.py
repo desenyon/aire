@@ -13,7 +13,7 @@ import math
 from collections.abc import Callable
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aire.core.errors import ConfigurationError
 from aire.data.dataset import Dataset
@@ -23,8 +23,8 @@ from aire.training.trainer import TrainingConfig
 class DistillationConfig(BaseModel):
     """KD hyperparameters."""
 
-    temperature: float = 2.0
-    alpha: float = 0.5
+    temperature: float = Field(default=2.0, gt=0)
+    alpha: float = Field(default=0.5, ge=0, le=1)
     """Weight on soft (KL) loss; ``1 - alpha`` weights hard (task) loss."""
     reduction: str = "mean"
 
@@ -218,11 +218,11 @@ class HFDistillTrainer:
             or importlib.util.find_spec("torch") is None
         ):
             raise ConfigurationError(
-                "HFDistillTrainer requires transformers+torch: pip install 'aire[peft]'",
+                "HFDistillTrainer requires transformers+torch: pip install 'aire-ai[peft]'",
                 code="training.hf_distill_missing",
             )
         import torch
-        import transformers  # type: ignore[import-not-found]
+        import transformers
 
         self._tokenizer = transformers.AutoTokenizer.from_pretrained(self.teacher_id)
         if self._tokenizer.pad_token is None:
@@ -243,6 +243,11 @@ class HFDistillTrainer:
         max_length: int = 64,
         learning_rate: float = 5e-5,
     ) -> dict[str, Any]:
+        if epochs <= 0 or batch_size <= 0 or max_length < 2 or learning_rate <= 0:
+            raise ConfigurationError(
+                "epochs, batch_size and learning_rate must be positive; max_length >= 2",
+                code="training.hf_distill_options",
+            )
         if isinstance(texts, Dataset):
             corpus = [r.text for r in texts if r.text.strip()]
         else:

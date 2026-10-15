@@ -484,6 +484,11 @@ for the complete changes and operational details:
 
 ## Project resources
 
+[Capability master plan](docs/superpowers/plans/2026-10-14-aire-master-plan.md) ·
+[Repository audit](docs/audits/2026-10-14-repository-audit.md) · [Open gaps](GAPS.md)
+
 [Documentation](docs/index.md) · [Runnable examples](examples/README.md) ·
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [Code of conduct](CODE_OF_CONDUCT.md) · [Citation](CITATION.cff) · [License](LICENSE)
+
+The [0.4 capability contracts](docs/capabilities.md) map every public namespace to tests, supported backends, and explicit limits. See the [release QA record](docs/audits/2026-10-14-release-qa.md) for current validation.

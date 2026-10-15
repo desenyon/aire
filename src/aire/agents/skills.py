@@ -178,23 +178,21 @@ def _load_skill_tools(skill_dir: Path, payload: dict[str, Any]) -> list[Tool]:  
         )
         if spec is not None and spec.loader is not None:
             module = importlib.util.module_from_spec(spec)
-            loaded_ok = False
             try:
                 spec.loader.exec_module(module)
-                loaded_ok = True
-            except Exception:
-                loaded_ok = False
-            if loaded_ok:
                 for attr in ("TOOLS", "tools", "get_tools"):
                     value = getattr(module, attr, None)
                     if callable(value) and attr == "get_tools":
-                        try:
-                            value = value()
-                        except Exception:
-                            value = None
+                        value = value()
                     if isinstance(value, list):
-                        found.extend(t for t in value if isinstance(t, Tool))
+                        if any(not isinstance(tool, Tool) for tool in value):
+                            raise TypeError("skill tool exports must contain Tools")
+                        found.extend(value)
                         break
+            except Exception as exc:
+                raise ConfigurationError(
+                    "failed to load skill tools", code="skill.tools_import"
+                ) from exc
 
     inline = payload.get("tools")
     if isinstance(inline, list):
@@ -204,9 +202,9 @@ def _load_skill_tools(skill_dir: Path, payload: dict[str, Any]) -> list[Tool]:  
             name = item.get("name")
             if not name:
                 continue
-            # Light support: register a stub that returns the description/body text.
+            # Inline entries are static reference text, never executable code.
             body = str(item.get("body") or item.get("description") or "")
-            desc = str(item.get("description") or f"Skill-defined tool {name}")
+            desc = "[static text] " + str(item.get("description") or f"Skill reference {name}")
 
             def _make(n: str, b: str, d: str) -> Tool:
                 def _fn() -> str:

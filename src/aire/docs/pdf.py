@@ -69,11 +69,11 @@ class PDFDocument(BaseModel):
 def _require_pypdf() -> Any:
     if importlib.util.find_spec("pypdf") is None:
         raise ConfigurationError(
-            "pypdf is required for PDF loading: pip install 'aire[pypdf]'",
+            "pypdf is required for PDF loading: pip install 'aire-ai[pypdf]'",
             code="docs.pypdf_missing",
-            context={"extra": "aire[pypdf]", "package": "pypdf"},
+            context={"extra": "aire-ai[pypdf]", "package": "pypdf"},
         )
-    import pypdf  # type: ignore[import-not-found]
+    import pypdf
 
     return pypdf
 
@@ -90,7 +90,7 @@ def load_pdf(  # noqa: C901
 
     ``ocr=False`` (default): text layer only.
     ``ocr=True``: when a page has no text, rasterize via pypdfium2 and run
-    pytesseract (requires ``pip install 'aire[ocr]'``).
+    pytesseract (requires ``pip install 'aire-ai[ocr]'``).
     """
     pypdf = _require_pypdf()
     pdf_path = Path(path)
@@ -156,12 +156,12 @@ def _ocr_page_index(pdf_path: Path, page_index: int, *, lang: str) -> str:
     ]
     if missing:
         raise ConfigurationError(
-            "OCR requires pillow, pytesseract, and pypdfium2: pip install 'aire[ocr]'",
+            "OCR requires pillow, pytesseract, and pypdfium2: pip install 'aire-ai[ocr]'",
             code="docs.ocr_missing",
-            context={"extra": "aire[ocr]", "missing": missing},
+            context={"extra": "aire-ai[ocr]", "missing": missing},
         )
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
-    import pytesseract  # type: ignore[import-not-found]
+    import pypdfium2 as pdfium
+    import pytesseract
 
     doc = pdfium.PdfDocument(str(pdf_path))
     try:
@@ -191,9 +191,9 @@ def describe() -> dict[str, Any]:
     return {
         "kind": "pdf",
         "available": importlib.util.find_spec("pypdf") is not None,
-        "install": "pip install 'aire[pypdf]'",
+        "install": "pip install 'aire-ai[pypdf]'",
         "ocr": {
-            "extra": "aire[ocr]",
+            "extra": "aire-ai[ocr]",
             "packages": ["pillow", "pytesseract", "pypdfium2"],
         },
         "honesty": "default is text layer only; ocr=True uses pytesseract when available",

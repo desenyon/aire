@@ -7,7 +7,9 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from aire.core.types import HealthStatus
+from aire.core.content import TextContent
+from aire.core.lifecycle import closing_stream
+from aire.core.types import HealthStatus, Usage
 from aire.models.base import EmbeddingModel, Model
 from aire.models.types import (
     GenerationChunk,
@@ -20,7 +22,7 @@ from aire.rag.store import cosine_similarity
 
 
 def _request_key(request: GenerationRequest, model_ref: str) -> str:
-    payload = request.model_dump_json(exclude={"metadata"})
+    payload = request.model_dump_json()
     return hashlib.sha256(f"{model_ref}|{payload}".encode()).hexdigest()
 
 
@@ -49,7 +51,7 @@ class CachedModel(Model):
             if self.ttl_seconds is None or now - created < self.ttl_seconds:
                 self.hits += 1
                 # Deep copy: callers must never mutate another caller's result.
-                return result.model_copy(deep=True)
+                return replay_result(result)
             del self._cache[key]
         self.misses += 1
         result = await self.inner.generate(request)
@@ -74,9 +76,9 @@ class CachedModel(Model):
                 self.hits += 1
                 yield GenerationChunk(
                     text=result.text,
-                    tool_calls=result.tool_calls,
+                    tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
-                    usage=result.usage,
+                    usage=Usage(),
                 )
                 return
             del self._cache[key]
@@ -85,12 +87,13 @@ class CachedModel(Model):
         calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
-        async for chunk in self.inner.stream(request):
-            calls.extend(chunk.tool_calls)
-            pieces.append(chunk.text)
-            finish = chunk.finish_reason or finish
-            last_usage = chunk.usage if chunk.usage is not None else last_usage
-            yield chunk
+        async with closing_stream(self.inner.stream(request)) as upstream:
+            async for chunk in upstream:
+                calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                pieces.append(chunk.text)
+                finish = chunk.finish_reason or finish
+                last_usage = chunk.usage if chunk.usage is not None else last_usage
+                yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
             text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
@@ -119,14 +122,31 @@ class CachedModel(Model):
 
 
 def _has_tool_context(request: GenerationRequest) -> bool:
-    return bool(request.tools) or any(m.tool_calls or m.role == "tool" for m in request.messages)
+    return (
+        bool(request.tools)
+        or not request.messages
+        or request.messages[-1].role != "user"
+        or any(
+            m.tool_calls
+            or m.role == "tool"
+            or any(not isinstance(c, TextContent) for c in m.content)
+            for m in request.messages
+        )
+    )
 
 
 def _params_signature(request: GenerationRequest) -> str:
     """Exact signature of generation-affecting parameters (everything but the
     messages/metadata). Semantic hits require this to match — a structured
     output request must never be served a plain-text cache entry."""
-    payload = request.model_dump_json(exclude={"messages", "metadata"}, exclude_none=True)
+    # Only the final user text is eligible for semantic comparison. Preserve
+    # all preceding instructions/history and caller namespaces exactly.
+    payload_data = request.model_dump(mode="json", exclude_none=True)
+    if payload_data.get("messages"):
+        payload_data["messages"][-1]["content"] = []
+    import json
+
+    payload = json.dumps(payload_data, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -167,7 +187,7 @@ class SemanticCachedModel(Model):
                 continue
             if cosine_similarity(vector, cached_vector) >= self.threshold:
                 self.hits += 1
-                return result.model_copy(deep=True)
+                return replay_result(result)
         self.misses += 1
         result = await self.inner.generate(request)
         if len(self._entries) >= self.max_entries:
@@ -182,8 +202,9 @@ class SemanticCachedModel(Model):
         """
         if _has_tool_context(request):
             self.misses += 1
-            async for chunk in self.inner.stream(request):
-                yield chunk
+            async with closing_stream(self.inner.stream(request)) as upstream:
+                async for chunk in upstream:
+                    yield chunk
             return
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = _params_signature(request)
@@ -195,9 +216,9 @@ class SemanticCachedModel(Model):
                 self.hits += 1
                 yield GenerationChunk(
                     text=result.text,
-                    tool_calls=result.tool_calls,
+                    tool_calls=[call.model_copy(deep=True) for call in result.tool_calls],
                     finish_reason=result.finish_reason,
-                    usage=result.usage,
+                    usage=Usage(),
                 )
                 return
         self.misses += 1
@@ -205,12 +226,13 @@ class SemanticCachedModel(Model):
         calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
-        async for chunk in self.inner.stream(request):
-            calls.extend(chunk.tool_calls)
-            pieces.append(chunk.text)
-            finish = chunk.finish_reason or finish
-            last_usage = chunk.usage if chunk.usage is not None else last_usage
-            yield chunk
+        async with closing_stream(self.inner.stream(request)) as upstream:
+            async for chunk in upstream:
+                calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                pieces.append(chunk.text)
+                finish = chunk.finish_reason or finish
+                last_usage = chunk.usage if chunk.usage is not None else last_usage
+                yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
             text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
@@ -241,3 +263,18 @@ class SemanticCachedModel(Model):
 def cache_key(request: GenerationRequest, model_ref: str) -> str:
     """Public helper: the exact cache key for a request."""
     return _request_key(request, model_ref)
+
+
+def replay_result(result: GenerationResult) -> GenerationResult:
+    """Replay content without charging an already completed generation again."""
+    replay = result.model_copy(deep=True)
+    return replay.model_copy(
+        update={
+            "usage": Usage(),
+            "raw": {
+                **(replay.raw or {}),
+                "cache_hit": True,
+                "source_usage": result.usage.model_dump(),
+            },
+        }
+    )

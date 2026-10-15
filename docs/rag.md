@@ -42,7 +42,7 @@ Remote adapters vary in how well they honor filters/ACL — prefer local for off
 
 ## Rewrite / compress / ACL / incremental
 
-| Feature | Reality (0.3.5) |
+| Feature | Reality (0.4.0) |
 |---------|-----------------|
 | Rewriters | Lexical multi-query / model-backed options; some names fall back without a model |
 | Compressors | Truncate / extractive / model; extractive is not a full LLM extractive pack |
@@ -61,3 +61,20 @@ Chunkers: `fixed`, `sentence`, `recursive`, `semantic` / `semantic_sentence`.
 ## GraphRAG
 
 `AI.graph.create(...)` builds a `KnowledgeGraph` (lexical extractor by default; Neo4j optional). Community detection is label-propagation style.
+
+## Remote filtering and replacement
+
+Remote chunk identity preserves document ID, chunk index, original ID and metadata.
+Qdrant uses deterministic UUIDs; see the 0.4 migration guide before reopening older
+collections. Equality and ACL filtering happen before the final `k` slice. Adapters
+whose metadata requires client filtering rank the full candidate set first. This
+costs a count/query and can hit a backend's maximum query size on large collections;
+backend limits raise an error rather than silently dropping authorized candidates.
+Use native tenant-isolated collections for large multi-tenant deployments.
+
+PostgreSQL replacement runs in one transaction. Other remote replacements enumerate
+and validate the complete old generation before mutation but are not distributed
+transactions; concurrent writers and interruption can require reconciliation.
+Pinecone lexical enumeration/replacement requires the serverless list/fetch API;
+pod indexes that lack it return a provider error. No paid Pinecone live validation
+has been performed for 0.4; transport contracts cover that adapter.

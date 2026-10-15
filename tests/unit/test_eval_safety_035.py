@@ -85,7 +85,7 @@ def test_sacrebleu_missing_extra() -> None:
         assert result.detail.get("kind") == "sacrebleu"
         return
     case = EvalCase(input="q", expected="hello")
-    with pytest.raises(ConfigurationError, match=r"aire\[eval\]"):
+    with pytest.raises(ConfigurationError, match=r"aire-ai\[eval\]"):
         run_sync(sacrebleu(case, "hello", _ctx()))
 
 
@@ -94,7 +94,7 @@ def test_hf_cross_encoder_missing_extra() -> None:
         reranker = get_reranker("hf_cross_encoder")
         assert isinstance(reranker, HFCrossEncoderReranker)
         return
-    with pytest.raises(ConfigurationError, match=r"sentence-transformers|aire\[eval\]"):
+    with pytest.raises(ConfigurationError, match=r"sentence-transformers|aire-ai\[eval\]"):
         get_reranker("hf_cross_encoder")._load()
 
 

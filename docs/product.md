@@ -14,11 +14,11 @@ aire aims to be the **agent-first** path from idea → evaluated system → depl
 ## Non-goals
 
 - **Not a hosted platform** — aire is a library; hosting is your process / containers.
-- **Not a full MCP host** — see [MCP](mcp.md); stdio subset only.
+- **Not a full MCP host** — see [MCP](mcp.md); explicit stdio/HTTP subset.
 - **Not pretrained foundation weights** — `AI.training.foundation(...)` builds toy architectures.
 - **Not a replacement for specialized ML frameworks** — `aire.ml` is complementary, not PyTorch/sklearn.
 - **Not silent magic** — misnamed or stub metrics/backends are documented in [Honesty](honesty.md).
 
 ## Maturity
 
-v0.3.5 is **Alpha**. Core RAG + agents + gateway + eval work offline; several platform extras remain experimental. Read [GAPS.md](https://github.com/desenyon/aire/blob/main/GAPS.md) for documented subsets.
+v0.4.0 is **Alpha**. Core RAG + agents + gateway + eval work offline; several platform extras remain experimental. Read [GAPS.md](https://github.com/desenyon/aire/blob/main/GAPS.md) for documented subsets.

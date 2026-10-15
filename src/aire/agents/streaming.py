@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -10,8 +11,8 @@ from pydantic import BaseModel, Field
 from aire.agents.runtime import AgentExecutor
 from aire.agents.types import AgentResult, AgentState, AgentStatus, AgentStep
 from aire.core.content import Message
-from aire.core.context import Budget, ExecutionContext
-from aire.core.errors import BudgetExceededError
+from aire.core.context import ExecutionContext
+from aire.core.lifecycle import closing_stream
 from aire.models.types import GenerationRequest
 
 
@@ -32,16 +33,10 @@ async def run_stream(
     input: str,
     *,
     state: AgentState | None = None,
+    context: ExecutionContext | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Stream agent steps. Terminal event is ``type=done`` with full result fields."""
-    ctx = ExecutionContext(
-        permissions=set(executor.config.permissions),
-        budget=Budget(
-            max_tokens=executor.config.token_budget,
-            max_cost_usd=executor.config.cost_budget_usd,
-            max_steps=executor.config.max_steps,
-        ),
-    )
+    ctx = executor.execution_context(context)
     agent_state = state or AgentState(input=input)
     if not agent_state.messages:
         if executor.config.system_prompt:
@@ -54,21 +49,7 @@ async def run_stream(
 
     while agent_state.status == AgentStatus.RUNNING:
         before = len(agent_state.steps)
-        try:
-            ctx.tick()
-        except BudgetExceededError as exc:
-            agent_state.status = (
-                AgentStatus.MAX_STEPS if "step" in exc.message else AgentStatus.BUDGET_EXCEEDED
-            )
-            agent_state.error = exc.message
-            yield AgentEvent(
-                type="error",
-                error=exc.message,
-                status=str(agent_state.status),
-                run_id=agent_state.id,
-            )
-            break
-        await executor._transition(agent_state, ctx)
+        await executor.advance(agent_state, ctx)
         for step in agent_state.steps[before:]:
             yield AgentEvent(type="step", step=step, run_id=agent_state.id)
         # status is mutated inside _transition; re-read without while-narrowing
@@ -102,6 +83,8 @@ async def run_stream(
 async def stream_tokens(
     executor: AgentExecutor,
     input: str,
+    *,
+    context: ExecutionContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream final-answer text.
 
@@ -111,7 +94,7 @@ async def stream_tokens(
     """
     if executor.tools.definitions():
         final = ""
-        async for event in run_stream(executor, input):
+        async for event in run_stream(executor, input, context=context):
             if (event.type == "output" and event.output) or (event.type == "done" and event.output):
                 final = event.output
         if final:
@@ -125,6 +108,23 @@ async def stream_tokens(
         messages.extend(await executor.memory.recall())
     messages.append(Message.text("user", input))
     request = GenerationRequest(messages=messages, temperature=executor.config.temperature)
-    async for chunk in executor.model.stream(request):
-        if chunk.text:
-            yield chunk.text
+    async with aclosing(
+        _model_tokens(executor, request, executor.execution_context(context))
+    ) as tokens:
+        async for text in tokens:
+            yield text
+
+
+async def _model_tokens(
+    executor: AgentExecutor, request: GenerationRequest, ctx: ExecutionContext
+) -> AsyncGenerator[str, None]:
+    ctx.check_available()
+    ctx.tick()
+    async with closing_stream(executor.model.stream(request)) as stream:
+        async for chunk in stream:
+            ctx.check_cancelled()
+            if chunk.usage is not None:
+                ctx.usage = chunk.usage  # provider stream usage is a cumulative snapshot
+                ctx.budget.check(ctx.usage, ctx.steps, ctx.started)
+            if chunk.text:
+                yield chunk.text

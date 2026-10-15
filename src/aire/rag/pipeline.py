@@ -41,6 +41,7 @@ class Knowledge:
         runtime: Runtime,
         *,
         store: VectorStore | None = None,
+        model: Model | str | None = None,
         embedder: EmbeddingModel | None = None,
         chunker: Chunker | str = "recursive",
         reranker: Reranker | str = "lexical",
@@ -54,6 +55,7 @@ class Knowledge:
     ) -> None:
         self.runtime = runtime
         self.store = store or LocalVectorStore()
+        self.model = model
         self.embedder = embedder
         self.chunker = get_chunker(chunker) if isinstance(chunker, str) else chunker
         self.reranker = get_reranker(reranker) if isinstance(reranker, str) else reranker
@@ -311,6 +313,7 @@ class Knowledge:
         return answer
 
     async def _resolve_model(self, model: Model | str | None) -> Model:
+        model = model if model is not None else self.model
         if isinstance(model, Model):
             return model
         from aire.models.registry import ModelRegistry

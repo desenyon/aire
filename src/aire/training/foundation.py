@@ -82,7 +82,7 @@ class FoundationModel:
         family: FoundationFamily | str | None = None,
         **options: Any,
     ) -> FoundationModel:
-        """Load a real Hugging Face causal LM (requires ``aire[peft]`` / transformers).
+        """Load a real Hugging Face causal LM (requires ``aire-ai[peft]`` / transformers).
 
         Unlike :func:`create_foundation`, this downloads pretrained weights.
         """
@@ -90,11 +90,11 @@ class FoundationModel:
 
         if importlib.util.find_spec("transformers") is None:
             raise ConfigurationError(
-                "transformers required for from_pretrained: pip install 'aire[peft]'",
+                "transformers required for from_pretrained: pip install 'aire-ai[peft]'",
                 code="training.hf_missing",
-                context={"extra": "aire[peft]", "model_id": model_id},
+                context={"extra": "aire-ai[peft]", "model_id": model_id},
             )
-        import transformers  # type: ignore[import-not-found]
+        import transformers
 
         tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
         if tokenizer.pad_token is None:

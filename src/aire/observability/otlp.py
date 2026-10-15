@@ -24,8 +24,8 @@ def _to_otlp_span(record: SpanRecord) -> dict[str, Any]:
         "spanId": record.span_id,
         "name": record.name,
         "kind": 1,  # SPAN_KIND_INTERNAL
-        "startTimeUnixNano": int(record.start_time * _NANOS),
-        "endTimeUnixNano": int(record.end_time * _NANOS),
+        "startTimeUnixNano": str(int(record.start_time * _NANOS)),
+        "endTimeUnixNano": str(int(record.end_time * _NANOS)),
         "attributes": [
             {"key": key, "value": _otlp_value(value)} for key, value in record.attributes.items()
         ],
@@ -36,7 +36,7 @@ def _to_otlp_span(record: SpanRecord) -> dict[str, Any]:
     if record.error:
         span["events"] = [
             {
-                "timeUnixNano": int(record.end_time * _NANOS),
+                "timeUnixNano": str(int(record.end_time * _NANOS)),
                 "name": "exception",
                 "attributes": [
                     {"key": "exception.message", "value": {"stringValue": record.error}}
@@ -76,7 +76,8 @@ class OTLPExporter:
         self.headers = dict(headers or {})
         self.batch_size = max(1, batch_size)
         self.timeout = timeout
-        self._client = client  # injectable httpx.Client (tests use MockTransport)
+        self._owns_client = client is None
+        self._client = client  # injected clients remain caller-owned
         self._batch: list[SpanRecord] = []
         self.exported = 0
         self.failures = 0
@@ -125,11 +126,23 @@ class OTLPExporter:
             )
             if response.status_code >= 400:
                 raise RuntimeError(f"collector returned {response.status_code}")
-            self.exported += len(records)
-            self.last_error = None
+            payload = response.json() if response.content else {}
+            partial = payload.get("partialSuccess") or {}
+            rejected = min(len(records), max(0, int(partial.get("rejectedSpans", 0))))
+            self.exported += len(records) - rejected
+            self.failures += rejected
+            self.last_error = (
+                str(partial.get("errorMessage") or "collector rejected spans") if rejected else None
+            )
         except Exception as exc:  # telemetry must never crash the app
             self.failures += len(records)
             self.last_error = f"{type(exc).__name__}: {exc}"
+
+    def close(self) -> None:
+        self.flush()
+        if self._owns_client and self._client is not None:
+            self._client.close()
+            self._client = None
 
     def _make_client(self) -> Any:
         import httpx

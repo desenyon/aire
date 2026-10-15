@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ class LockEntry(BaseModel):
 class ProjectLock(BaseModel):
     """``aire.lock`` — pinned refs for a project."""
 
-    version: int = 1
+    version: Literal[1] = 1
     project: str = ""
     aire_version: str = ""
     entries: list[LockEntry] = Field(default_factory=list)

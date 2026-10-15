@@ -50,7 +50,7 @@ def test_pdf_describe_mentions_ocr() -> None:
     from aire.docs.pdf import describe
 
     info = describe()
-    assert info["ocr"]["extra"] == "aire[ocr]"
+    assert info["ocr"]["extra"] == "aire-ai[ocr]"
     assert "text layer" in info["honesty"]
 
 

@@ -142,7 +142,7 @@ def serve(
     try:
         import uvicorn
     except ImportError:
-        typer.secho("uvicorn required: pip install 'aire[serve]'", fg=typer.colors.RED, err=True)
+        typer.secho("uvicorn required: pip install 'aire-ai[serve]'", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from None
     import importlib.util
 
@@ -213,7 +213,7 @@ def gateway(
     try:
         import uvicorn
     except ImportError:
-        typer.secho("uvicorn required: pip install 'aire[serve]'", fg=typer.colors.RED, err=True)
+        typer.secho("uvicorn required: pip install 'aire-ai[serve]'", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from None
     from aire.ai import AI
 
@@ -420,6 +420,9 @@ def scaffold(
 ) -> None:
     """Scaffold a recipe-based project snippet into a directory."""
     root = directory / name
+    if root.exists() and any(root.iterdir()):
+        typer.secho(f"directory {root} is not empty", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     root.mkdir(parents=True, exist_ok=True)
     kind_key = kind.strip().lower()
     templates: dict[str, str] = {
@@ -427,8 +430,12 @@ def scaffold(
             "from aire import AI\n\n"
             "stack = AI.recipe('rag')\n"
             "knowledge = stack['knowledge']\n"
-            "# knowledge.index('./docs')\n"
-            "# print(knowledge.ask('What is this?').text)\n"
+            "from aire.models.base import run_sync\n"
+            "from aire.rag.types import Document\n"
+            "run_sync(knowledge.ingest([Document(text='Aire uses short lived tokens.')]))\n"
+            "answer = run_sync(knowledge.ask('What does Aire use?'))\n"
+            "assert answer.citations\n"
+            "print(answer.text)\n"
         ),
         "agent": (
             "from aire import AI\n\n"
@@ -439,7 +446,11 @@ def scaffold(
         "finetune": (
             "from aire import AI\n\n"
             "stack = AI.recipe('finetune', backend='lm')\n"
-            "print(stack['trainer'].describe())\n"
+            "from aire.models.base import run_sync\n"
+            "from aire.data.dataset import Dataset\n"
+            "result = run_sync(stack['trainer'].fit(Dataset.from_texts(['small local example'])))\n"
+            "assert result.epochs_completed > 0\n"
+            "print('offline toy LM result:', result.model_dump())\n"
         ),
         "gateway": (
             "from aire import AI\n\n"
@@ -451,7 +462,10 @@ def scaffold(
             "wf = AI.workflow('demo')\n"
             "AI.workflows.hitl_node(wf, 'approve', lambda x, ctx: x)\n"
             "wf.approver = AI.workflows.interactive_approver(auto={'approve': True})\n"
-            "print(wf)\n"
+            "from aire.models.base import run_sync\n"
+            "result = run_sync(wf.run('approved'))\n"
+            "assert result.ok\n"
+            "print(result.output)\n"
         ),
     }
     if kind_key not in templates:
@@ -532,6 +546,28 @@ def foundation_cmd(
         _echo_json(catalog())
 
 
+def _load_analytics_source(env_ref: str) -> Any:
+    import importlib
+
+    try:
+        module_name, attribute = env_ref.split(":", 1)
+        analytics_obj = getattr(importlib.import_module(module_name), attribute)
+        if callable(analytics_obj):
+            analytics_obj = analytics_obj()
+        if not callable(getattr(analytics_obj, "report", None)) or not callable(
+            getattr(analytics_obj, "prometheus", None)
+        ):
+            raise TypeError("analytics source must expose report() and prometheus()")
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        typer.secho(
+            "Cannot load AIRE_ANALYTICS; expected module:attribute with an Analytics source",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+    return analytics_obj
+
+
 @app.command()
 def analytics(
     prometheus: bool = typer.Option(False, help="Emit Prometheus text instead of JSON."),
@@ -552,7 +588,9 @@ def analytics(
     except Exception:
         analytics_obj = None
     env_ref = os.environ.get("AIRE_ANALYTICS")
-    demo = analytics_obj is None and not env_ref
+    if env_ref:
+        analytics_obj = _load_analytics_source(env_ref)
+    demo = analytics_obj is None
     if analytics_obj is None:
         analytics_obj = create_analytics()
         analytics_obj.record_run(model="mock:echo", cost_usd=0.0, latency_ms=1.0, operation="cli")

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from aire.core.types import Manifest
 from aire.integrations.http import ProviderHttpClient
+from aire.integrations.vector_codec import pack_metadata, unpack_chunk
 from aire.rag.filters import apply_acl_to_hits, apply_metadata_filter, split_acl_filter
 from aire.rag.store import VectorStore, tokenize
 from aire.rag.types import Chunk, ScoredChunk
@@ -32,14 +33,20 @@ class MilvusVectorStore(VectorStore):
     async def _ensure_collection(self, dimension: int) -> None:
         if self._ensured:
             return
-        response = await self.client.raw.post(
-            "/v2/vectordb/collections/has", json={"collectionName": self.collection}
+        response = await self.client.request(
+            "POST", "/v2/vectordb/collections/has", json={"collectionName": self.collection}
         )
-        has = response.json().get("data", {}).get("has", False)
+        has = self.client.parse_json(response).get("data", {}).get("has", False)
         if not has:
             await self.client.post_json(
                 "/v2/vectordb/collections/create",
-                {"collectionName": self.collection, "dimension": dimension},
+                {
+                    "collectionName": self.collection,
+                    "dimension": dimension,
+                    "idType": "VarChar",
+                    "autoID": False,
+                    "params": {"max_length": 1024},
+                },
             )
         self._ensured = True
 
@@ -52,7 +59,7 @@ class MilvusVectorStore(VectorStore):
                 "id": c.id,
                 "vector": c.embedding or [],
                 "text": c.text,
-                "metadata": json.dumps(c.metadata),
+                "metadata": json.dumps(pack_metadata(c)),
             }
             for c in chunks
         ]
@@ -68,12 +75,14 @@ class MilvusVectorStore(VectorStore):
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
-        # Metadata is stored as a JSON string field — native scalar filters on nested
-        # keys are awkward; over-fetch then apply equality + ACL client-side.
-        limit = k * 5 if (store_filter or acl) else k
+        # Metadata lives in JSON; rank all candidates before local equality/ACL filtering.
+        limit = max(k, await self.count()) if (store_filter or acl) else k
         body: dict[str, Any] = {
             "collectionName": self.collection,
+            "consistencyLevel": "Strong",
             "data": [vector],
             "limit": limit,
             "outputFields": ["id", "text", "metadata"],
@@ -92,19 +101,29 @@ class MilvusVectorStore(VectorStore):
         filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         # Milvus vector search only; page rows and score client-side for hybrid fusion.
+        if k <= 0:
+            return []
         store_filter, acl = split_acl_filter(filter)
-        data = await self.client.post_json(
-            "/v2/vectordb/entities/query",
-            {
-                "collectionName": self.collection,
-                "filter": "id != ''",
-                "limit": min(k * 20, 500),
-                "outputFields": ["id", "text", "metadata"],
-            },
-        )
+        rows: list[dict[str, Any]] = []
+        while True:
+            data = await self.client.post_json(
+                "/v2/vectordb/entities/query",
+                {
+                    "collectionName": self.collection,
+                    "filter": "id != ''",
+                    "consistencyLevel": "Strong",
+                    "limit": 500,
+                    "offset": len(rows),
+                    "outputFields": ["id", "text", "metadata"],
+                },
+            )
+            page = data.get("data", [])
+            rows.extend(page)
+            if len(page) < 500:
+                break
         terms = set(tokenize(query))
         scored: list[ScoredChunk] = []
-        for row in data.get("data", []):
+        for row in rows:
             hit = _to_scored(row)
             overlap = len(terms & set(tokenize(hit.chunk.text)))
             if overlap or not terms:
@@ -149,9 +168,16 @@ class MilvusVectorStore(VectorStore):
 
     async def count(self) -> int:
         data = await self.client.post_json(
-            "/v2/vectordb/collections/get_stats", {"collectionName": self.collection}
+            "/v2/vectordb/entities/query",
+            {
+                "collectionName": self.collection,
+                "filter": "",
+                "outputFields": ["count(*)"],
+                "consistencyLevel": "Strong",
+            },
         )
-        return int(data.get("data", {}).get("rowCount", 0))
+        rows = data.get("data", [])
+        return int(rows[0].get("count(*)", 0)) if rows else 0
 
     def describe(self) -> Manifest:
         return Manifest(
@@ -169,12 +195,7 @@ def _to_scored(row: dict[str, Any]) -> ScoredChunk:
         metadata = {}
     distance = float(row.get("distance", 0.0) or 0.0)
     return ScoredChunk(
-        chunk=Chunk(
-            id=str(row.get("id", "")),
-            text=str(row.get("text", "")),
-            metadata=metadata,
-            document_id=str(metadata.get("document_id") or ""),
-        ),
+        chunk=unpack_chunk(str(row.get("id", "")), str(row.get("text", "")), metadata),
         score=distance,
     )
 

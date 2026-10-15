@@ -1,7 +1,7 @@
 """Hyperparameter search over TrainingConfig / trainer factories.
 
 Offline default: discrete + continuous random search (no Optuna required).
-When ``aire[optuna]`` is installed, :func:`optuna_search` delegates to Optuna.
+When ``aire-ai[optuna]`` is installed, :func:`optuna_search` delegates to Optuna.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import importlib.util
 import math
 import random
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,7 +91,7 @@ async def random_search(
     space: SearchSpace,
     *,
     n_trials: int = 10,
-    direction: str = "minimize",
+    direction: Literal["minimize", "maximize"] = "minimize",
     seed: int = 0,
 ) -> HPOResult:
     """Random search over discrete/continuous spaces (fully offline)."""
@@ -130,7 +130,7 @@ async def search_trainer(
     *,
     base_config: TrainingConfig | None = None,
     n_trials: int = 10,
-    direction: str = "minimize",
+    direction: Literal["minimize", "maximize"] = "minimize",
     seed: int = 0,
 ) -> HPOResult:
     """Sample TrainingConfig variants, build trainers via ``factory``, score them."""
@@ -153,18 +153,18 @@ def optuna_search(
     space: SearchSpace,
     *,
     n_trials: int = 10,
-    direction: str = "minimize",
+    direction: Literal["minimize", "maximize"] = "minimize",
     seed: int = 0,
 ) -> HPOResult:
     """Optuna-backed search when installed; else ConfigurationError with hint."""
     if importlib.util.find_spec("optuna") is None:
         raise ConfigurationError(
-            "optuna is required for optuna_search: pip install 'aire[optuna]' "
+            "optuna is required for optuna_search: pip install 'aire-ai[optuna]' "
             "(or use random_search which needs no extras)",
             code="training.optuna_missing",
-            context={"extra": "aire[optuna]", "fallback": "aire.training.hpo.random_search"},
+            context={"extra": "aire-ai[optuna]", "fallback": "aire.training.hpo.random_search"},
         )
-    import optuna  # type: ignore[import-not-found]
+    import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(
@@ -204,5 +204,5 @@ def describe() -> dict[str, Any]:
             "random": True,
             "optuna": importlib.util.find_spec("optuna") is not None,
         },
-        "install_optuna": "pip install 'aire[optuna]'",
+        "install_optuna": "pip install 'aire-ai[optuna]'",
     }

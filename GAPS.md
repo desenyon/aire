@@ -1,28 +1,25 @@
-# aire — Gap Backlog (release 0.3.5)
+# Aire capability status
 
-**Version:** 0.3.5  
-**Status legend:** ✅ done · 🔶 intentional subset / documented limits
+The [master plan](docs/superpowers/plans/2026-10-14-aire-master-plan.md) implements
+0.4.0 against the agreed scope: fulfill documented capabilities with reliable
+packaging and honest limits. The historical [audit](docs/audits/2026-10-14-repository-audit.md)
+retains the original failures; its original statuses are not current backlog items.
 
-All prioritized depth items from the graphify audit waves are closed for 0.3.5.
-Remaining 🔶 rows are honest capability boundaries, not unfinished stubs.
+Use the [capability matrix](docs/capabilities.md) for the supported operations,
+behavioral evidence and intentional limits. The [release QA record](docs/audits/2026-10-14-release-qa.md)
+tracks executed checks and the remaining GitHub delivery gates. The
+[final review](docs/audits/2026-10-14-final-review.md) records findings and decisions.
 
-| Area | Status |
-|------|--------|
-| Tools / agents / RAG / safety P0 honesty | ✅ |
-| Multimodal OpenAI media + OCR | ✅ |
-| Training HF load / distill / LoRA resume | ✅ |
-| Redis workers + gateway Redis semantic cache | ✅ |
-| Scale pack Redis + PgVectorStore wiring | ✅ |
-| MCP HTTP + roots/sampling/progress | ✅ |
-| Anthropic Messages tool_use/tool_result + images | ✅ |
-| BLEU-4 / NLI / HF CE / model guardrails + auto-wire | ✅ |
-| Docs Pages / live probes / benches / freeze / CodeQL | ✅ |
-| Examples (HITL, memory, MCP, GraphRAG, LoRA, …) | ✅ |
+Tasks 1–11 are implemented and locally verified, including packaging, streaming
+safety, cancellation, remote stores, deployment, durable execution, evaluation,
+optional CPU backends, MCP/tools and CLI examples. Three final-review defects
+were reproduced and repaired: retries after cancellation, nested schema bounds,
+and persistent cache identity after route changes. Task 12 finishes exact-head
+CI, dependency-PR disposition, merging and main-only public Pages deployment.
 
-### Documented subsets (not false advertising)
-- MCP: tools/resources/prompts + client roots/sampling/progress — not full MCP ecosystem.
-- Anthropic: chat/tools/images/tool_use — not extended thinking / prompt caching / documents.
-- SQS worker: clear `ConfigurationError` until boto3 is an optional extra.
-- Detection: vision-JSON with capable models, not YOLO.
-
-Quality gates: **ruff · mypy --strict · pytest -m "not live" · mkdocs --strict**.
+Intentional boundaries include the documented MCP/schema subset, labeled toy and
+stub behavior, single-writer local persistence, at-least-once queue effects and
+backend-specific transaction/query limits. Paid-provider/Pinecone live behavior,
+hosted model quality, GPU quantization and production-scale throughput remain
+unverified. A version bump is not a PyPI upload. No test/coverage percentage
+establishes complete correctness or universal model quality.

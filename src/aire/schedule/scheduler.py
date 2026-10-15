@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aire.core.errors import ConfigurationError
 from aire.workflows.graph import Workflow
@@ -16,7 +16,7 @@ from aire.workflows.graph import Workflow
 
 class ScheduleEntry(BaseModel):
     name: str
-    interval_seconds: float
+    interval_seconds: float = Field(gt=0)
     workflow: str
     input: Any = None
     enabled: bool = True
@@ -36,6 +36,7 @@ class Scheduler:
         self.workflows: dict[str, Workflow] = {}
         self._handlers: dict[str, Callable[[], Awaitable[Any]]] = {}
         self.history: list[dict[str, Any]] = []
+        self._tick_lock = asyncio.Lock()
 
     def register_workflow(self, name: str, workflow: Workflow) -> None:
         self.workflows[name] = workflow
@@ -80,6 +81,10 @@ class Scheduler:
 
     async def tick(self, *, now: float | None = None) -> list[dict[str, Any]]:
         """Run any due entries once. Returns list of run records."""
+        async with self._tick_lock:
+            return await self._tick(now=now)
+
+    async def _tick(self, *, now: float | None) -> list[dict[str, Any]]:
         ts = now if now is not None else time.time()
         ran: list[dict[str, Any]] = []
         for entry in list(self.entries.values()):
@@ -129,6 +134,8 @@ class Scheduler:
             }
 
     async def run_forever(self, *, poll_seconds: float = 1.0, max_ticks: int | None = None) -> None:
+        if poll_seconds <= 0:
+            raise ConfigurationError("poll_seconds must be positive", code="schedule.poll_interval")
         ticks = 0
         while max_ticks is None or ticks < max_ticks:
             await self.tick()
@@ -158,7 +165,7 @@ def create_apscheduler(scheduler: Scheduler | None = None) -> Any:
             "(required for cron; or use aire.schedule.Scheduler interval runner)",
             code="schedule.apscheduler_missing",
         )
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-not-found]
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     sched = scheduler or Scheduler()
     apo = AsyncIOScheduler()

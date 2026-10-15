@@ -62,6 +62,8 @@ class Assistant:
     def model(self, spec: str) -> Assistant:
         """Set the answering model (``provider:name``)."""
         self._model_spec = spec
+        if self._knowledge is not None:
+            self._knowledge.model = spec
         return self
 
     def embedder(self, spec: str) -> Assistant:
@@ -120,6 +122,7 @@ class Assistant:
             self._knowledge = Knowledge(
                 self.runtime,
                 store=self._store_instance,
+                model=self._model_spec,
                 chunker=self._chunker,
                 reranker=self._reranker,
                 hybrid=self._hybrid,
@@ -209,19 +212,10 @@ class Assistant:
         return run_sync(self.evaluate_async(dataset, **kwargs))
 
     def deploy(self, **options: Any) -> Any:
-        """Wrap the assistant in a production FastAPI app (requires aire[serve])."""
-        import warnings
-
-        if not self._indexed:
-            warnings.warn(
-                f"Assistant {self.name!r} deploy() called before index(); "
-                "the Knowledge store may be empty — call .index() first",
-                UserWarning,
-                stacklevel=2,
-            )
+        """Wrap the assistant in a production FastAPI app (requires aire-ai[serve])."""
         from aire.deployment.fastapi_app import create_app
 
-        return create_app(self.knowledge(), title=f"{self.name} API", **options)
+        return create_app(self, title=f"{self.name} API", **options)
 
     def deploy_artifacts(self, directory: str | Path) -> Any:
         """Generate Dockerfile, entrypoint and env template for deployment."""

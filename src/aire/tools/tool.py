@@ -125,8 +125,9 @@ class Tool:
     ) -> ToolResult:
         """Validate arguments, enforce timeout/retries, invoke, normalize result."""
         started = time.perf_counter()
+        ctx = context or ExecutionContext.current()
         try:
-            self.check_permissions(context)
+            self.check_permissions(ctx)
         except PermissionDeniedError as exc:
             return ToolResult.failure(exc.message, tool=self.name, code=exc.code)
         try:
@@ -135,10 +136,15 @@ class Tool:
             return ToolResult.failure(
                 f"invalid arguments: {exc}", tool=self.name, code="tool.arguments_invalid"
             )
-        kwargs = validated.model_dump()
+        kwargs = validated.model_dump(exclude_unset=True)
         attempts = max(1, self.spec.retry.attempts)
         last_error: BaseException | None = None
         for attempt in range(attempts):
+            try:
+                ctx.check_available()
+            except AireError as exc:
+                last_error = exc
+                break  # cancellation/deadline/budget exhaustion never starts another effect
             try:
                 output = await asyncio.wait_for(
                     self._invoke(kwargs), timeout=self.spec.timeout_seconds
@@ -173,7 +179,9 @@ class Tool:
         )
 
     async def _invoke(self, kwargs: dict[str, Any]) -> Any:
-        result = self.fn(**kwargs)
+        if inspect.iscoroutinefunction(self.fn):
+            return await self.fn(**kwargs)
+        result = await asyncio.to_thread(self.fn, **kwargs)
         if inspect.isawaitable(result):
             return await result
         return result

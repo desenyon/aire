@@ -108,7 +108,7 @@ def finetune_recipe(
         trainer: Any = create_lora(model_name, **options)
         next_step = (
             "trainer.fit(dataset, dry_run=True) for CI; "
-            "trainer.fit(dataset) for real PEFT (requires aire[peft])"
+            "trainer.fit(dataset) for real PEFT (requires aire-ai[peft])"
         )
     elif backend == "lm":
         trainer = LMTrainer(**options)

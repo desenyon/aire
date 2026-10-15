@@ -215,3 +215,43 @@ def test_compatible_embedder_discovers_custom_dimension(name):
     assert report.chunks == 1
     assert embedder.dimension == 3
     assert run_sync(knowledge.retrieve("custom"))
+
+
+def test_scheduler_rejects_nonpositive_interval():
+    import pytest
+
+    from aire.schedule.scheduler import Scheduler
+
+    for value in (0, -1):
+        with pytest.raises(ValueError):
+            Scheduler().every(value, "missing")
+
+
+def test_scheduler_concurrent_ticks_do_not_duplicate_job():
+    import asyncio
+
+    from aire.models.base import run_sync
+    from aire.schedule.scheduler import Scheduler
+
+    async def check():
+        scheduler = Scheduler()
+        calls = []
+
+        async def job():
+            await asyncio.sleep(0)
+            calls.append(1)
+
+        scheduler.every(10, job)
+        await asyncio.gather(scheduler.tick(now=100), scheduler.tick(now=100))
+        assert calls == [1]
+
+    run_sync(check())
+
+
+def test_reference_lock_rejects_unknown_version():
+    import pytest
+
+    from aire.project.lock import ProjectLock
+
+    with pytest.raises(ValueError):
+        ProjectLock(version=999)

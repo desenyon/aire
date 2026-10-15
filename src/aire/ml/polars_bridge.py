@@ -14,10 +14,10 @@ from aire.ml.types import Prediction, extract_features
 def _require_polars() -> Any:
     if importlib.util.find_spec("polars") is None:
         raise ConfigurationError(
-            "polars is required: pip install 'aire[polars]'",
+            "polars is required: pip install 'aire-ai[polars]'",
             code="ml.polars_missing",
         )
-    import polars  # type: ignore[import-not-found]
+    import polars
 
     return polars
 

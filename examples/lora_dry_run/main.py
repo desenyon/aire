@@ -16,7 +16,7 @@ def main() -> None:
     )
     print("result:", result.model_dump(mode="json") if hasattr(result, "model_dump") else result)
     print("describe:", trainer.describe())
-    print("Live LoRA: pip install 'aire[peft]' and set dry_run=False")
+    print("Live LoRA: pip install 'aire-ai[peft]' and set dry_run=False")
 
 
 if __name__ == "__main__":
