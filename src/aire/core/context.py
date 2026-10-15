@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,15 +61,25 @@ class ExecutionContext:
     steps: int = 0
     started: float = field(default_factory=time.monotonic)
     _cancel: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _tokens: ContextVar[tuple[Token[ExecutionContext | None], ...]] = field(
+        default_factory=lambda: ContextVar("aire_context_tokens", default=()),
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     # -- context variable plumbing ------------------------------------------------
 
     def __enter__(self) -> ExecutionContext:
-        self._token = _current.set(self)
+        self._tokens.set((*self._tokens.get(), _current.set(self)))
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
-        _current.reset(self._token)
+        tokens = self._tokens.get()
+        if not tokens:
+            raise RuntimeError("execution context exited without entering")
+        _current.reset(tokens[-1])
+        self._tokens.set(tokens[:-1])
 
     @classmethod
     def current(cls) -> ExecutionContext:
