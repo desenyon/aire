@@ -4,6 +4,14 @@ All notable changes to aire are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.1 - 2026-10-14
+
+- Stage a separate copy for PyPI Trusted Publishing so generated attestation
+  sidecars cannot invalidate the verified payload or become GitHub assets.
+- Preserve strict artifact/hash checks and enabled digital attestations.
+- Add a regression reproducing the actual post-upload failure and keep release
+  metadata/version checks valid across patch bumps. Runtime APIs are unchanged.
+
 ## 0.4.0 - 2026-10-14
 
 ### Capability completion

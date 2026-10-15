@@ -52,7 +52,7 @@ body:
     attributes:
       label: aire version
       description: Output of `python -c "import aire; print(aire.__version__)"` or the installed package version.
-      placeholder: 0.4.0
+      placeholder: 0.4.1
     validations:
       required: true
 

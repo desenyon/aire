@@ -1,6 +1,6 @@
 # aire
 
-**aire** (v0.4.0) is an agent-first AI creation library: one consistent Python interface from a local prototype to a deployed system.
+**aire** (v0.4.1) is an agent-first AI creation library: one consistent Python interface from a local prototype to a deployed system.
 
 ```python
 from aire import AI

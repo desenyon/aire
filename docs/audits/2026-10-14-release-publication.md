@@ -69,3 +69,28 @@ The review's external/unsupported cases were evaluated as follows:
 | Public releases with missing/conflicting assets | Fail without replacing public assets; maintainer repair may be needed |
 | Unchanged runtime/optional/service behavior | Full local and hosted matrix verifies existing contracts; GPU/provider limits remain explicit |
 | Universal long-term/cross-platform reproducibility | Evidence is scoped to the locked release profile and repeated builds; other toolchains/platforms need separate byte checks |
+
+## Actual 0.4.0 publication and 0.4.1 follow-up
+
+[Tag run 38681349559](https://github.com/desenyon/aire/actions/runs/38681349559)
+uploaded 0.4.0 successfully, then failed before verification because the publisher
+created `*.publish.attestation` files in the original distribution folder. The
+strict two-distribution inventory correctly rejected the changed folder. Both
+published package hashes matched the pre-tag dry-run bundle exactly. Rerunning
+the failed job reused those matching files, skipped upload, verified published
+bytes and a fresh installation, and created the complete GitHub v0.4.0 release.
+No tag was moved and no PyPI artifact was replaced.
+
+Version 0.4.1 fixes the initial-publication path by copying verified distributions
+to a separate `release-bundle/upload` directory. Attestations remain enabled;
+strict payload/hash validation and GitHub asset selection still use the untouched
+`dist` directory. A regression executes the workflow staging step, simulates the
+publisher's exact sidecar filenames and verifies the original bundle afterward;
+it failed with the original live error before this repair. Repository version,
+citation, docs, issue template and changelog are updated before the patch tag.
+The version-drift test now follows the actual source version across patch bumps.
+
+Patch QA: 332 local tests pass (24 release regressions), with 11 live tests
+selected separately. The rebuilt 0.4.1 wheel passes twine and isolated installed
+package checks; locked make all, strict types/docs/lint, actionlint and lock
+validation pass. Hosted matrix and exact-main dry run are required before tagging.

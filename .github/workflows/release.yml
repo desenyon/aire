@@ -112,10 +112,14 @@ jobs:
       - name: Verify provenance and existing PyPI files before uploading
         id: published
         run: .venv/bin/python scripts/release.py pypi
+      - name: Stage isolated publisher inputs
+        run: |
+          mkdir -p release-bundle/upload
+          cp release-bundle/dist/* release-bundle/upload/
       - uses: pypa/gh-action-pypi-publish@release/v1
         if: steps.published.outputs.complete != 'true'
         with:
-          packages-dir: release-bundle/dist
+          packages-dir: release-bundle/upload
           print-hash: true
           skip-existing: true
       - name: Verify published bytes and fresh installed package
