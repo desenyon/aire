@@ -19,12 +19,15 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import FrameType
+from typing import Any, NoReturn
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,35 @@ def _stop(process: subprocess.Popen[Any]) -> None:
     else:
         process.kill()
     process.wait()
+
+
+class AuditInterrupted(KeyboardInterrupt):
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"audit interrupted by signal {signum}")
+        self.signum = signum
+
+
+@contextmanager
+def _termination_signals() -> Iterator[None]:
+    """Route catchable CLI termination through process-group cleanup."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def interrupt(signum: int, frame: FrameType | None) -> NoReturn:
+        raise AuditInterrupted(signum)
+
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):
+        signals.append(signal.SIGHUP)
+    previous = {signum: signal.getsignal(signum) for signum in signals}
+    try:
+        for signum in signals:
+            signal.signal(signum, interrupt)
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def _execute(check: Check, root: Path, log: Path, timeout_seconds: float) -> tuple[str, int | None]:
@@ -164,7 +196,7 @@ def run_audit(
         "python": sys.version.split()[0],
         "source_start": source_state(root),
         "source_end": None,
-        "source_changed": None,
+        "source_changed": False,
         "completed": False,
         "healthy": False,
         "checks": [
@@ -179,8 +211,17 @@ def run_audit(
         ],
     }
     _write_report(output, report)
+    with _termination_signals():
+        return _run_checks(root, checks, output, report, timeout_seconds)
+
+
+def _run_checks(
+    root: Path, checks: list[Check], output: Path, report: dict[str, Any], timeout_seconds: float
+) -> dict[str, Any]:
     try:
         for check, entry in zip(checks, report["checks"], strict=True):
+            entry["source_before"] = source_state(root)
+            report["source_changed"] |= entry["source_before"] != report["source_start"]
             entry["status"] = "running"
             _write_report(output, report)
             started = time.monotonic()
@@ -193,13 +234,15 @@ def run_audit(
                 raise
             finally:
                 entry["duration_seconds"] = round(time.monotonic() - started, 3)
+                entry["source_after"] = source_state(root)
+                report["source_changed"] |= entry["source_after"] != report["source_start"]
                 _write_report(output, report)
             print(f"{entry['name']}: {entry['status']} ({entry['duration_seconds']}s)", flush=True)
         report["completed"] = True
     finally:
         report["finished_at"] = datetime.now(UTC).isoformat()
         report["source_end"] = source_state(root)
-        report["source_changed"] = report["source_end"] != report["source_start"]
+        report["source_changed"] |= report["source_end"] != report["source_start"]
         report["healthy"] = (
             report["completed"]
             and not report["source_changed"]
@@ -290,8 +333,9 @@ def main() -> None:
         )
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(2, f"audit could not complete: {exc}\n")
-    except KeyboardInterrupt:
-        parser.exit(130, "audit interrupted; inspect the incomplete report\n")
+    except KeyboardInterrupt as exc:
+        code = 128 + exc.signum if isinstance(exc, AuditInterrupted) else 130
+        parser.exit(code, "audit interrupted; inspect the incomplete report\n")
     print(f"evidence: {args.output.resolve()}", flush=True)
     raise SystemExit(0 if report["healthy"] else 1)
 

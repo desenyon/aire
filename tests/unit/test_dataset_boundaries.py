@@ -112,3 +112,24 @@ def test_split_conserves_records_and_matches_manifest(size):
     assert sorted(record.id for part in partitions for record in part) == sorted(
         record.id for record in dataset
     )
+
+
+@pytest.mark.parametrize(
+    "selection,expected",
+    [
+        (slice(None, 2), ["a", "b"]),
+        (slice(None, None, 2), ["a", "c"]),
+        (slice(None, None, -1), ["c", "b", "a"]),
+        (slice(0, 0), []),
+    ],
+)
+def test_dataset_slices_preserve_tuple_behavior_with_isolated_records(selection, expected):
+    dataset = Dataset([Record(text=text, metadata={"nested": []}) for text in ["a", "b", "c"]])
+    records = dataset[selection]
+    assert isinstance(records, tuple)
+    assert [record.text for record in records] == expected
+    for record in records:
+        record.text = "mutated"
+        record.metadata["nested"].append("mutated")
+    assert dataset.texts == ["a", "b", "c"]
+    assert all(record.metadata == {"nested": []} for record in dataset)

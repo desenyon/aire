@@ -231,7 +231,7 @@ def _load_file(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text()
         data = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise ConfigurationError(
             f"failed to load config file {path}: {exc}",
             code="config.load_failed",

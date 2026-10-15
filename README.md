@@ -430,7 +430,7 @@ make audit                        # Lint, types, tests, examples, docs, build, w
 For optional CPU backends, install selected extras (or `--all-extras`) plus
 FFmpeg/Tesseract, then run `make audit-optional`. This uses the existing environment
 without pruning its extras. Reports identify source commit/content and distinguish
-failed, timed-out and unrun checks; a source change during an audit invalidates it.
+failed, timed-out and unrun checks; a source change observed at check boundaries invalidates it.
 See [audit contracts](https://github.com/desenyon/aire/blob/main/docs/audits/2026-10-15-042-audit.md).
 
 CI tests Python **3.11, 3.12 and 3.13**, runs the offline smoke, and validates docs

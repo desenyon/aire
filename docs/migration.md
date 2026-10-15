@@ -11,7 +11,8 @@ published extras are unchanged.
   `observability.mask_fields`. Arbitrary secret text cannot be inferred by key.
 - Dataset inputs, returned records and lineage are isolated copies. To change
   records, return the modified record from `map` and use the returned dataset.
-  Callback side effects cannot mutate the source. Sampling accepts a count or
+  Slices preserve tuple results with deep-copied records. Callback side effects
+  cannot mutate the source. Sampling accepts a count or
   a fraction, not both; negative/noninteger counts and nonfinite/out-of-range
   fractions raise `data.sample_invalid`. A zero fraction now returns zero rows.
   Invalid split fractions raise `data.split_invalid` before partitioning.

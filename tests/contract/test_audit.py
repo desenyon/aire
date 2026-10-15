@@ -174,3 +174,67 @@ def test_new_untracked_source_invalidates_audit(repository):
         timeout_seconds=5,
     )
     assert report["source_changed"] and not report["healthy"]
+
+
+def test_source_change_between_checks_remains_invalid_after_restore(repository):
+    audit = audit_module()
+    checks = [
+        audit.Check(
+            "change",
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('source.txt').write_text('changed')",
+            ],
+        ),
+        audit.Check(
+            "restore",
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; assert Path('source.txt').read_text() == 'changed'; "
+                "Path('source.txt').write_text('original')",
+            ],
+        ),
+    ]
+    report = audit.run_audit(
+        repository, checks, repository / ".audit/report.json", timeout_seconds=5
+    )
+    assert all(check["status"] == "passed" for check in report["checks"])
+    assert report["source_start"] == report["source_end"]
+    assert report["source_changed"] and not report["healthy"]
+    assert (
+        report["checks"][0]["source_after"]["fingerprint"] != report["source_start"]["fingerprint"]
+    )
+
+
+def test_sigterm_interrupts_audit_and_kills_check_descendants(repository):
+    command = (
+        "import os,signal,subprocess,sys,time; "
+        'subprocess.Popen([sys.executable,"-c",'
+        "\"import pathlib,time; time.sleep(.4); pathlib.Path('.audit/leaked').touch()\"]); "
+        "os.kill(os.getppid(),signal.SIGTERM); time.sleep(10)"
+    )
+    runner = (
+        "from pathlib import Path; import signal,sys; from scripts.audit import Check,run_audit; "
+        f"root=Path({str(repository)!r}); "
+        f'checks=[Check("terminate",[sys.executable,"-c",{command!r}]),'
+        'Check("later",[sys.executable,"-c","pass"])]; '
+        "original=signal.getsignal(signal.SIGTERM); "
+        '\ntry: run_audit(root,checks,root/".audit/report.json",timeout_seconds=.2)'
+        "\nexcept KeyboardInterrupt: pass"
+        "\nassert signal.getsignal(signal.SIGTERM) == original"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", runner],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    time.sleep(0.6)
+    assert not (repository / ".audit/leaked").exists()
+    report = json.loads((repository / ".audit/report.json").read_text())
+    assert not report["healthy"] and not report["completed"]
+    assert [item["status"] for item in report["checks"]] == ["interrupted", "not_run"]

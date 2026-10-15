@@ -12,7 +12,7 @@ import math
 import random
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from aire.core.errors import DataError
 from aire.core.types import new_id as _new_id
@@ -53,7 +53,15 @@ class Dataset:
     def __len__(self) -> int:
         return len(self._records)
 
-    def __getitem__(self, index: int) -> Record:
+    @overload
+    def __getitem__(self, index: int) -> Record: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[Record, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> Record | tuple[Record, ...]:
+        if isinstance(index, slice):
+            return tuple(record.model_copy(deep=True) for record in self._records[index])
         return self._records[index].model_copy(deep=True)
 
     @property

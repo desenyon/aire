@@ -8,16 +8,17 @@ All notable changes to aire are documented here. The format follows
 
 - Fail closed when explicitly requested configuration is missing; mask nested
   credentials and gateway tokens in config inspection and reject unknown selectors.
-- Preserve dataset record/metadata/lineage snapshots across inputs, accessors and
+- Preserve dataset record/metadata/lineage snapshots and tuple slicing across inputs, accessors and
   callbacks; fix zero-percent sampling and reject conflicting/invalid sample and
   split arguments before partitioning.
-- Restore nested and overlapping execution contexts correctly; replace scheduled
+- Restore nested and overlapping execution contexts without accumulating bindings; replace scheduled
   handlers only after successful validation and reject infinite timing intervals.
 - Add offline `aire doctor --smoke`, versioned pass/fail/skipped reports and
   `--output`/`--config`; use configured credentials for bounded live probes and
   close their clients without exposing provider/config payloads.
 - Add core/optional repository audit profiles with incremental JSON evidence,
-  per-check logs, bounded process groups and source-change detection. CI runs the
+  per-check logs, bounded process groups with signal cleanup and latched source
+  checks between commands. CI runs the
   same core audit and retains its reports even on failure.
 - Synchronize contributor, CLI, capability, migration and publishing guidance.
   Preserve the four runtime dependencies and existing release integrity gates.

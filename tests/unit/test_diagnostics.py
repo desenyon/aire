@@ -105,3 +105,18 @@ def test_live_doctor_uses_config_credentials_and_closes_clients(isolated_config,
     check = next(item for item in report["checks"] if item["check"].startswith("live:openai:"))
     assert check["status"] == "passed"
     assert "configured-secret" not in result.stdout
+
+
+def test_doctor_invalid_utf8_still_persists_a_failed_report(isolated_config, tmp_path):
+    isolated_config.write_bytes(b"project: \xffsecret-content\n")
+    output = tmp_path / "encoding-failure.json"
+    result = CliRunner().invoke(
+        app, ["doctor", "--config", str(isolated_config), "--output", str(output)]
+    )
+    assert result.exit_code == 1
+    report = json.loads(result.stdout)
+    assert json.loads(output.read_text()) == report
+    assert not report["healthy"]
+    assert "secret-content" not in result.output
+    check = next(item for item in report["checks"] if item["check"] == "config:loaded")
+    assert check["status"] == "failed" and "config.load_failed" in check["detail"]

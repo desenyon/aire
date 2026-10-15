@@ -69,7 +69,7 @@ make audit-optional
 `make audit` runs CI's core profile and writes `.audit/core.json` plus named logs.
 `make audit-optional` runs the full non-live suite with bounded CPU threads and
 requires all optional CPU test prerequisites. Inspect profile scope and skipped
-checks before interpreting a report. Source changes during a run invalidate it.
+checks before interpreting a report. Source changes observed at check boundaries invalidate it.
 See [audit contracts](docs/audits/2026-10-15-042-audit.md).
 
 Keep new tests deterministic and offline when possible.

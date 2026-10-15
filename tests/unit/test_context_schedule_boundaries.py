@@ -98,3 +98,24 @@ def test_schedule_rejects_nonfinite_or_nonpositive_interval(interval):
 def test_polling_rejects_nonfinite_or_nonpositive_period(period):
     with pytest.raises(ConfigurationError):
         run_sync(Scheduler().run_forever(poll_seconds=period, max_ticks=0))
+
+
+def test_completed_contexts_do_not_accumulate_ambient_bindings():
+    import contextvars
+    import gc
+    import weakref
+
+    # Establish the shared context variables before measuring growth.
+    with ExecutionContext():
+        pass
+    before = len(contextvars.copy_context())
+    references = []
+    for _ in range(1000):
+        context = ExecutionContext()
+        references.append(weakref.ref(context))
+        with context:
+            pass
+    del context
+    gc.collect()
+    assert len(contextvars.copy_context()) == before
+    assert all(reference() is None for reference in references)

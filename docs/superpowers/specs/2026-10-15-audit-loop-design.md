@@ -33,8 +33,9 @@ and makes audits repeatable; it does not claim universal correctness.
   examples, strict docs, release metadata, build and installed-wheel smoke.
   Optional runs the complete non-live suite in an already provisioned environment.
   Reports identify source commit, dirty state and content fingerprint; source
-  changes during a run invalidate its result. Failed, timed-out and unrun checks
-  never count as success. Reports live outside source or in ignored directories.
+  changes observed before/after checks permanently invalidate its result. Edits
+  restored entirely inside a single command cannot be detected by fingerprints. Failed, timed-out
+  and unrun checks never count as success. Reports live outside source or in ignored directories.
   CI runs the same core profile and preserves its evidence even on failure.
 - Keep Python >=3.11, the four existing runtime dependencies and all public extras.
   No new runtime dependency. Retain lazy imports, release integrity gates and
