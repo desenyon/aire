@@ -10,7 +10,7 @@ from aire.deployment.scale import ScaleConfig, generate_scale_pack
 
 def test_generated_deployment_installs_own_distribution(tmp_path):
     generate_artifacts(tmp_path, extra_requirements=["example-dependency==1.2.3"])
-    lines = (tmp_path / "requirements.lock").read_text().splitlines()
+    lines = (tmp_path / "requirements.in").read_text().splitlines()
     requirement = Requirement(lines[0])
     assert requirement.name == metadata("aire-ai")["Name"]
     assert requirement.extras == {"serve"}
@@ -20,7 +20,7 @@ def test_generated_deployment_installs_own_distribution(tmp_path):
 def test_scale_pack_sidecars_install_own_distribution(tmp_path):
     generate_scale_pack(tmp_path, config=ScaleConfig(with_redis=True, with_postgres=True))
     requirements = [
-        Requirement(line) for line in (tmp_path / "requirements.lock").read_text().splitlines()
+        Requirement(line) for line in (tmp_path / "requirements.in").read_text().splitlines()
     ]
     assert {requirement.name for requirement in requirements} == {metadata("aire-ai")["Name"]}
     assert set().union(*(requirement.extras for requirement in requirements)) == {
@@ -28,3 +28,13 @@ def test_scale_pack_sidecars_install_own_distribution(tmp_path):
         "redis",
         "pgvector",
     }
+
+
+def test_deployment_requirements_pin_runtime_and_are_named_as_input(tmp_path):
+    from aire import __version__
+
+    generate_artifacts(tmp_path)
+    requirement = Requirement((tmp_path / "requirements.in").read_text().splitlines()[0])
+    assert str(requirement.specifier) == f"=={__version__}"
+    assert not (tmp_path / "requirements.lock").exists()
+    assert "requirements.in" in (tmp_path / "Dockerfile").read_text()

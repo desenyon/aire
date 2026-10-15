@@ -77,7 +77,7 @@ async def main():
     with tempfile.TemporaryDirectory() as d:
         generate_artifacts(d)
         findings["deployment_requirements"] = (
-            Path(d, "requirements.lock").read_text().strip()
+            Path(d, "requirements.in").read_text().strip()
         )
 
     def slow():
