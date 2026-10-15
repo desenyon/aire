@@ -255,6 +255,8 @@ def inspect(
     from aire.ai import AI
     from aire.tools.builtins import builtin_tools
 
+    if what not in {"models", "tools", "plugins", "config", "all"}:
+        raise typer.BadParameter(f"unknown inspection selector: {what}")
     runtime = AI.runtime()
     report: dict[str, Any] = {}
     if what in {"models", "all"}:
@@ -267,7 +269,7 @@ def inspect(
     if what in {"plugins", "all"}:
         report["plugins"] = list(runtime.plugins.loaded)
     if what in {"config", "all"}:
-        report["config"] = runtime.settings.model_dump(mode="json", exclude={"providers"})
+        report["config"] = runtime.settings.safe_dict()
     _echo_json(report)
 
 
