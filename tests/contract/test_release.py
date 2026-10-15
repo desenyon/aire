@@ -287,6 +287,9 @@ def test_publisher_attestations_do_not_mutate_verified_release_bundle(tmp_path):
     publisher = next(step for step in steps if step.get("uses", "").startswith("pypa/"))
     upload = tmp_path / publisher["with"]["packages-dir"]
     assert publisher["with"].get("attestations", True) is True
+    assert {path.name: path.read_bytes() for path in upload.iterdir()} == {
+        path.name: path.read_bytes() for path in (directory / "dist").iterdir()
+    }
     for distribution in list(upload.iterdir()):
         # Exact sidecar name written by pypa/gh-action-pypi-publish attestations.py.
         distribution.with_name(distribution.name + ".publish.attestation").write_text("{}")
