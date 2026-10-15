@@ -12,10 +12,16 @@ rate limiting, and a task-specific invocation endpoint:
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, Field, ValidationError
+
+from aire._version import __version__
 from aire.core.errors import AireError, ConfigurationError
 from aire.models.base import Model
 
@@ -36,6 +42,11 @@ if TYPE_CHECKING:
     from aire.rag.pipeline import Knowledge
 
 
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1)
+    k: int = Field(default=5, ge=1, le=1000)
+
+
 def create_app(
     target: Agent | Knowledge | Model | Team,
     *,
@@ -43,6 +54,7 @@ def create_app(
     auth_token: str | None = None,
     rate_limit_per_minute: int | None = None,
     metrics: Metrics | None = None,
+    close_target: bool = False,
 ) -> Any:
     """Build a FastAPI app serving ``target``. Requires ``pip install aire-ai[serve]``."""
     if FastAPI is None:
@@ -51,14 +63,28 @@ def create_app(
             code="deploy.fastapi_missing",
         )
 
-    app = FastAPI(title=title, version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: Any) -> Any:
+        yield
+        if close_target:
+            resource = getattr(target, "runtime", None) or target
+            close = getattr(resource, "aclose", None)
+            if close is not None:
+                await close()
+
+    app = FastAPI(title=title, version=__version__, lifespan=lifespan)
+
+    @app.exception_handler(ValidationError)
+    async def invalid_request(request: Request, exc: ValidationError) -> Any:
+        return JSONResponse(status_code=422, content={"detail": "invalid generation parameters"})
+
     guard = _make_guard(auth_token=auth_token, rate_limit_per_minute=rate_limit_per_minute)
 
     @app.exception_handler(AireError)
     async def _aire_error_handler(request: Request, exc: AireError) -> Any:
         return JSONResponse(status_code=422, content=exc.to_dict())
 
-    _register_meta_routes(app, target, metrics)
+    _register_meta_routes(app, target, metrics, guard)
     if _is_team(target):
         _register_team_routes(app, target, guard, metrics)
     elif isinstance(target, Model):
@@ -90,30 +116,42 @@ def _make_guard(*, auth_token: str | None, rate_limit_per_minute: int | None) ->
     return _guard
 
 
-def _register_meta_routes(app: Any, target: Any, metrics: Metrics | None) -> None:
+def _register_meta_routes(app: Any, target: Any, metrics: Metrics | None, guard: Any) -> None:
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"status": "ok"}
 
     @app.get("/ready")
-    async def ready() -> dict[str, Any]:
-        runtime_ok = _runtime_present(target)
-        status = "ready" if runtime_ok else "degraded"
-        payload: dict[str, Any] = {
-            "status": status,
-            "target": _target_name(target),
-            "runtime_present": runtime_ok,
-        }
-        if not runtime_ok:
-            payload["warning"] = "target has no attached runtime"
-        return payload
+    async def ready() -> Any:
+        available = _runtime_present(target)
+        runtime = getattr(target, "runtime", None)
+        if runtime is not None and getattr(runtime, "_closed", False):
+            available = False
+        components = [target, getattr(target, "store", None), getattr(target, "model", None)]
+        for component in components:
+            probe = getattr(component, "health", None)
+            if callable(probe):
+                try:
+                    result = probe()
+                    if inspect.isawaitable(result):
+                        result = await asyncio.wait_for(result, timeout=5)
+                    available = available and bool(result.ok)
+                except Exception:
+                    available = False
+        return JSONResponse(
+            status_code=200 if available else 503,
+            content={
+                "status": "ready" if available else "degraded",
+                "target": _target_name(target),
+            },
+        )
 
-    @app.get("/manifest")
+    @app.get("/manifest", dependencies=[Depends(guard)])
     async def manifest() -> dict[str, Any]:
         describe = getattr(target, "describe", None)
         return describe() if callable(describe) else {"target": _target_name(target)}
 
-    @app.get("/metrics")
+    @app.get("/metrics", dependencies=[Depends(guard)])
     async def metrics_endpoint() -> dict[str, Any]:
         return metrics.snapshot() if metrics is not None else {"counters": {}, "latencies": {}}
 
@@ -149,12 +187,10 @@ def _register_model_routes(app: Any, target: Model, guard: Any, metrics: Metrics
 
 def _register_knowledge_routes(app: Any, target: Any, guard: Any, metrics: Metrics | None) -> None:
     @app.post("/v1/ask", dependencies=[Depends(guard)])
-    async def ask(body: dict[str, Any]) -> dict[str, Any]:
-        question = body.get("question")
-        if not isinstance(question, str) or not question:
-            raise HTTPException(status_code=400, detail="'question' (string) is required")
+    async def ask(body: AskRequest) -> dict[str, Any]:
+        question = body.question
         started = time.perf_counter()
-        answer = await target.ask(question, k=int(body.get("k", 5)))
+        answer = await target.ask(question, k=body.k)
         if metrics is not None:
             metrics.observe_latency("ask", (time.perf_counter() - started) * 1000.0)
             metrics.record_cost(answer.usage.cost_usd, model=answer.model)
