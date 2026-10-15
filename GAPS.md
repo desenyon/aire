@@ -7,15 +7,17 @@ retains the original failures; its original statuses are not current backlog ite
 
 Use the [capability matrix](docs/capabilities.md) for the supported operations,
 behavioral evidence and intentional limits. The [release QA record](docs/audits/2026-10-14-release-qa.md)
-tracks executed checks and the remaining GitHub delivery gates. The
+records the completed checks, merged PRs and public Pages deployment. The
 [final review](docs/audits/2026-10-14-final-review.md) records findings and decisions.
 
 Tasks 1–11 are implemented and locally verified, including packaging, streaming
 safety, cancellation, remote stores, deployment, durable execution, evaluation,
 optional CPU backends, MCP/tools and CLI examples. Three final-review defects
 were reproduced and repaired: retries after cancellation, nested schema bounds,
-and persistent cache identity after route changes. Task 12 finishes exact-head
-CI, dependency-PR disposition, merging and main-only public Pages deployment.
+and persistent cache identity after route changes. Task 12 completed exact-head
+CI, dependency-PR disposition, merging and
+main-only public Pages deployment. PRs #1–#12 and #15 are merged; audit tracker
+#14 is closed. The final delivery record is linked above.
 
 Intentional boundaries include the documented MCP/schema subset, labeled toy and
 stub behavior, single-writer local persistence, at-least-once queue effects and

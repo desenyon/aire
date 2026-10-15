@@ -46,8 +46,9 @@ cannot close a capability. Unverified optional backends remain visibly unverifie
 
 ## Sequence
 
-Tasks 1–11 are implemented and validated for 0.4.0. Task 12 applies the final
-GitHub/release gate, including main-only public documentation deployment. Task 2 can precede
+Tasks 1–11 are implemented and validated for 0.4.0. Task 12 completed the final
+GitHub/release gate, including main-only public documentation deployment.
+See the [release QA record](../../audits/2026-10-14-release-qa.md) for run and merge evidence. Task 2 can precede
 runtime repairs without changing their public contracts. No dependency PR is auto-merged.
 
 ### Task 1 — Correct distribution identity (F01; implemented)
@@ -209,9 +210,9 @@ A single capability matrix records operations, maturity, limits, evidence and ow
 `docs/publishing.md`, `CHANGELOG.md`; repository Pages settings.
 **Interfaces:** Every release artifact is tied to a tested SHA and matching version/tag.
 
-- [ ] Refresh PRs #1–#12 against repaired main and execute each acceptance check in the audit's PR matrix. Record results individually; do not call old failures current incompatibility evidence.
-- [ ] Test action majors and upload/download compatibility in workflow runs; group future updates by ecosystem without hiding backend compatibility checks.
-- [ ] Verify Pages settings/access, then deploy and inspect the public URL; record exact deployed commit.
+- [x] Refresh PRs #1–#12 against repaired main and execute each acceptance check in the audit's PR matrix. Record results individually; do not call old failures current incompatibility evidence.
+- [x] Test action majors and upload/download compatibility in workflow runs; group future updates by ecosystem without hiding backend compatibility checks.
+- [x] Verify Pages settings/access, then deploy and inspect the public URL; record exact deployed commit.
 - [x] Require base-wheel tests, relevant optional-backend tests, locked environment, strict docs, supported Python/OS profiles and triaged dependency audit before release.
 - [x] Add meaningful benchmark regression thresholds after establishing repeatable baselines; avoid timing gates from one noisy run.
 - [x] Check tag/project/runtime versions agree; publish only artifacts built from validated code. Use a dry run before the next version, then record fresh install proof.
@@ -243,5 +244,5 @@ Task 11 covers each recipe and the project-builder index/ask/evaluate/deploy pat
 - [x] Every supported operation in the capability inventory has behavioral evidence and accurate docs.
 - [x] Optional backends carry tested versions/platforms and explicit remaining limitations.
 - [x] Installation, dependency update, built-wheel and generated-deployment contracts pass.
-- [ ] All GitHub review items have verified disposition; Pages and release dry run succeed.
+- [x] All GitHub review items have verified disposition; Pages and release dry run succeed.
 - [x] No synthetic/stub/demo result is presented as a real execution or measured quality result.
