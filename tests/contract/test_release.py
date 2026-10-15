@@ -49,7 +49,7 @@ def test_release_workflow_finishes_publication_not_just_upload():
     assert "gh release create" in workflow
     assert "scripts/release.py pypi" in workflow
     assert "scripts/release.py check" in workflow
-    assert "packages-dir: release-bundle/dist" in workflow
+    assert "packages-dir: release-bundle/upload" in workflow
 
 
 @pytest.mark.parametrize("bad", ["tag", "main", "dirty", "checks"])
@@ -142,9 +142,9 @@ def test_source_check_rejects_stale_metadata(tmp_path):
         target = tmp_path / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / filename, target)
-    release.source_version(tmp_path)
+    current = release.source_version(tmp_path)
     citation = tmp_path / "CITATION.cff"
-    citation.write_text(citation.read_text().replace("version: 0.4.0", "version: 0.3.5"))
+    citation.write_text(citation.read_text().replace(f"version: {current}", "version: 0.0.0"))
     with pytest.raises(ValueError, match="CITATION"):
         release.source_version(tmp_path)
 
@@ -270,3 +270,25 @@ elif args[:2] == ["release", "download"]:
     assert "--notes-file" in edits[0]
     assert "--title" in edits[0]
     assert "--latest" in edits[0]
+
+
+def test_publisher_attestations_do_not_mutate_verified_release_bundle(tmp_path):
+    release = release_module()
+    directory = bundle(tmp_path)
+    release.prepare_bundle(directory, "0.4.0", "abc", "release notes")
+    directory = directory.rename(tmp_path / "release-bundle")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["publish"]["steps"]
+    stage = next(
+        (step for step in steps if step.get("name") == "Stage isolated publisher inputs"), None
+    )
+    if stage is not None:
+        subprocess.run(["bash", "-e", "-c", stage["run"]], cwd=tmp_path, check=True)
+    publisher = next(step for step in steps if step.get("uses", "").startswith("pypa/"))
+    upload = tmp_path / publisher["with"]["packages-dir"]
+    assert publisher["with"].get("attestations", True) is True
+    for distribution in list(upload.iterdir()):
+        # Exact sidecar name written by pypa/gh-action-pypi-publish attestations.py.
+        distribution.with_name(distribution.name + ".publish.attestation").write_text("{}")
+    release.verify_bundle(directory, "0.4.0", "abc")
+    assert len(list((directory / "dist").iterdir())) == 2

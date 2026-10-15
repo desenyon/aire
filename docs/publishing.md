@@ -40,8 +40,8 @@ git pull --ff-only
 # Confirm this exact commit passed all four required main workflows.
 git status --short
 .venv/bin/python scripts/release.py check
-git tag -a v0.4.0 -m "Aire 0.4.0"
-git push origin refs/tags/v0.4.0
+git tag -a v0.4.1 -m "Aire 0.4.1"
+git push origin refs/tags/v0.4.1
 ```
 
 Push only the intended tag. Never move a tag or replace an already published
@@ -55,7 +55,7 @@ The tag workflow:
 4. Attaches source SHA, SHA-256 checksums and changelog-derived release notes.
 5. Downloads the bundle in a separate job and verifies the same bytes again.
 6. Rejects an existing PyPI file whose hash differs; uploads missing matching
-   files through Trusted Publishing; verifies the published bytes and installs
+   files from an isolated upload copy through Trusted Publishing; verifies the published bytes and installs
    the actual published wheel in a fresh environment.
 7. Creates the GitHub Release with wheel, sdist, checksums, source provenance and
    correct `aire-ai` install instructions. Existing draft releases can resume;
@@ -66,7 +66,7 @@ If a tag workflow is interrupted, rerun its failed jobs. To dispatch publication
 manually, select the **matching tag**, not main:
 
 ```bash
-gh workflow run release.yml --ref v0.4.0 -f dry_run=false
+gh workflow run release.yml --ref v0.4.1 -f dry_run=false
 ```
 
 Matching published files are reused; conflicting files fail instead of being
@@ -89,7 +89,7 @@ exact PyPI version. A missing GitHub release or a skipped publisher is incomplet
 
 ```bash
 uv venv /tmp/aire-release-check
-uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.0'
+uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.1'
 /tmp/aire-release-check/bin/python -I -c \
   "from aire import AI, __version__; print(__version__, AI.describe()['library'])"
 /tmp/aire-release-check/bin/aire doctor
@@ -97,3 +97,15 @@ uv pip install --python /tmp/aire-release-check/bin/python 'aire-ai==0.4.0'
 
 For optional backends, use the selected documented extras and supported hardware;
 base-install success does not establish GPU or hosted-provider quality.
+
+## Publisher-generated attestations
+
+Trusted Publishing generates `.publish.attestation` sidecars beside its upload
+inputs. The workflow copies the two verified distributions to `release-bundle/upload`
+for that action. Its sidecars never enter the immutable `dist` payload or GitHub
+asset list; attestations remain enabled and payload/hash checks remain strict.
+
+The first 0.4.0 attempt uploaded successfully but then rejected those unexpected
+sidecars in its original payload folder. Rerunning the failed job completed 0.4.0
+by reusing the matching published files. Version 0.4.1 isolates upload inputs so
+initial publication succeeds without needing that recovery path.

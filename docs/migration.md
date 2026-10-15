@@ -1,5 +1,12 @@
 # Migration guides
 
+## 0.4.1 (from 0.4.0)
+
+This patch fixes publication automation: publisher-generated attestations use a
+separate upload copy, preserving the verified distribution bundle and GitHub
+assets. Runtime APIs and dependencies are unchanged. Upgrade with
+`python -m pip install aire-ai==0.4.1`.
+
 ## 0.4.0 (from 0.3.5)
 
 Existing `AI` facade calls, offline defaults, provider constructors, and the
