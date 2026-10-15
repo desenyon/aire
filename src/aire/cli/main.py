@@ -532,6 +532,28 @@ def foundation_cmd(
         _echo_json(catalog())
 
 
+def _load_analytics_source(env_ref: str) -> Any:
+    import importlib
+
+    try:
+        module_name, attribute = env_ref.split(":", 1)
+        analytics_obj = getattr(importlib.import_module(module_name), attribute)
+        if callable(analytics_obj):
+            analytics_obj = analytics_obj()
+        if not callable(getattr(analytics_obj, "report", None)) or not callable(
+            getattr(analytics_obj, "prometheus", None)
+        ):
+            raise TypeError("analytics source must expose report() and prometheus()")
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        typer.secho(
+            "Cannot load AIRE_ANALYTICS; expected module:attribute with an Analytics source",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+    return analytics_obj
+
+
 @app.command()
 def analytics(
     prometheus: bool = typer.Option(False, help="Emit Prometheus text instead of JSON."),
@@ -552,7 +574,9 @@ def analytics(
     except Exception:
         analytics_obj = None
     env_ref = os.environ.get("AIRE_ANALYTICS")
-    demo = analytics_obj is None and not env_ref
+    if env_ref:
+        analytics_obj = _load_analytics_source(env_ref)
+    demo = analytics_obj is None
     if analytics_obj is None:
         analytics_obj = create_analytics()
         analytics_obj.record_run(model="mock:echo", cost_usd=0.0, latency_ms=1.0, operation="cli")
