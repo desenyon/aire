@@ -108,3 +108,72 @@ def test_input_redaction_preserves_tool_declarations_and_media():
         assert "person@example.com" not in guarded.messages[0].text_content
 
     run_sync(check())
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["gateway", "checked", "openai", "anthropic", "exact-cache", "semantic-cache", "redis-cache"],
+)
+def test_closing_consumer_immediately_closes_upstream(mode):
+    from aire.deployment.gateway import Gateway, _anthropic_sse_stream, _checked_stream, _sse_stream
+    from aire.models.builtin import HashingEmbedder
+    from aire.optimization.cache import CachedModel, SemanticCachedModel
+
+    async def check():
+        runtime = Runtime(Settings())
+        model = SplitModel()
+        runtime.model_providers.register("test", lambda name, **kw: model)
+        gateway = Gateway(runtime, chat_routes={"qa": ["test:split"]})
+        request = GenerationRequest.of("hello")
+        from aire.optimization.redis_cache import RedisCacheBackend, RedisCachedModel
+
+        class Backend(RedisCacheBackend):
+            def __init__(self):
+                pass
+
+            async def aget(self, key):
+                return None
+
+            async def aset(self, *args, **kwargs):
+                raise AssertionError("partial output must not be cached")
+
+        factories = {
+            "gateway": lambda: gateway.stream("qa", request),
+            "checked": lambda: _checked_stream(gateway, "qa", request, None),
+            "openai": lambda: _sse_stream(gateway, "qa", request, None, None),
+            "anthropic": lambda: _anthropic_sse_stream(gateway, "qa", request, None, None),
+            "exact-cache": lambda: CachedModel(model).stream(request),
+            "semantic-cache": lambda: SemanticCachedModel(model, HashingEmbedder()).stream(request),
+            "redis-cache": lambda: RedisCachedModel(model, Backend()).stream(request),
+        }
+        stream = factories[mode]()
+        try:
+            async for value in stream:
+                if "BLOCK" in str(value):
+                    break
+            await stream.aclose()
+            assert model.closed
+        finally:
+            await stream.aclose()
+            await runtime.aclose()
+
+    run_sync(check())
+
+
+def test_gateway_stream_bills_cumulative_usage_once():
+    from aire.core.types import Usage
+    from aire.deployment.gateway import Gateway
+
+    class Billed(EchoModel):
+        async def stream(self, request):
+            yield GenerationChunk(text="a", usage=Usage(cost_usd=0.1))
+            yield GenerationChunk(text="b", usage=Usage(cost_usd=0.2), finish_reason="stop")
+
+    async def check():
+        async with Runtime(Settings()) as runtime:
+            runtime.model_providers.register("test", lambda name, **kw: Billed())
+            gateway = Gateway(runtime, chat_routes={"qa": ["test:billed"]})
+            _ = [part async for part in gateway.stream("qa", GenerationRequest.of("hello"))]
+            assert gateway.spend_today()["qa"] == 0.2
+
+    run_sync(check())

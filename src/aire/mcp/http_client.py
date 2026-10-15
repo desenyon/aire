@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import logging
 from typing import Any
 
 from aire.mcp.protocol import (
@@ -26,8 +25,6 @@ from aire.mcp.protocol import (
 from aire.tools.schema import schema_model
 from aire.tools.tool import Tool
 from aire.tools.types import SideEffect
-
-_log = logging.getLogger("aire.mcp.http_client")
 
 _SESSION_HEADER = "mcp-session-id"
 

@@ -75,6 +75,30 @@ def _base_url(explicit: str | None = None) -> str:
     return (explicit or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
 
 
+def _media_object(response: httpx.Response) -> dict[str, Any]:
+    try:
+        value = response.json()
+    except ValueError as exc:
+        raise ProviderError("openai", "invalid media JSON response", retryable=False) from exc
+    if not isinstance(value, dict):
+        raise ProviderError("openai", "media response must be an object", retryable=False)
+    return value
+
+
+def _decode_image(value: str) -> tuple[bytes, str]:
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ProviderError("openai", "invalid base64 image response", retryable=False) from exc
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return data, "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return data, "image/jpeg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return data, "image/webp"
+    raise ProviderError("openai", "response is not a supported encoded image", retryable=False)
+
+
 async def openai_tts(
     text: str,
     *,
@@ -106,6 +130,13 @@ async def openai_tts(
     finally:
         if owns:
             await http.aclose()
+    content_type = response.headers.get("content-type", "").split(";", 1)[0]
+    if not response.content or (
+        content_type
+        and not content_type.startswith("audio/")
+        and content_type != "application/octet-stream"
+    ):
+        raise ProviderError("openai", "speech response contains no audio", retryable=False)
     media = f"audio/{response_format}" if "/" not in response_format else response_format
     return AudioContent(
         data=response.content,
@@ -136,7 +167,7 @@ async def openai_transcribe(
     try:
         response = await http.post(url, data=form, files=files, headers=headers)
         response.raise_for_status()
-        payload = response.json()
+        payload = _media_object(response)
     except httpx.HTTPStatusError as exc:
         raise map_http_error("openai", exc) from exc
     except httpx.HTTPError as exc:
@@ -144,9 +175,9 @@ async def openai_transcribe(
     finally:
         if owns:
             await http.aclose()
-    if isinstance(payload, dict):
-        return str(payload.get("text", ""))
-    return str(payload)
+    if not isinstance(payload.get("text"), str):
+        raise ProviderError("openai", "transcription response has no text field", retryable=False)
+    return str(payload["text"])
 
 
 async def openai_image(
@@ -174,7 +205,7 @@ async def openai_image(
     try:
         response = await http.post(url, json=payload, headers=headers)
         response.raise_for_status()
-        body = response.json()
+        body = _media_object(response)
     except httpx.HTTPStatusError as exc:
         raise map_http_error("openai", exc) from exc
     except httpx.HTTPError as exc:
@@ -183,13 +214,19 @@ async def openai_image(
         if owns:
             await http.aclose()
     rows = body.get("data") or []
-    if not rows:
-        raise ProviderError("openai", "images/generations returned no data", retryable=False)
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        raise ProviderError("openai", "images/generations returned no image data", retryable=False)
     row = rows[0]
     b64 = row.get("b64_json")
     uri = row.get("url")
-    if b64 and not uri:
-        uri = f"data:image/png;base64,{b64}"
+    if b64:
+        _, media = _decode_image(b64)
+        if not uri:
+            uri = f"data:{media};base64,{b64}"
+    elif not isinstance(uri, str) or not uri.startswith(("https://", "http://")):
+        raise ProviderError(
+            "openai", "image response contains neither bytes nor an HTTP URL", retryable=False
+        )
     return {
         "uri": uri,
         "b64": b64,
@@ -202,9 +239,10 @@ async def openai_image(
 def image_content_from_result(result: dict[str, Any]) -> ImageContent:
     b64 = result.get("b64")
     if b64:
+        data, media = _decode_image(b64)
         return ImageContent(
-            data=base64.b64decode(b64),
-            media_type="image/png",
+            data=data,
+            media_type=media,
             uri=result.get("uri"),
             metadata={"model": result.get("model"), "provider": "openai"},
         )

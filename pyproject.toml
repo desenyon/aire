@@ -217,5 +217,5 @@ ignore_missing_imports = true
 # Optional packages may be absent or ship incomplete type metadata. Core code is
 # checked strictly in both the base and all-extras environments.
 [[tool.mypy.overrides]]
-module = ["pandas", "pandas.*", "redis", "redis.*", "psycopg", "psycopg.*", "neo4j", "neo4j.*", "keras", "keras.*", "polars", "polars.*", "optuna", "optuna.*", "peft", "peft.*", "transformers", "transformers.*", "datasets", "datasets.*", "pypdf", "pypdf.*", "pypdfium2", "pypdfium2.*", "pytesseract", "pytesseract.*", "apscheduler", "apscheduler.*"]
+module = ["numpy", "numpy.*", "pandas", "pandas.*", "redis", "redis.*", "psycopg", "psycopg.*", "neo4j", "neo4j.*", "keras", "keras.*", "polars", "polars.*", "optuna", "optuna.*", "peft", "peft.*", "transformers", "transformers.*", "datasets", "datasets.*", "pypdf", "pypdf.*", "pypdfium2", "pypdfium2.*", "pytesseract", "pytesseract.*", "apscheduler", "apscheduler.*"]
 ignore_missing_imports = true

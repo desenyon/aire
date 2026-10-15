@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from aire.core.errors import ConfigurationError
+from aire.core.lifecycle import closing_stream
 from aire.core.types import HealthStatus
 from aire.models.base import Model
 from aire.models.types import (
@@ -202,15 +203,16 @@ class RedisCachedModel(Model):
         calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
-        async for chunk in self.inner.stream(request):
-            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
-            if chunk.text:
-                pieces.append(chunk.text)
-            if chunk.finish_reason:
-                finish = chunk.finish_reason
-            if chunk.usage is not None:
-                last_usage = chunk.usage
-            yield chunk
+        async with closing_stream(self.inner.stream(request)) as upstream:
+            async for chunk in upstream:
+                calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                if chunk.text:
+                    pieces.append(chunk.text)
+                if chunk.finish_reason:
+                    finish = chunk.finish_reason
+                if chunk.usage is not None:
+                    last_usage = chunk.usage
+                yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
             text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls

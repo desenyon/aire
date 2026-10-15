@@ -40,7 +40,9 @@ from aire.core.errors import (
     RateLimitError,
     SafetyError,
 )
+from aire.core.lifecycle import closing_stream
 from aire.core.runtime import Runtime
+from aire.core.tool_calls import ToolCall
 from aire.deployment.fastapi_app import _make_guard
 from aire.models.base import EmbeddingModel, Model
 from aire.models.registry import ModelRegistry
@@ -253,7 +255,7 @@ class Gateway:
                 last_error = exc
                 continue
             self._record_success(public, ref, result.usage.cost_usd)
-            await self._semantic_store(public, request, result)
+            await self._semantic_store(public, request, result, resolved=ref)
             return ref, result
         assert last_error is not None
         if isinstance(last_error, AireError):
@@ -330,7 +332,12 @@ class Gateway:
         return None
 
     async def _semantic_store(
-        self, public: str, request: GenerationRequest, result: GenerationResult
+        self,
+        public: str,
+        request: GenerationRequest,
+        result: GenerationResult,
+        *,
+        resolved: str | None = None,
     ) -> None:
         from aire.optimization.cache import _has_tool_context
 
@@ -357,7 +364,7 @@ class Gateway:
             existing.append(
                 {
                     "vector": vector,
-                    "ref": public,
+                    "ref": resolved or result.model,
                     "result": result.model_dump(mode="json"),
                 }
             )
@@ -367,7 +374,9 @@ class Gateway:
 
         if len(self._semantic_entries) >= 1024:
             self._semantic_entries.pop(0)
-        self._semantic_entries.append((signature, vector, public, result.model_copy(deep=True)))
+        self._semantic_entries.append(
+            (signature, vector, resolved or result.model, result.model_copy(deep=True))
+        )
 
     async def stream(
         self, public: str, request: GenerationRequest
@@ -392,15 +401,20 @@ class Gateway:
         for ref, model in chain if self.fallback else chain[:1]:
             started = False
             pieces: list[str] = []
+            tool_calls: list[ToolCall] = []
+            finish = "stop"
             cost_usd = 0.0
             try:
-                async for chunk in model.stream(request):
-                    started = True
-                    if chunk.text:
-                        pieces.append(chunk.text)
-                    if chunk.usage is not None:
-                        cost_usd += float(chunk.usage.cost_usd or 0.0)
-                    yield ref, chunk
+                async with closing_stream(model.stream(request)) as upstream:
+                    async for chunk in upstream:
+                        started = True
+                        tool_calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                        finish = chunk.finish_reason or finish
+                        if chunk.text:
+                            pieces.append(chunk.text)
+                        if chunk.usage is not None:
+                            cost_usd = float(chunk.usage.cost_usd or 0.0)
+                        yield ref, chunk
             except Exception as exc:
                 self._record_failure(ref)
                 last_error = exc
@@ -412,7 +426,10 @@ class Gateway:
                 await self._semantic_store(
                     public,
                     request,
-                    GenerationResult.text_result("".join(pieces), model=ref),
+                    GenerationResult.text_result(
+                        "".join(pieces), model=ref, tool_calls=tool_calls
+                    ).model_copy(update={"finish_reason": finish}),
+                    resolved=ref,
                 )
             return
         assert last_error is not None
@@ -1156,28 +1173,31 @@ async def _sse_stream(
     emitted_role = False
     tool_index = 0
     try:
-        async for _resolved, chunk in _checked_stream(gateway, public, request, safety_chain):
-            resolved = _resolved
-            if not emitted_role:
-                yield _sse(_chunk({"role": "assistant"}))
-                yield _sse({"aire": {"resolved_model": resolved}})
-                emitted_role = True
-            delta: dict[str, Any] = {}
-            if chunk.text:
-                delta["content"] = chunk.text
-            if chunk.tool_calls:
-                delta["tool_calls"] = [
-                    {
-                        "index": tool_index + i,
-                        "id": tc.id or f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                    }
-                    for i, tc in enumerate(chunk.tool_calls)
-                ]
-                tool_index += len(chunk.tool_calls)
-            if delta or chunk.finish_reason:
-                yield _sse(_chunk(delta, chunk.finish_reason))
+        async with closing_stream(
+            _checked_stream(gateway, public, request, safety_chain)
+        ) as upstream:
+            async for _resolved, chunk in upstream:
+                resolved = _resolved
+                if not emitted_role:
+                    yield _sse(_chunk({"role": "assistant"}))
+                    yield _sse({"aire": {"resolved_model": resolved}})
+                    emitted_role = True
+                delta: dict[str, Any] = {}
+                if chunk.text:
+                    delta["content"] = chunk.text
+                if chunk.tool_calls:
+                    delta["tool_calls"] = [
+                        {
+                            "index": tool_index + i,
+                            "id": tc.id or f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                        }
+                        for i, tc in enumerate(chunk.tool_calls)
+                    ]
+                    tool_index += len(chunk.tool_calls)
+                if delta or chunk.finish_reason:
+                    yield _sse(_chunk(delta, chunk.finish_reason))
     except Exception as exc:
         error = exc if isinstance(exc, AireError) else ProviderError("gateway", str(exc))
         yield _sse(_error_body(error))
@@ -1499,48 +1519,51 @@ async def _anthropic_sse_stream(
                 "content_block": {"type": "text", "text": ""},
             }
         )
-        async for resolved_ref, chunk in _checked_stream(gateway, public, request, safety_chain):
-            resolved = resolved_ref
-            if chunk.usage is not None:
-                output_tokens = max(output_tokens, chunk.usage.output_tokens)
-            if chunk.text:
-                yield _sse(
-                    {
-                        "type": "content_block_delta",
-                        "index": 0,
-                        "delta": {"type": "text_delta", "text": chunk.text},
-                    }
-                )
-            for tc in chunk.tool_calls:
-                stop_reason = "tool_use"
-                block_index += 1
-                yield _sse(
-                    {
-                        "type": "content_block_start",
-                        "index": block_index,
-                        "content_block": {
-                            "type": "tool_use",
-                            "id": tc.id,
-                            "name": tc.name,
-                            "input": {},
-                        },
-                    }
-                )
-                yield _sse(
-                    {
-                        "type": "content_block_delta",
-                        "index": block_index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": json.dumps(tc.arguments),
-                        },
-                    }
-                )
-                yield _sse({"type": "content_block_stop", "index": block_index})
-            if chunk.finish_reason == "tool_calls":
-                stop_reason = "tool_use"
-            elif chunk.finish_reason == "length":
-                stop_reason = "max_tokens"
+        async with closing_stream(
+            _checked_stream(gateway, public, request, safety_chain)
+        ) as upstream:
+            async for resolved_ref, chunk in upstream:
+                resolved = resolved_ref
+                if chunk.usage is not None:
+                    output_tokens = max(output_tokens, chunk.usage.output_tokens)
+                if chunk.text:
+                    yield _sse(
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": chunk.text},
+                        }
+                    )
+                for tc in chunk.tool_calls:
+                    stop_reason = "tool_use"
+                    block_index += 1
+                    yield _sse(
+                        {
+                            "type": "content_block_start",
+                            "index": block_index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tc.id,
+                                "name": tc.name,
+                                "input": {},
+                            },
+                        }
+                    )
+                    yield _sse(
+                        {
+                            "type": "content_block_delta",
+                            "index": block_index,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": json.dumps(tc.arguments),
+                            },
+                        }
+                    )
+                    yield _sse({"type": "content_block_stop", "index": block_index})
+                if chunk.finish_reason == "tool_calls":
+                    stop_reason = "tool_use"
+                elif chunk.finish_reason == "length":
+                    stop_reason = "max_tokens"
         yield _sse({"type": "content_block_stop", "index": 0})
         yield _sse(
             {

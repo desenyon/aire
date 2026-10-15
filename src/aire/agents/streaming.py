@@ -12,6 +12,7 @@ from aire.agents.runtime import AgentExecutor
 from aire.agents.types import AgentResult, AgentState, AgentStatus, AgentStep
 from aire.core.content import Message
 from aire.core.context import ExecutionContext
+from aire.core.lifecycle import closing_stream
 from aire.models.types import GenerationRequest
 
 
@@ -119,8 +120,7 @@ async def _model_tokens(
 ) -> AsyncGenerator[str, None]:
     ctx.check_available()
     ctx.tick()
-    stream = executor.model.stream(request)
-    try:
+    async with closing_stream(executor.model.stream(request)) as stream:
         async for chunk in stream:
             ctx.check_cancelled()
             if chunk.usage is not None:
@@ -128,7 +128,3 @@ async def _model_tokens(
                 ctx.budget.check(ctx.usage, ctx.steps, ctx.started)
             if chunk.text:
                 yield chunk.text
-    finally:
-        close = getattr(stream, "aclose", None)
-        if close is not None:
-            await close()

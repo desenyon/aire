@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from aire.core.content import TextContent
+from aire.core.lifecycle import closing_stream
 from aire.core.types import HealthStatus, Usage
 from aire.models.base import EmbeddingModel, Model
 from aire.models.types import (
@@ -86,12 +87,13 @@ class CachedModel(Model):
         calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
-        async for chunk in self.inner.stream(request):
-            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
-            pieces.append(chunk.text)
-            finish = chunk.finish_reason or finish
-            last_usage = chunk.usage if chunk.usage is not None else last_usage
-            yield chunk
+        async with closing_stream(self.inner.stream(request)) as upstream:
+            async for chunk in upstream:
+                calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                pieces.append(chunk.text)
+                finish = chunk.finish_reason or finish
+                last_usage = chunk.usage if chunk.usage is not None else last_usage
+                yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
             text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls
@@ -200,8 +202,9 @@ class SemanticCachedModel(Model):
         """
         if _has_tool_context(request):
             self.misses += 1
-            async for chunk in self.inner.stream(request):
-                yield chunk
+            async with closing_stream(self.inner.stream(request)) as upstream:
+                async for chunk in upstream:
+                    yield chunk
             return
         prompt = "\n".join(m.text_content for m in request.messages)
         signature = _params_signature(request)
@@ -223,12 +226,13 @@ class SemanticCachedModel(Model):
         calls: list[ToolCall] = []
         finish: str | None = None
         last_usage = None
-        async for chunk in self.inner.stream(request):
-            calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
-            pieces.append(chunk.text)
-            finish = chunk.finish_reason or finish
-            last_usage = chunk.usage if chunk.usage is not None else last_usage
-            yield chunk
+        async with closing_stream(self.inner.stream(request)) as upstream:
+            async for chunk in upstream:
+                calls.extend(call.model_copy(deep=True) for call in chunk.tool_calls)
+                pieces.append(chunk.text)
+                finish = chunk.finish_reason or finish
+                last_usage = chunk.usage if chunk.usage is not None else last_usage
+                yield chunk
         text = "".join(pieces)
         result = GenerationResult.text_result(
             text, model=self.inner.info.ref, usage=last_usage, tool_calls=calls

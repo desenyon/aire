@@ -9,7 +9,8 @@ partial failures.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from aire.core.logging import get_logger
@@ -82,3 +83,14 @@ class ResourceManager:
 
     async def __aexit__(self, *exc_info: Any) -> None:
         await self.aclose()
+
+
+@asynccontextmanager
+async def closing_stream(stream: AsyncIterator[T]) -> AsyncIterator[AsyncIterator[T]]:
+    """Close an owned upstream iterator immediately when its consumer exits."""
+    try:
+        yield stream
+    finally:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()

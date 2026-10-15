@@ -24,3 +24,12 @@ def test_tiny_foundation_forward_and_real_training(family):
         not torch.equal(a, b) for a, b in zip(before, model.architecture.parameters(), strict=True)
     )
     assert not model.pretrained
+
+
+def test_foundation_loads_actual_local_pretrained_weights(tiny_lm):
+    from aire.training.foundation import FoundationModel
+
+    loaded = FoundationModel.from_pretrained(str(tiny_lm))
+    assert loaded.pretrained
+    assert loaded.tokenizer is not None
+    assert loaded.hf_model_id == str(tiny_lm)

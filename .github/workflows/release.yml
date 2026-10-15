@@ -69,9 +69,29 @@ jobs:
           name: python-package-distributions
           path: dist/
 
+  verify-upload:
+    name: Verify uploaded distribution artifacts
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - run: uv sync --locked --no-default-groups --group release
+      - run: .venv/bin/twine check dist/*
+      - run: .venv/bin/python scripts/verify_distribution.py dist/aire_ai-*.whl
+
   publish:
     name: Publish verified artifacts to PyPI
-    needs: validate
+    needs: [validate, verify-upload]
     if: github.event_name == 'push' || inputs.dry_run == false
     runs-on: ubuntu-latest
     environment:

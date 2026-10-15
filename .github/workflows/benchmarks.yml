@@ -10,7 +10,7 @@ env:
   UV_PYTHON: "3.12"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   microbench:

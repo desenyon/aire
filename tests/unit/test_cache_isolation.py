@@ -145,3 +145,54 @@ def test_cache_replay_does_not_bill_original_generation_again(semantic):
         assert chunks[0].usage.cost_usd == 0
 
     run_sync(check())
+
+
+def test_gateway_does_not_cache_streamed_tool_calls_as_plain_text():
+    from aire.core.config import Settings
+    from aire.core.runtime import Runtime
+    from aire.deployment.gateway import Gateway
+    from aire.models.types import GenerationChunk
+
+    class Tools(EchoModel):
+        async def stream(self, request):
+            yield GenerationChunk(
+                text="checking",
+                tool_calls=[ToolCall(id="x", name="lookup", arguments={})],
+                finish_reason="tool_calls",
+            )
+
+    async def check():
+        async with Runtime(Settings()) as runtime:
+            runtime.model_providers.register("test", lambda name, **kw: Tools())
+            gateway = Gateway(
+                runtime,
+                chat_routes={"qa": ["test:tools"]},
+                semantic_cache=True,
+                semantic_embedder=HashingEmbedder(),
+            )
+            request = GenerationRequest.of("hello")
+            _ = [c async for c in gateway.stream("qa", request)]
+            assert not gateway._semantic_entries
+
+    run_sync(check())
+
+
+def test_gateway_semantic_hit_keeps_the_resolved_route():
+    from aire.core.config import Settings
+    from aire.core.runtime import Runtime
+    from aire.deployment.gateway import Gateway
+
+    async def check():
+        async with Runtime(Settings()) as runtime:
+            gateway = Gateway(
+                runtime,
+                chat_routes={"qa": ["mock:echo"]},
+                semantic_cache=True,
+                semantic_embedder=HashingEmbedder(),
+            )
+            request = GenerationRequest.of("hello")
+            first = await gateway.generate("qa", request)
+            second = await gateway.generate("qa", request)
+            assert first[0] == second[0] == "mock:echo"
+
+    run_sync(check())
